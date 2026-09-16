@@ -458,6 +458,26 @@ describe('LocalWorkflowExecutor', () => {
     await artifactEvents.close();
   });
 
+  it('links oversized failed check output to a durable artifact in failure evidence', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-check-failure-artifact-'));
+    await writeFile(path.join(directory, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.stdout.write(\'x\'.repeat(3000)); process.exit(1)"' } }));
+    const repository = await (await import('../repository/workspace.js')).RepositoryWorkspace.open(directory);
+    const artifactStore = new FileArtifactStore(path.join(directory, 'artifacts'));
+    const artifactEvents = new EventService(store, { artifactStore, inlineDataBytes: 1_024 });
+    const workflow = structuredClone(seedWorkflow);
+    const prepare = workflow.nodes.find((node) => node.id === 'prepare');
+    if (prepare === undefined) throw new Error('Seed prepare node is missing.');
+    prepare.type = 'repositoryCheck';
+    prepare.config = { command: 'npm test' };
+    prepare.unit = defaultWorkUnit('repositoryCheck');
+    const checkExecutor = new LocalWorkflowExecutor(store, artifactEvents, undefined, undefined, repository);
+    const run = await checkExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    const evidence = (await artifactEvents.listEvidence(run.id)).find((entry) => entry.unitId === 'prepare' && entry.status === 'failed');
+    expect(evidence?.metadata).toEqual(expect.objectContaining({ 'artifact.payload_id': expect.stringMatching(/^artifact:sha256:/) }));
+    await artifactEvents.close();
+  });
+
   it('routes OpenAI agents through the provider-neutral agent lifecycle', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];
