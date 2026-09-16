@@ -36,6 +36,18 @@ export interface NodeActivityResult {
   lifecycle: TemporalActivityLifecycle;
 }
 
+/** A non-retryable workflow-contract error for kinds not implemented by the worker. */
+export class TemporalActivityUnsupportedError extends Error {
+  public readonly code = 'TEMPORAL_ACTIVITY_UNSUPPORTED';
+  public readonly nodeType: string;
+
+  public constructor(nodeType: string) {
+    super(`Temporal activity adapter does not support node type "${nodeType}".`);
+    this.name = 'TemporalActivityUnsupportedError';
+    this.nodeType = nodeType;
+  }
+}
+
 /** Executes a Temporal activity through the same envelope contract as local runs. */
 export async function executeNodeActivity(
   input: NodeActivityInput,
@@ -159,7 +171,7 @@ async function executeNodeImplementation(
     case 'condition':
       return input.config.result === true;
     case 'agentLoop': {
-      throw new Error('Temporal agentLoop activity adapter is not available; use the local execution plane until provider parity is configured.');
+      throw new TemporalActivityUnsupportedError(input.nodeType);
     }
     case 'code': {
       const operation = typeof input.config.operation === 'string' ? input.config.operation : 'identity';
@@ -184,6 +196,6 @@ async function executeNodeImplementation(
     case 'notification':
       return { emitted: true, channel: input.config.channel ?? 'default' };
     default:
-      throw new Error(`Temporal activity adapter does not support node type "${input.nodeType}".`);
+      throw new TemporalActivityUnsupportedError(input.nodeType);
   }
 }

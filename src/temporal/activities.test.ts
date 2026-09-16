@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { WorkUnitTimeoutError } from '../runtime/work-unit-dispatcher.js';
-import { configureTemporalObservabilitySink, executeNodeActivity } from './activities.js';
+import { configureTemporalObservabilitySink, executeNodeActivity, TemporalActivityUnsupportedError } from './activities.js';
 
 describe('Temporal node activities', () => {
   it('executes deterministic nodes through the WorkUnit contract', async () => {
@@ -103,25 +103,29 @@ describe('Temporal node activities', () => {
   });
 
   it('fails closed for unsupported Temporal node types instead of returning a placeholder result', async () => {
-    await expect(executeNodeActivity({
+    const error = await executeNodeActivity({
       runId: 'run-unsupported',
       nodeId: 'repository',
       nodeType: 'repositoryMutation',
       label: 'Repository mutation',
       config: { operations: [] },
       unit: defaultWorkUnit('repositoryMutation'),
-    })).rejects.toThrow('does not support node type');
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TemporalActivityUnsupportedError);
+    expect(error).toMatchObject({ code: 'TEMPORAL_ACTIVITY_UNSUPPORTED', nodeType: 'repositoryMutation' });
   });
 
   it('does not report simulated agent completion on the Temporal worker', async () => {
-    await expect(executeNodeActivity({
+    const error = await executeNodeActivity({
       runId: 'run-agent',
       nodeId: 'agent',
       nodeType: 'agentLoop',
       label: 'Agent',
       config: { maxIterations: 1 },
       unit: defaultWorkUnit('agentLoop'),
-    })).rejects.toThrow('agentLoop activity adapter is not available');
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TemporalActivityUnsupportedError);
+    expect(error).toMatchObject({ code: 'TEMPORAL_ACTIVITY_UNSUPPORTED', nodeType: 'agentLoop' });
   });
 
   it('enforces WorkUnit timeouts for Temporal activities', async () => {
