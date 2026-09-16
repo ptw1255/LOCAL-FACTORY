@@ -243,6 +243,16 @@ describe('platform API', () => {
     expect(artifacts.json<{ items: unknown[] }>().items).toHaveLength(1);
   });
 
+  it('rejects stale file writes with optimistic hash concurrency', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const created = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'concurrent.yaml', content: 'one' } });
+    const sha256 = created.json<{ sha256: string }>().sha256;
+    await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'concurrent.yaml', content: 'two', expectedSha256: sha256 } });
+    const stale = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'concurrent.yaml', content: 'three', expectedSha256: sha256 } });
+    expect(stale.statusCode).toBe(409);
+    expect((await app.inject({ method: 'GET', url: '/api/projects/project-local/files?path=concurrent.yaml', headers })).json<{ content: string }>().content).toBe('two');
+  });
+
   it('exposes deployments through the lean envelope projection', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/deployments?format=envelope', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' } });
     expect(response.statusCode).toBe(200);
