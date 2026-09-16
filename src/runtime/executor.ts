@@ -477,6 +477,12 @@ export class LocalWorkflowExecutor {
             },
           });
         } catch (error) {
+          const failureMetadata = error instanceof RepositoryCheckError || error instanceof RepositoryCheckTimeoutError
+            ? {
+              ...(this.operationMetadata(error.result) ?? {}),
+              ...(this.operationMetadata(await this.events.offloadPayload(runId, error.result, `unit:${nextNode.type}`)) ?? {}),
+            }
+            : undefined;
           await this.events.recordEvidence({
             runId,
             unitId: nextNode.id,
@@ -484,7 +490,7 @@ export class LocalWorkflowExecutor {
             status: controller.signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && ['WORK_UNIT_TIMED_OUT', 'REPOSITORY_CHECK_TIMED_OUT'].includes(String(error.code)) ? 'timed_out' : 'failed',
             idempotencyKey: `${unitEvidenceKey}:failed`,
             error: error instanceof Error ? error.message : 'Unknown unit failure.',
-            metadata: error instanceof RepositoryCiError
+            metadata: failureMetadata ?? (error instanceof RepositoryCiError
               ? this.operationMetadata(error.result)
               : error instanceof RepositoryMutationError
                 ? this.operationMetadata(error)
@@ -492,7 +498,7 @@ export class LocalWorkflowExecutor {
                 ? this.operationMetadata(error)
                 : error instanceof RepositoryCheckError || error instanceof RepositoryCheckTimeoutError
                   ? this.operationMetadata(error.result)
-                : undefined,
+                : undefined),
           });
           await this.events.emit(runId, 'unit.failed', `${nextNode.label} unit failed.`, {
             nodeId: nextNode.id,
