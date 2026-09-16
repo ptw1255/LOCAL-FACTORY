@@ -143,8 +143,17 @@ export class TemporalWorkflowExecutor {
   }
 
   public async deny(runId: string, options: { reason?: string } = {}): Promise<RunRecord> {
-    const run = await this.cancel(runId);
-    return this.updateRun(runId, (target) => { target.status = 'failed'; target.error = options.reason?.trim() || 'Workflow approval was denied.'; }, 'run.failed', options.reason?.trim() || 'Workflow approval was denied.');
+    const run = await this.requireRun(runId);
+    // Stop the durable execution, but persist one coherent operator decision.
+    // Calling cancel() here would emit run.cancelled before denial is recorded.
+    await this.handleFor(run).cancel();
+    const reason = options.reason?.trim() || 'Workflow approval was denied.';
+    return this.updateRun(runId, (target) => {
+      target.status = 'failed';
+      target.error = reason;
+      target.completedAt = new Date().toISOString();
+      target.durationMs = Date.now() - Date.parse(target.startedAt);
+    }, 'run.failed', reason);
   }
 
   public async expire(runId: string, options: { reason?: string } = {}): Promise<RunRecord> {
