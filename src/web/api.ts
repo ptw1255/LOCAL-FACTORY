@@ -110,6 +110,11 @@ export const api = {
       method: 'POST',
       body: '{}',
     }),
+  denyRun: (id: string, reason = 'Denied by operator') =>
+    request<RunRecord>(`/api/runs/${encodeURIComponent(id)}/deny`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
   cancelRun: (id: string) =>
     request<RunRecord>(`/api/runs/${encodeURIComponent(id)}/cancel`, {
       method: 'POST',

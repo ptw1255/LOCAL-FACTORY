@@ -1242,7 +1242,7 @@ function RunsView() {
     ? events
     : events.filter((event) => event.signal === (observeTab === 'logs' ? 'log' : observeTab === 'traces' ? 'trace' : 'metric'));
 
-  async function runAction(action: 'approve' | 'cancel') {
+  async function runAction(action: 'approve' | 'deny' | 'cancel') {
     if (selectedRun === null) return;
     setActionLoading(true);
     setActionError(null);
@@ -1250,7 +1250,9 @@ function RunsView() {
       const updated =
         action === 'approve'
           ? await api.approveRun(selectedRun.id)
-          : await api.cancelRun(selectedRun.id);
+          : action === 'deny'
+            ? await api.denyRun(selectedRun.id)
+            : await api.cancelRun(selectedRun.id);
       setSelectedRun(updated);
       await loadRuns(true);
     } catch (actionFailure) {
@@ -1318,9 +1320,11 @@ function RunsView() {
                   <div className="run-actions">
                     <StatusBadge status={selectedRun.status} />
                     {selectedRun.status === 'waiting' ? (
-                      <button className="button primary" disabled={actionLoading} onClick={() => void runAction('approve')} type="button">
-                        <Icon name="check" /> {actionLoading ? 'Approving…' : 'Approve'}
-                      </button>
+                      <><button className="button primary" disabled={actionLoading} onClick={() => void runAction('approve')} type="button">
+                        <Icon name="check" /> {actionLoading ? 'Updating…' : 'Approve'}
+                      </button><button className="button secondary" disabled={actionLoading} onClick={() => void runAction('deny')} type="button">
+                        <Icon name="close" /> {actionLoading ? 'Updating…' : 'Deny'}
+                      </button></>
                     ) : null}
                     {['queued', 'running', 'waiting'].includes(selectedRun.status) ? (
                       <button className="button secondary" disabled={actionLoading} onClick={() => void runAction('cancel')} type="button">
