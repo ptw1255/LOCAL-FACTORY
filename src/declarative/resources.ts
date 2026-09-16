@@ -61,7 +61,7 @@ function assertNoRuntimeMetadata(value: unknown, path = 'document'): void {
   if (value === null || typeof value !== 'object') return;
   for (const [key, child] of Object.entries(value)) {
     if (forbiddenMetadata.has(key)) throw new Error(`${path}.${key} is runtime state and cannot be authored.`);
-    if (/secret|api.?key|token|credential/i.test(key) && typeof child === 'string') {
+    if (key !== 'secretRef' && /secret|api.?key|token|credential/i.test(key) && typeof child === 'string') {
       throw new Error(`${path}.${key} must be a secret reference, not a secret value.`);
     }
     assertNoRuntimeMetadata(child, `${path}.${key}`);
