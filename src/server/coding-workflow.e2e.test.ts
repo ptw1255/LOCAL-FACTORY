@@ -168,7 +168,9 @@ describe('coding workflow API', () => {
   });
 
   it('routes a failed required CI result into a bounded remediation branch', async () => {
-    const githubFetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/example/repo/actions/runs/3', output: { text: 'test failed' } }] }), { status: 200 }));
+    const githubFetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/example/repo/actions/runs/3', output: { text: 'test failed' } }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'completed', conclusion: 'success', html_url: 'https://github.com/example/repo/actions/runs/4' }] }), { status: 200 }));
     const github = new GitHubRepositoryClient({ token: 'test-token', owner: 'example', repo: 'repo', fetcher: githubFetcher });
     const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-e2e-ci-route-state-'));
     const store = new JsonStore(path.join(dataRoot, 'state.json'));
@@ -179,12 +181,14 @@ describe('coding workflow API', () => {
       { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
       { id: 'ci', type: 'repositoryCi', label: 'Verify CI', position: { x: 180, y: 0 }, config: { ref: 'commit-failed', required: ['test'], timeoutMs: 500, intervalMs: 10, failurePolicy: 'route' }, unit: defaultWorkUnit('repositoryCi') },
       { id: 'repair', type: 'transform', label: 'Prepare remediation', position: { x: 360, y: 120 }, config: { value: 'repair-required' }, unit: defaultWorkUnit('transform') },
-      { id: 'output', type: 'output', label: 'Route outcome', position: { x: 540, y: 120 }, config: { value: 'remediation-required' }, unit: defaultWorkUnit('output') },
+      { id: 'ci-retry', type: 'repositoryCi', label: 'Verify remediation', position: { x: 540, y: 120 }, config: { ref: 'commit-repaired', required: ['test'], timeoutMs: 500, intervalMs: 10 }, unit: defaultWorkUnit('repositoryCi') },
+      { id: 'output', type: 'output', label: 'Route outcome', position: { x: 720, y: 120 }, config: { value: 'remediation-complete' }, unit: defaultWorkUnit('output') },
     ];
     workflow.edges = [
       { id: 'trigger-ci', source: 'trigger', target: 'ci' },
       { id: 'ci-repair', source: 'ci', target: 'repair', condition: 'failure' },
-      { id: 'repair-output', source: 'repair', target: 'output' },
+      { id: 'repair-ci-retry', source: 'repair', target: 'ci-retry' },
+      { id: 'ci-retry-output', source: 'ci-retry', target: 'output' },
     ];
     await store.mutate((state) => { state.workflows.push(workflow); state.workflowVersions.push(structuredClone(workflow)); });
     const app = await createApp({ store, githubRepository: github, serveStatic: false });
@@ -196,6 +200,8 @@ describe('coding workflow API', () => {
       const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
       const ciEvidence = (evidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items.find((entry) => entry.unitId === 'ci' && entry.status === 'succeeded');
       expect(ciEvidence?.metadata).toEqual(expect.objectContaining({ 'ci.status': 'failure', 'ci.failure.0.name': 'test', 'ci.failure.0.conclusion': 'failure', 'ci.failure.0.url': 'https://github.com/example/repo/actions/runs/3' }));
+      const retryEvidence = (evidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items.find((entry) => entry.unitId === 'ci-retry' && entry.status === 'succeeded');
+      expect(retryEvidence?.metadata).toEqual(expect.objectContaining({ 'ci.status': 'success', 'ci.ref': 'commit-repaired' }));
     } finally { await app.close(); }
   });
 
