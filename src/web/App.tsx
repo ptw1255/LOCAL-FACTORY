@@ -1279,6 +1279,7 @@ function OperationalTree({
   const [selectedPath, setSelectedPath] = useState(() => readStudioFile(projectId));
   const [fileSearch, setFileSearch] = useState('');
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
+  const [treeSearch, setTreeSearch] = useState('');
   const [bottomPanelState] = useState(() => readBottomPanelState(projectId));
   const [bottomTab, setBottomTab] = useState<'problems' | 'output'>(bottomPanelState.tab);
   const [bottomOpen, setBottomOpen] = useState(bottomPanelState.open);
@@ -1422,6 +1423,14 @@ function OperationalTree({
   const visibleFiles = (files.length > 0 ? files : [{ path: 'project.yaml', sha256: '', projectId, tenantId: '', updatedAt: '' }])
     .filter((file) => !file.path.split('/').slice(0, -1).some((folder, index, folders) => collapsedFolders.has(folders.slice(0, index + 1).join('/'))));
   const folders = [...new Set(visibleFiles.flatMap((file) => file.path.split('/').slice(0, -1).map((_part, index, parts) => parts.slice(0, index + 1).join('/'))))];
+  const treeQuery = treeSearch.trim().toLowerCase();
+  const visibleTreeNodes = workflow.nodes.filter((node) => {
+    if (treeQuery === '') return true;
+    const agentId = node.type === 'agentLoop' && typeof node.config.agentId === 'string' ? node.config.agentId : '';
+    const agent = agentById.get(agentId);
+    return `${node.id} ${node.label} ${node.type} ${agent?.name ?? ''} ${agent?.purpose ?? ''}`.toLowerCase().includes(treeQuery);
+  });
+  const visibleTreeAgents = workflow.agents.filter((agent) => treeQuery === '' || `${agent.id} ${agent.name} ${agent.purpose} ${agent.model.model ?? agent.model.routingAlias ?? ''}`.toLowerCase().includes(treeQuery));
 
   async function applyYaml(): Promise<boolean> {
     setBusy(true);
@@ -1498,9 +1507,10 @@ function OperationalTree({
       </section>
       <section className="operational-tree-panel ide-tree-panel">
         <div className="operational-heading"><div><span className="eyebrow">Operational tree</span><h2>{workflow.name}</h2><p>{workflow.description || 'Declarative workflow definition'}</p></div><span className="status-badge status-draft">v{workflow.version}</span></div>
-        <div className="tree-root"><span className="tree-icon"><Icon name="factory" size={15} /></span><div><strong>{workflow.name}</strong><small>{workflow.nodes.length} work units · {workflow.agents.length} agent boxes</small></div></div>
+        <label className="ide-file-search tree-search"><span className="sr-only">Filter operational tree</span><input aria-label="Filter operational tree" onChange={(event) => setTreeSearch(event.target.value)} placeholder="Filter tree" type="search" value={treeSearch} /></label>
+        <div className="tree-root"><span className="tree-icon"><Icon name="factory" size={15} /></span><div><strong>{workflow.name}</strong><small>{visibleTreeNodes.length} of {workflow.nodes.length} work units · {visibleTreeAgents.length} of {workflow.agents.length} agent boxes</small></div></div>
         <ol className="operational-tree">
-          {workflow.nodes.map((node, index) => {
+          {visibleTreeNodes.map((node, index) => {
             const agentId = node.type === 'agentLoop' && typeof node.config.agentId === 'string' ? node.config.agentId : undefined;
             const agent = agentId === undefined ? undefined : agentById.get(agentId);
             const sourceFile = agent === undefined
@@ -1515,9 +1525,10 @@ function OperationalTree({
             );
           })}
         </ol>
+        {visibleTreeNodes.length === 0 ? <p className="inline-empty">No matching work units.</p> : null}
         <div className="agent-boxes-heading"><span className="eyebrow">Declared boxes</span><span className="count-pill">{workflow.agents.length}</span></div>
         <div className="operational-agents">
-          {workflow.agents.map((agent) => (
+          {visibleTreeAgents.map((agent) => (
             <button className="operational-agent" disabled={!files.some((file) => file.path.includes(agent.id) && file.path.includes('.agent.'))} key={agent.id} onClick={() => { const file = files.find((candidate) => candidate.path.includes(agent.id) && candidate.path.includes('.agent.')); if (file !== undefined) void selectFile(file); }} title={`Open source for ${agent.id}`} type="button">
               <div className="operational-agent-title"><span className="tree-icon tree-kind-agent"><Icon name="agent" size={14} /></span><div><strong>{agent.name}</strong><small>{agent.id} · v{agent.version}</small></div><span className="tree-kind-label">{agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</span></div>
               <p>{agent.purpose}</p>
@@ -1525,6 +1536,7 @@ function OperationalTree({
             </button>
           ))}
         </div>
+        {visibleTreeAgents.length === 0 ? <p className="inline-empty">No matching agent boxes.</p> : null}
       </section>
     </div>
   );
