@@ -94,7 +94,6 @@ export class DeploymentReconciler {
           if (action === 'rollback' && (!deployment.healthyArtifactIds.includes(targetArtifactId) || targetArtifactId === deployment.artifactId)) throw new Error('Rollback requires a prior healthy artifact for this deployment.');
           if (action === 'deploy' && isProtectedEnvironment(deployment.environment)) {
             this.requirePromotionEvidence(state, deployment, scope, options.runId);
-            deployment.lastVerifiedRunId = options.runId;
           }
           deployment.artifactId = targetArtifactId;
         }
@@ -107,6 +106,9 @@ export class DeploymentReconciler {
         deployment.triggerStatus = observation.triggerStatus;
         deployment.lastError = observation.lastError;
         if (deployment.observedState === 'live' && deployment.health === 'healthy' && !deployment.healthyArtifactIds.includes(deployment.artifactId)) deployment.healthyArtifactIds.unshift(deployment.artifactId);
+        if (action === 'deploy' && isProtectedEnvironment(deployment.environment) && deployment.observedState === 'live' && deployment.health === 'healthy') {
+          deployment.lastVerifiedRunId = options.runId;
+        }
         deployment.updatedAt = now;
         const transition: DeploymentTransition = {
           id: randomUUID(), action, actor, occurredAt: now,
