@@ -61,6 +61,21 @@ describe('coding workflow API', () => {
       expect((approvals.json() as { items: Array<{ decision: string; bindingHash: string }> }).items).toEqual([expect.objectContaining({ decision: 'pending', bindingHash: expect.stringMatching(/^[a-f0-9]{64}$/) })]);
       await app.close();
       const restartedApp = await createApp({ store, repositoryWorkspace, serveStatic: false });
+      await store.mutate((state) => {
+        const persisted = state.runs.find((candidate) => candidate.id === runId);
+        const node = persisted?.workflowDefinition.nodes.find((candidate) => candidate.id === 'prepare');
+        if (node === undefined) throw new Error('Prepare node is missing from the persisted run.');
+        node.config = { ...node.config, operations: [{ operation: 'create', path: 'generated.txt', content: 'changed-after-review' }] };
+      });
+      const staleApproval = await restartedApp.inject({ method: 'POST', url: `/api/runs/${runId}/approve`, headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' }, payload: {} });
+      expect(staleApproval.statusCode).toBe(409);
+      expect((staleApproval.json() as { message: string }).message).toMatch(/no longer valid|changed/i);
+      await store.mutate((state) => {
+        const persisted = state.runs.find((candidate) => candidate.id === runId);
+        const node = persisted?.workflowDefinition.nodes.find((candidate) => candidate.id === 'prepare');
+        if (node === undefined) throw new Error('Prepare node is missing from the persisted run.');
+        node.config = { ...node.config, operations: [{ operation: 'create', path: 'generated.txt', content: 'generated' }] };
+      });
       const approved = await restartedApp.inject({ method: 'POST', url: `/api/runs/${runId}/approve`, headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' }, payload: {} });
       expect(approved.statusCode).toBe(200);
       expect((await waitFor(restartedApp, runId, 'succeeded')).status).toBe('succeeded');
