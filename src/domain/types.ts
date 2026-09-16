@@ -243,6 +243,7 @@ export interface DeploymentRecord {
   trigger: string;
   createdAt: string;
   updatedAt: string;
+  lease?: { ownerId: string; expiresAt: string };
   lastError?: string;
   history: DeploymentTransition[];
 }

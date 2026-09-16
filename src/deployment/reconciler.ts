@@ -7,7 +7,9 @@ export interface DeploymentScope { tenantId: string; projectId: string }
 
 /** Logical deployment reconciler for the local runtime adapter. */
 export class DeploymentReconciler {
-  public constructor(private readonly store: PlatformStore) {}
+  private readonly ownerId = `reconciler-${randomUUID()}`;
+
+  public constructor(private readonly store: PlatformStore, private readonly leaseMs = 30_000) {}
 
   public list(scope: DeploymentScope): Promise<DeploymentRecord[]> {
     return this.store.read((state) => state.deployments.filter((deployment) => deployment.tenantId === scope.tenantId && deployment.projectId === scope.projectId));
@@ -53,6 +55,7 @@ export class DeploymentReconciler {
       }
       const actor = options.actor?.trim() || 'local-operator';
       const now = new Date().toISOString();
+      this.acquireLease(deployment, now);
       try {
         if (action === 'stop') { deployment.desiredState = 'stopped'; deployment.observedState = 'stopping'; }
         else { deployment.desiredState = 'running'; deployment.observedState = 'starting'; }
@@ -78,6 +81,8 @@ export class DeploymentReconciler {
         deployment.updatedAt = now;
         deployment.history.unshift({ id: randomUUID(), action, actor, occurredAt: now, outcome: 'failed', reason: deployment.lastError });
         throw error;
+      } finally {
+        delete deployment.lease;
       }
     });
   }
@@ -86,11 +91,26 @@ export class DeploymentReconciler {
     return this.store.mutate((state) => {
       const deployment = state.deployments.find((candidate) => candidate.id === id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
       if (deployment === undefined) throw new Error('Deployment not found.');
-      if (deployment.desiredState === 'running' && deployment.observedState !== 'live') { deployment.observedState = 'live'; deployment.health = 'healthy'; }
-      if (deployment.desiredState === 'stopped' && deployment.observedState !== 'stopped') { deployment.observedState = 'stopped'; deployment.health = 'unknown'; }
-      deployment.updatedAt = new Date().toISOString();
+      const now = new Date();
+      this.acquireLease(deployment, now.toISOString());
+      try {
+        if (deployment.desiredState === 'running' && deployment.observedState !== 'live') { deployment.observedState = 'live'; deployment.health = 'healthy'; }
+        if (deployment.desiredState === 'stopped' && deployment.observedState !== 'stopped') { deployment.observedState = 'stopped'; deployment.health = 'unknown'; }
+        deployment.updatedAt = now.toISOString();
+      } finally {
+        delete deployment.lease;
+      }
       return deployment;
     });
+  }
+
+  private acquireLease(deployment: DeploymentRecord, nowIso: string): void {
+    const now = Date.parse(nowIso);
+    const activeLease = deployment.lease;
+    if (activeLease !== undefined && activeLease.ownerId !== this.ownerId && Date.parse(activeLease.expiresAt) > now) {
+      throw new Error(`Deployment is currently reconciled by ${activeLease.ownerId}.`);
+    }
+    deployment.lease = { ownerId: this.ownerId, expiresAt: new Date(now + Math.max(1_000, this.leaseMs)).toISOString() };
   }
 
   private findArtifact(artifacts: ArtifactRecord[], id: string, scope: DeploymentScope): ArtifactRecord | undefined {
