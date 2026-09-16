@@ -69,7 +69,13 @@ export class RepositoryWorkspace {
 
   public async diff(): Promise<string> {
     const result = await execFileAsync('git', ['-C', this.root, 'diff', '--no-ext-diff', '--'], { maxBuffer: MAX_OUTPUT * 16 });
-    return truncate(`${result.stdout}${result.stderr}`);
+    const untracked = await this.untrackedPaths();
+    const untrackedDiff = await Promise.all(untracked.map(async (relativePath) => {
+      const content = await readFile(this.safePath(relativePath), 'utf8');
+      const lines = content.split('\n');
+      return `diff --git a/${relativePath} b/${relativePath}\nnew file mode 100644\n--- /dev/null\n+++ b/${relativePath}\n@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join('\n')}`;
+    }));
+    return truncate(`${result.stdout}${result.stderr}${untrackedDiff.length === 0 ? '' : `${result.stdout || result.stderr ? '\n' : ''}${untrackedDiff.join('\n')}`}`);
   }
 
   public async patchArtifact(): Promise<PatchArtifact> {
@@ -90,6 +96,11 @@ export class RepositoryWorkspace {
 
   public async changedPaths(): Promise<string[]> {
     const result = await execFileAsync('git', ['-C', this.root, 'diff', '--name-only', '--']);
+    return [...new Set([...result.stdout.split('\n').map((value) => value.trim()).filter(Boolean), ...await this.untrackedPaths()])];
+  }
+
+  private async untrackedPaths(): Promise<string[]> {
+    const result = await execFileAsync('git', ['-C', this.root, 'ls-files', '--others', '--exclude-standard']);
     return result.stdout.split('\n').map((value) => value.trim()).filter(Boolean);
   }
 
