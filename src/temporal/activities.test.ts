@@ -146,6 +146,27 @@ describe('Temporal node activities', () => {
     expect(lifecycle).toEqual([{ status: 'started', nodeId: 'approve' }, { status: 'succeeded', nodeId: 'approve' }]);
   });
 
+  it('executes evaluator modes and enforces threshold failures', async () => {
+    await expect(executeNodeActivity({
+      runId: 'run-evaluator',
+      nodeId: 'score',
+      nodeType: 'evaluator',
+      label: 'Score',
+      config: { mode: 'fieldEquals', field: 'status', expected: 'ready', threshold: 1 },
+      inputs: [{ status: 'ready' }],
+      unit: defaultWorkUnit('evaluator'),
+    })).resolves.toMatchObject({ result: { score: 1, threshold: 1, passed: true, mode: 'fieldEquals' } });
+    await expect(executeNodeActivity({
+      runId: 'run-evaluator-failed',
+      nodeId: 'score',
+      nodeType: 'evaluator',
+      label: 'Score',
+      config: { mode: 'exists', threshold: 1, failOnThreshold: true },
+      inputs: [null],
+      unit: defaultWorkUnit('evaluator'),
+    })).rejects.toThrow('Evaluator threshold failed');
+  });
+
   it('enforces WorkUnit timeouts for Temporal activities', async () => {
     await expect(executeNodeActivity({
       runId: 'run-temporal',

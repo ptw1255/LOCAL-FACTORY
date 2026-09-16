@@ -192,6 +192,8 @@ async function executeNodeImplementation(
     }
     case 'condition':
       return input.config.result === true;
+    case 'evaluator':
+      return executeDeterministicEvaluator(input.config, input.inputs ?? []);
     case 'approval':
       // The workflow layer holds this activity at a deterministic condition
       // until the operator signal arrives; once dispatched, the human gate is
@@ -225,4 +227,48 @@ async function executeNodeImplementation(
     default:
       throw new TemporalActivityUnsupportedError(input.nodeType);
   }
+}
+
+function stableValue(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+  if (Array.isArray(value)) return `[${value.map(stableValue).join(',')}]`;
+  return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${stableValue((value as Record<string, unknown>)[key])}`).join(',')}}`;
+}
+
+function executeDeterministicEvaluator(config: Record<string, unknown>, inputs: unknown[]): Record<string, unknown> {
+  const mode = typeof config.mode === 'string' ? config.mode : 'equals';
+  const actual = inputs.at(-1) ?? config.actual;
+  const expected = config.expected;
+  let matched = false;
+  switch (mode) {
+    case 'equals':
+      matched = stableValue(actual) === stableValue(expected);
+      break;
+    case 'contains':
+      matched = typeof actual === 'string' && typeof expected === 'string' && actual.includes(expected);
+      break;
+    case 'fieldEquals': {
+      const field = typeof config.field === 'string' ? config.field : '';
+      const value = actual !== null && typeof actual === 'object' ? (actual as Record<string, unknown>)[field] : undefined;
+      matched = stableValue(value) === stableValue(expected);
+      break;
+    }
+    case 'numericGte':
+      matched = typeof actual === 'number' && typeof expected === 'number' && actual >= expected;
+      break;
+    case 'exists':
+      matched = actual !== undefined && actual !== null;
+      break;
+    default:
+      throw new Error(`Unsupported evaluator mode "${mode}".`);
+  }
+  const score = matched ? 1 : 0;
+  const threshold = typeof config.threshold === 'number' && Number.isFinite(config.threshold)
+    ? Math.min(Math.max(config.threshold, 0), 1)
+    : 1;
+  const result = { score, threshold, passed: score >= threshold, mode };
+  if (config.failOnThreshold === true && result.passed === false) {
+    throw new Error(`Evaluator threshold failed for mode "${mode}" (score ${score}, threshold ${threshold}).`);
+  }
+  return result;
 }
