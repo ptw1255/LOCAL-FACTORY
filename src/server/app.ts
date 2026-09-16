@@ -34,7 +34,7 @@ import { HttpOllamaClient } from '../runtime/ollama.js';
 import { HttpOpenAIClient } from '../runtime/openai.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 import { GitHubRepositoryClient } from '../repository/github.js';
-import { DeploymentReconciler } from '../deployment/reconciler.js';
+import { DeploymentReconciler, type DeploymentRuntimeAdapter } from '../deployment/reconciler.js';
 import type { OpenAIClient } from '../runtime/openai.js';
 import { JsonStore } from '../storage/json-store.js';
 import { PostgresStore } from '../storage/postgres-store.js';
@@ -51,6 +51,7 @@ export interface AppOptions {
   repositoryWorkspace?: RepositoryWorkspace;
   githubRepository?: GitHubRepositoryClient;
   openaiClient?: OpenAIClient;
+  deploymentAdapter?: DeploymentRuntimeAdapter;
 }
 
 function errorMessage(error: unknown): string {
@@ -138,7 +139,7 @@ export async function createApp(
   }
   const connections = new ConnectionService(store, secretBroker);
   const proposals = new ProposalService(store);
-  const deployments = new DeploymentReconciler(store);
+  const deployments = new DeploymentReconciler(store, 30_000, options.deploymentAdapter);
   if (store.close !== undefined) {
     app.addHook('onClose', async () => store.close?.());
   }
