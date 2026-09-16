@@ -57,6 +57,24 @@ describe('RepositoryWorkspace', () => {
     await expect(run.applyMutations([{ operation: 'replace', path: 'README.md', content: 'blocked' }], { protectedPaths: ['README.md'] })).rejects.toThrow(/protected/);
   });
 
+  it('returns a content-addressed mutation transaction with patch provenance', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-repo-'));
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: root });
+    await execFileAsync('git', ['config', 'user.email', 'factory@example.test'], { cwd: root });
+    await execFileAsync('git', ['config', 'user.name', 'Factory Test'], { cwd: root });
+    await writeFile(path.join(root, 'README.md'), 'before');
+    await execFileAsync('git', ['add', 'README.md'], { cwd: root });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: root });
+    const run = await (await RepositoryWorkspace.open(root)).cloneForRun('run-transaction');
+    const transaction = await run.applyMutationsTransaction([{ operation: 'replace', path: 'README.md', content: 'after' }]);
+    expect(transaction.id).toMatch(/^sha256:/);
+    expect(transaction.baseRevision).toMatch(/^[0-9a-f]{40}$/);
+    expect(transaction.results).toHaveLength(1);
+    expect(transaction.patch.id).toMatch(/^sha256:/);
+    expect(transaction.patch.changedPaths).toContain('README.md');
+    expect(transaction.rolledBack).toBe(false);
+  });
+
   it('rejects traversal and symbolic-link escapes before writing', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-repo-'));
     const outside = await mkdtemp(path.join(os.tmpdir(), 'factory-outside-'));

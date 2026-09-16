@@ -40,7 +40,7 @@ describe('coding workflow API', () => {
     if (prepare === undefined) throw new Error('Prepare node is missing.');
     prepare.type = 'repositoryMutation';
     prepare.label = 'Apply approved change';
-    prepare.config = { requiresApproval: true, operations: [{ operation: 'create', path: 'generated.txt', content: 'generated' }] };
+    prepare.config = { capabilities: ['repository.write'], requiresApproval: true, operations: [{ operation: 'create', path: 'generated.txt', content: 'generated' }] };
     prepare.unit = defaultWorkUnit('repositoryMutation');
     await store.mutate((state) => {
       state.workflows.push(workflow);
@@ -88,7 +88,7 @@ describe('coding workflow API', () => {
     workflow.agents = [];
     workflow.nodes = [
       { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
-      { id: 'mutate', type: 'repositoryMutation', label: 'Edit', position: { x: 180, y: 0 }, config: { requiresApproval: true, operations: [{ operation: 'replace', path: 'README.md', content: 'generated' }] }, unit: defaultWorkUnit('repositoryMutation') },
+      { id: 'mutate', type: 'repositoryMutation', label: 'Edit', position: { x: 180, y: 0 }, config: { capabilities: ['repository.write'], requiresApproval: true, operations: [{ operation: 'replace', path: 'README.md', content: 'generated' }] }, unit: defaultWorkUnit('repositoryMutation') },
       { id: 'branch', type: 'repositoryBranch', label: 'Branch', position: { x: 360, y: 0 }, config: { requiresApproval: true, branch: 'factory/change', baseRevision }, unit: defaultWorkUnit('repositoryBranch') },
       { id: 'commit', type: 'repositoryCommit', label: 'Commit', position: { x: 540, y: 0 }, config: { requiresApproval: true, message: 'Apply generated change', paths: ['README.md'] }, unit: defaultWorkUnit('repositoryCommit') },
       { id: 'pr', type: 'repositoryPullRequest', label: 'Open PR', position: { x: 720, y: 0 }, config: { requiresApproval: true, title: 'Generated change', body: 'What: update README\\nWhy: verify factory delivery', head: 'factory/change', base: 'main' }, unit: defaultWorkUnit('repositoryPullRequest') },

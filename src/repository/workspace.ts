@@ -17,6 +17,11 @@ export type RepositoryMutation =
   | { operation: 'delete'; path: string; expectedSha256?: string }
   | { operation: 'rename'; path: string; newPath: string; expectedSha256?: string };
 export interface MutationResult { operation: RepositoryMutation['operation']; path: string; newPath?: string; sha256?: string }
+export interface MutationTransaction { id: string; baseRevision: string; results: MutationResult[]; patch: PatchArtifact; rolledBack: false }
+export class RepositoryMutationError extends Error {
+  public readonly code = 'REPOSITORY_MUTATION_FAILED';
+  public constructor(message: string, public readonly transactionId: string, public readonly rolledBack: boolean) { super(message); this.name = 'RepositoryMutationError'; }
+}
 export interface GitRevisionResult { branch: string; revision: string }
 
 function truncate(value: string): string { return value.length > MAX_OUTPUT ? `${value.slice(0, MAX_OUTPUT)}\n… output truncated` : value; }
@@ -68,7 +73,11 @@ export class RepositoryWorkspace {
   }
 
   public async patchArtifact(): Promise<PatchArtifact> {
-    const [revision, patch, paths] = await Promise.all([this.revision(), this.diff(), this.changedPaths()]);
+    const [revision, patch, paths] = await Promise.all([
+      this.revision().catch(() => 'unversioned'),
+      this.diff().catch(() => ''),
+      this.changedPaths().catch(() => []),
+    ]);
     const createdAt = new Date().toISOString();
     const id = `sha256:${(await import('node:crypto')).createHash('sha256').update(JSON.stringify({ revision, patch, paths })).digest('hex')}`;
     return { id, baseRevision: revision, changedPaths: paths, patch, createdAt };
@@ -100,10 +109,20 @@ export class RepositoryWorkspace {
     operations: unknown[],
     options: { protectedPaths?: string[]; maxOperations?: number; maxBytes?: number } = {},
   ): Promise<MutationResult[]> {
+    return (await this.applyMutationsTransaction(operations, options)).results;
+  }
+
+  /** Apply changes atomically and return a content-addressed patch transaction. */
+  public async applyMutationsTransaction(
+    operations: unknown[],
+    options: { protectedPaths?: string[]; maxOperations?: number; maxBytes?: number } = {},
+  ): Promise<MutationTransaction> {
     if (!this.writable) throw new Error('Repository workspace is read-only; mutations require an isolated run workspace.');
+    const baseRevision = await this.revision().catch(() => 'unversioned');
     const maxOperations = options.maxOperations ?? 100;
     if (operations.length > maxOperations) throw new Error(`Repository mutation exceeds the ${maxOperations}-operation limit.`);
     const parsed = operations.map((operation, index) => this.parseMutation(operation, index));
+    const transactionId = `sha256:${createHash('sha256').update(JSON.stringify({ baseRevision, parsed })).digest('hex')}`;
     const protectedPaths = (options.protectedPaths ?? []).map((value) => this.normalizeRelative(value));
     const totalBytes = parsed.reduce((sum, operation) => sum + ('content' in operation ? Buffer.byteLength(operation.content) : 0), 0);
     if (totalBytes > (options.maxBytes ?? 1_000_000)) throw new Error('Repository mutation exceeds the byte limit.');
@@ -120,6 +139,7 @@ export class RepositoryWorkspace {
       try { originals.set(relativePath, await readFile(this.safePath(relativePath))); }
       catch { originals.set(relativePath, undefined); }
     };
+    let rollbackComplete = true;
     try {
       const results: MutationResult[] = [];
       for (const operation of parsed) {
@@ -139,16 +159,16 @@ export class RepositoryWorkspace {
           results.push({ operation: operation.operation, path: operation.path, sha256: createHash('sha256').update(operation.content).digest('hex') });
         }
       }
-      return results;
+      return { id: transactionId, baseRevision, results, patch: await this.patchArtifact(), rolledBack: false };
     } catch (error) {
       for (const [relativePath, content] of originals) {
         const target = this.safePath(relativePath);
         try {
           if (content === undefined) await unlink(target);
           else { await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, content); }
-        } catch { /* preserve the original failure; rollback is best effort */ }
+        } catch { rollbackComplete = false; }
       }
-      throw error;
+      throw new RepositoryMutationError(error instanceof Error ? error.message : 'Repository mutation failed.', transactionId, rollbackComplete);
     }
   }
 

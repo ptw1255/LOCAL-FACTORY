@@ -288,7 +288,7 @@ export class LocalWorkflowExecutor {
             await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'cancelled', output: result });
             return;
           }
-          await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'succeeded', output: result });
+          await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'succeeded', output: result, metadata: this.operationMetadata(result) });
           await this.events.emit(runId, 'unit.completed', `${nextNode.label} unit completed.`, {
             nodeId: nextNode.id,
             signal: 'trace',
@@ -446,12 +446,18 @@ export class LocalWorkflowExecutor {
         break;
       }
       case 'repositoryMutation': {
+        const capabilities = Array.isArray(node.config.capabilities)
+          ? node.config.capabilities.filter((value): value is string => typeof value === 'string')
+          : [];
+        if (!capabilities.includes('repository.write')) {
+          throw new Error('Repository mutation requires the declared "repository.write" capability.');
+        }
         const workspace = await this.workspaceForRun(runId);
         const operations = Array.isArray(node.config.operations) ? node.config.operations : [];
         const protectedPaths = Array.isArray(node.config.protectedPaths)
           ? node.config.protectedPaths.filter((value): value is string => typeof value === 'string')
           : [];
-        result = await workspace.applyMutations(operations, { protectedPaths });
+        result = await workspace.applyMutationsTransaction(operations, { protectedPaths });
         break;
       }
       case 'repositoryBranch': {
@@ -724,6 +730,22 @@ export class LocalWorkflowExecutor {
     const isolated = await this.repositoryWorkspace.cloneForRun(runId);
     this.runWorkspaces.set(runId, isolated);
     return isolated;
+  }
+
+  private operationMetadata(result: unknown): Record<string, string | number | boolean> | undefined {
+    if (result === null || typeof result !== 'object') return undefined;
+    const value = result as Record<string, unknown>;
+    const metadata: Record<string, string | number | boolean> = {};
+    for (const [key, outputKey] of [['id', 'operation.id'], ['baseRevision', 'repository.base_revision'], ['branch', 'repository.branch'], ['revision', 'repository.revision']] as const) {
+      if (typeof value[key] === 'string') metadata[outputKey] = value[key];
+    }
+    const patch = value.patch;
+    if (patch !== null && typeof patch === 'object') {
+      const patchValue = patch as Record<string, unknown>;
+      if (typeof patchValue.id === 'string') metadata['patch.artifact_id'] = patchValue.id;
+      if (Array.isArray(patchValue.changedPaths)) metadata['patch.changed_path_count'] = patchValue.changedPaths.length;
+    }
+    return Object.keys(metadata).length === 0 ? undefined : metadata;
   }
 
   private requiresApproval(node: WorkflowNode): boolean {

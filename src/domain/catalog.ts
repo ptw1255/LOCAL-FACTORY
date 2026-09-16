@@ -138,7 +138,7 @@ export const nodeCatalog: NodeCatalogItem[] = [
     label: 'Apply repository mutation',
     category: 'Repository',
     description: 'Apply explicitly declared file operations inside the bounded run workspace.',
-    defaultConfig: { operations: [] },
+    defaultConfig: { capabilities: [], operations: [] },
   },
   {
     type: 'repositoryBranch',
