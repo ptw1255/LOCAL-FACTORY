@@ -116,6 +116,29 @@ describe('LocalWorkflowExecutor', () => {
     expect(approval).toEqual(expect.objectContaining({ decision: 'approved', bindingHash: expect.stringMatching(/^[a-f0-9]{64}$/) }));
   });
 
+  it('supersedes a pending approval and issues a fresh request', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const output = workflow.nodes.find((node) => node.id === 'output');
+    if (output === undefined) throw new Error('Seed output node is missing.');
+    workflow.nodes.splice(workflow.nodes.indexOf(output), 0, {
+      id: 'approval-refresh', type: 'approval', label: 'Refresh approval', position: { x: 1_020, y: 180 }, config: {}, unit: defaultWorkUnit('approval'),
+    });
+    const incoming = workflow.edges.find((edge) => edge.target === 'output');
+    if (incoming === undefined) throw new Error('Seed output edge is missing.');
+    incoming.target = 'approval-refresh';
+    workflow.edges.push({ id: 'approval-refresh-output', source: 'approval-refresh', target: 'output' });
+    const run = await executor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'waiting');
+    const superseded = await executor.supersede(run.id, { actor: 'test-operator', reason: 'Review context changed.' });
+    expect(superseded.status).toBe('queued');
+    await waitFor(async () => (await store.read((state) => state.approvals.filter((candidate) => candidate.runId === run.id))).length === 2);
+    const approvals = await store.read((state) => state.approvals.filter((candidate) => candidate.runId === run.id));
+    expect(approvals.some((approval) => approval.decision === 'superseded' && approval.reason === 'Review context changed.')).toBe(true);
+    expect(approvals.some((approval) => approval.decision === 'pending')).toBe(true);
+    expect((await events.list(run.id)).some((event) => event.type === 'approval.superseded')).toBe(true);
+    await executor.cancel(run.id);
+  });
+
   it('rejects approval after the protected operation changes', async () => {
     const workflow = structuredClone(seedWorkflow);
     const prepare = workflow.nodes.find((node) => node.id === 'prepare');

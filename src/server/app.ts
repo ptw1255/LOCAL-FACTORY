@@ -685,6 +685,24 @@ export async function createApp(
     },
   );
 
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    '/api/runs/:id/supersede',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      try {
+        const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
+        if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
+        const body = (request.body ?? {}) as Record<string, unknown>;
+        return await executor.supersede(request.params.id, {
+          ...(typeof body.actor === 'string' ? { actor: body.actor } : {}),
+          ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
+        });
+      } catch (error) {
+        return reply.status(409).send({ message: errorMessage(error) });
+      }
+    },
+  );
+
   app.post<{ Params: { id: string } }>(
     '/api/runs/:id/cancel',
     async (request, reply) => {

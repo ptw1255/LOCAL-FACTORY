@@ -242,6 +242,29 @@ export class LocalWorkflowExecutor {
     return run;
   }
 
+  public async supersede(runId: string, options: { actor?: string; reason?: string } = {}): Promise<RunRecord> {
+    const run = await this.store.mutate((state) => {
+      const target = state.runs.find((candidate) => candidate.id === runId);
+      if (target === undefined) throw new Error('Run not found.');
+      if (target.status !== 'waiting') throw new Error('Only waiting runs can supersede an approval.');
+      const waitingNode = target.workflowDefinition.nodes.find((node) => this.requiresApproval(node) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
+      if (waitingNode === undefined) throw new Error('No approval node is waiting.');
+      const approval = state.approvals.find((candidate) => candidate.runId === runId && candidate.nodeId === waitingNode.id && candidate.decision === 'pending');
+      if (approval === undefined) throw new Error('Approval record is missing or no longer pending.');
+      const now = new Date().toISOString();
+      approval.decision = 'superseded';
+      approval.actor = options.actor?.trim() || 'local-operator';
+      approval.reason = options.reason?.trim() || 'Approval superseded by operator.';
+      approval.decidedAt = now;
+      delete target.pendingApprovalHashes[waitingNode.id];
+      target.status = 'queued';
+      return target;
+    });
+    await this.events.emit(runId, 'approval.superseded', 'Workflow approval superseded; a fresh approval is required.', { severityText: 'WARN' });
+    void this.execute(runId);
+    return run;
+  }
+
   public async cancel(runId: string): Promise<RunRecord> {
     const completedAt = new Date();
     let cancelledApproval = false;
