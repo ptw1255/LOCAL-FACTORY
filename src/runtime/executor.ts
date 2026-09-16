@@ -13,7 +13,7 @@ import type { PlatformStore } from '../storage/store.js';
 import { HttpOllamaClient, type OllamaClient } from './ollama.js';
 import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
 import type { RepositoryWorkspace } from '../repository/workspace.js';
-import type { GitHubRepositoryClient } from '../repository/github.js';
+import { RepositoryCiError, type GitHubRepositoryClient } from '../repository/github.js';
 import type { OpenAIClient } from './openai.js';
 
 const MAX_WAIT_MS = 5_000;
@@ -51,7 +51,11 @@ function edgeMatches(edge: WorkflowEdge, result: unknown): boolean {
   if (edge.condition === undefined || edge.condition.trim() === '') {
     return true;
   }
-  return edge.condition.trim().toLowerCase() === String(result).toLowerCase();
+  const condition = edge.condition.trim().toLowerCase();
+  if (result !== null && typeof result === 'object' && typeof (result as { status?: unknown }).status === 'string') {
+    return condition === String((result as { status: string }).status).toLowerCase();
+  }
+  return condition === String(result).toLowerCase();
 }
 
 export class LocalWorkflowExecutor {
@@ -362,6 +366,7 @@ export class LocalWorkflowExecutor {
             operation: nextNode.type,
             status: controller.signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && error.code === 'WORK_UNIT_TIMED_OUT' ? 'timed_out' : 'failed',
             error: error instanceof Error ? error.message : 'Unknown unit failure.',
+            metadata: error instanceof RepositoryCiError ? this.operationMetadata(error.result) : undefined,
           });
           await this.events.emit(runId, 'unit.failed', `${nextNode.label} unit failed.`, {
             nodeId: nextNode.id,
@@ -546,7 +551,12 @@ export class LocalWorkflowExecutor {
         const required = Array.isArray(node.config.required) ? node.config.required.filter((value): value is string => typeof value === 'string') : [];
         const timeoutMs = typeof node.config.timeoutMs === 'number' ? node.config.timeoutMs : undefined;
         const intervalMs = typeof node.config.intervalMs === 'number' ? node.config.intervalMs : undefined;
-        result = await this.githubRepository.waitForChecks({ ref, required, timeoutMs, intervalMs, signal });
+        const ciResult = await this.githubRepository.waitForChecks({ ref, required, timeoutMs, intervalMs, signal });
+        result = ciResult;
+        const failurePolicy = node.config.failurePolicy === 'route' ? 'route' : 'fail';
+        if (failurePolicy === 'fail' && required.length > 0 && ciResult.status !== 'success') {
+          throw new RepositoryCiError(`Required GitHub checks did not pass for ${ref}: ${ciResult.status}.`, ciResult);
+        }
         break;
       }
       case 'notification':
@@ -792,6 +802,13 @@ export class LocalWorkflowExecutor {
     for (const [key, outputKey] of [['id', 'operation.id'], ['baseRevision', 'repository.base_revision'], ['branch', 'repository.branch'], ['revision', 'repository.revision']] as const) {
       if (typeof value[key] === 'string') metadata[outputKey] = value[key];
     }
+    if (typeof value.number === 'number') metadata['pull_request.number'] = value.number;
+    if (typeof value.url === 'string') metadata['provider.url'] = value.url;
+    if (typeof value.state === 'string') metadata['pull_request.state'] = value.state;
+    if (typeof value.ref === 'string') metadata['ci.ref'] = value.ref;
+    if (typeof value.status === 'string') metadata['ci.status'] = value.status;
+    if (Array.isArray(value.required)) metadata['ci.required_count'] = value.required.length;
+    if (Array.isArray(value.failures)) metadata['ci.failure_count'] = value.failures.length;
     const patch = value.patch;
     if (patch !== null && typeof patch === 'object') {
       const patchValue = patch as Record<string, unknown>;

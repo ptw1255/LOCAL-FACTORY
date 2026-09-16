@@ -173,7 +173,7 @@ export const nodeCatalog: NodeCatalogItem[] = [
     label: 'Observe repository CI',
     category: 'Repository',
     description: 'Poll required GitHub checks and route the terminal result.',
-    defaultConfig: { ref: '', required: [], timeoutMs: 120000, intervalMs: 2000 },
+    defaultConfig: { ref: '', required: [], timeoutMs: 120000, intervalMs: 2000, failurePolicy: 'fail' },
   },
 ];
 
