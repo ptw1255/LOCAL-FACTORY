@@ -886,6 +886,13 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         const saved = await saveWorkflow();
         if (saved === null) return;
       }
+      if (yamlDirty) {
+        const saved = sourceSaveRef.current === null ? false : await sourceSaveRef.current();
+        if (!saved) {
+          setNotice({ tone: 'warning', text: 'Save and compile the active source file before running.' });
+          return;
+        }
+      }
       if (runMode === 'dry-run') {
         const artifact = artifacts.filter((candidate) => candidate.environment === runEnvironment && candidate.workflows.some((candidateWorkflow) => candidateWorkflow.id === workflow.id)).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
         const preflight = await api.dryRun(workflow.id, { environment: runEnvironment, ...(artifact === undefined ? {} : { artifactId: artifact.id }), ...(input === undefined ? {} : { input }) });
