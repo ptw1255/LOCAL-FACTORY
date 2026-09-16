@@ -13,7 +13,7 @@ import type { PlatformStore } from '../storage/store.js';
 import { HttpOllamaClient, type OllamaClient } from './ollama.js';
 import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
 import type { RepositoryWorkspace } from '../repository/workspace.js';
-import { RepositoryConflictError, RepositoryMutationError, RepositoryPolicyError } from '../repository/workspace.js';
+import { RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryConflictError, RepositoryMutationError, RepositoryPolicyError } from '../repository/workspace.js';
 import { RepositoryCiError, type GitHubRepositoryClient } from '../repository/github.js';
 import type { OpenAIClient } from './openai.js';
 
@@ -399,15 +399,17 @@ export class LocalWorkflowExecutor {
             runId,
             unitId: nextNode.id,
             operation: nextNode.type,
-            status: controller.signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && error.code === 'WORK_UNIT_TIMED_OUT' ? 'timed_out' : 'failed',
+            status: controller.signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && ['WORK_UNIT_TIMED_OUT', 'REPOSITORY_CHECK_TIMED_OUT'].includes(String(error.code)) ? 'timed_out' : 'failed',
             idempotencyKey: `${unitEvidenceKey}:failed`,
             error: error instanceof Error ? error.message : 'Unknown unit failure.',
             metadata: error instanceof RepositoryCiError
               ? this.operationMetadata(error.result)
               : error instanceof RepositoryMutationError
                 ? this.operationMetadata(error)
-                : error instanceof RepositoryConflictError || error instanceof RepositoryPolicyError
-                  ? this.operationMetadata(error)
+              : error instanceof RepositoryConflictError || error instanceof RepositoryPolicyError
+                ? this.operationMetadata(error)
+                : error instanceof RepositoryCheckError || error instanceof RepositoryCheckTimeoutError
+                  ? this.operationMetadata(error.result)
                 : undefined,
           });
           await this.events.emit(runId, 'unit.failed', `${nextNode.label} unit failed.`, {
@@ -427,7 +429,7 @@ export class LocalWorkflowExecutor {
         return;
       }
       const message = error instanceof Error ? error.message : 'Unknown execution failure.';
-      const timedOut = error instanceof Error && 'code' in error && error.code === 'WORK_UNIT_TIMED_OUT';
+      const timedOut = error instanceof Error && 'code' in error && ['WORK_UNIT_TIMED_OUT', 'REPOSITORY_CHECK_TIMED_OUT'].includes(String(error.code));
       await this.failRun(runId, message, timedOut ? 'timed_out' : 'failed');
     } finally {
       if (this.activeRuns.get(runId) === controller) {
@@ -532,7 +534,8 @@ export class LocalWorkflowExecutor {
         const required = node.config.required !== false;
         const check = await workspace.runCheck(command, timeoutMs);
         result = { ...check, required, promotionBlocked: required && check.exitCode !== 0 };
-        if (required && check.exitCode !== 0) throw new Error(`Required repository check failed: ${command}.`);
+        if (required && check.timedOut) throw new RepositoryCheckTimeoutError(`Required repository check timed out: ${command}.`, check);
+        if (required && check.exitCode !== 0) throw new RepositoryCheckError(`Required repository check failed: ${command}.`, check);
         break;
       }
       case 'repositoryPatch': {
@@ -924,6 +927,8 @@ export class LocalWorkflowExecutor {
     if (typeof value.state === 'string') metadata['pull_request.state'] = value.state;
     if (typeof value.ref === 'string') metadata['ci.ref'] = value.ref;
     if (typeof value.status === 'string') metadata['ci.status'] = value.status;
+    if (typeof value.exitCode === 'number') metadata['check.exit_code'] = value.exitCode;
+    if (typeof value.timedOut === 'boolean') metadata['check.timed_out'] = value.timedOut;
     if (typeof value.transactionId === 'string') metadata['operation.transaction_id'] = value.transactionId;
     if (typeof value.rolledBack === 'boolean') metadata['mutation.rolled_back'] = value.rolledBack;
     if (typeof value.expected === 'string') metadata['repository.expected'] = value.expected;

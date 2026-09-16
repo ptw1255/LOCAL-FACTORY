@@ -29,6 +29,13 @@ describe('RepositoryWorkspace', () => {
     expect(result.output.length).toBeLessThanOrEqual(20_020);
   });
 
+  it('normalizes a timed-out allow-listed check', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-check-timeout-'));
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node -e "setTimeout(() => {}, 1000)"' } }));
+    const result = await (await RepositoryWorkspace.open(root)).runCheck('npm run typecheck', 20);
+    expect(result).toMatchObject({ command: 'npm run typecheck', timedOut: true, exitCode: expect.any(Number) });
+  });
+
   it('creates a content-addressed patch artifact with revision provenance', async () => {
     const workspace = await RepositoryWorkspace.open(process.cwd());
     const artifact = await workspace.patchArtifact();
