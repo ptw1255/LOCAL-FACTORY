@@ -115,7 +115,7 @@ export class EventService {
       ...(input.input === undefined ? {} : { inputHash: createHash('sha256').update(JSON.stringify(input.input)).digest('hex') }),
       ...(input.output === undefined ? {} : { outputHash: createHash('sha256').update(JSON.stringify(input.output)).digest('hex') }),
       ...(input.error === undefined ? {} : { error: input.error.slice(0, 2_000) }),
-      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+      ...(input.metadata === undefined ? {} : { metadata: sanitizeMetadata(input.metadata) }),
     };
     await this.store.appendEvidence(evidence);
     return evidence;
@@ -149,4 +149,15 @@ export class EventService {
 function deterministicEvidenceId(runId: string, unitId: string, operation: string, status: OperationEvidenceStatus, idempotencyKey: string): string {
   const digest = createHash('sha256').update(JSON.stringify({ runId, unitId, operation, status, idempotencyKey })).digest('hex');
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+const sensitiveMetadataKey = /(secret|token|password|authorization|api[._-]?key|prompt|output|credential)/i;
+
+function sanitizeMetadata(metadata: Record<string, string | number | boolean>): Record<string, string | number | boolean> {
+  const retained: Array<[string, string | number | boolean]> = [];
+  for (const [key, value] of Object.entries(metadata)) {
+    if (sensitiveMetadataKey.test(key)) continue;
+    retained.push([key, typeof value === 'string' ? value.slice(0, 500) : value]);
+  }
+  return Object.fromEntries(retained);
 }

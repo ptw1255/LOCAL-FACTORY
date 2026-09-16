@@ -116,6 +116,17 @@ describe('EventService retention', () => {
     expect(first).toEqual(expect.objectContaining({ actor: 'runtime', source: 'local-executor', correlationId: 'trace-1' }));
   });
 
+  it('redacts sensitive metadata keys and bounds retained values', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const service = new EventService(new JsonStore(path.join(directory, 'state.json')));
+    const evidence = await service.recordEvidence({
+      runId: 'run-1', unitId: 'provider', operation: 'llm', status: 'succeeded',
+      metadata: { 'provider.request_id': 'req-1', 'api.key': 'super-secret', prompt: 'do not retain', detail: 'x'.repeat(600) },
+    });
+    expect(evidence.metadata).toEqual({ 'provider.request_id': 'req-1', detail: 'x'.repeat(500) });
+    expect(JSON.stringify(await service.listEvidence('run-1'))).not.toContain('super-secret');
+  });
+
   it('prunes durable evidence only when its separate policy is configured', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
