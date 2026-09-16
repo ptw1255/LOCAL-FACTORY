@@ -1201,15 +1201,20 @@ function OperationalTree({
 
   async function deleteFile(): Promise<void> {
     const file = files.find((candidate) => candidate.path === selectedPath);
-    if (file === undefined || !window.confirm(`Delete ${file.path}? This cannot be undone.`)) return;
+    if (file === undefined || !window.confirm(`Move ${file.path} to workspace trash?`)) return;
     if (dirty && !window.confirm('The selected file has unsaved changes. Delete it anyway?')) return;
     try {
-      await api.deleteProjectFile(projectId, file.path);
+      const removed = await api.deleteProjectFile(projectId, file.path);
       await refreshFiles();
       const remaining = files.filter((candidate) => candidate.path !== file.path);
       const next = remaining[0]?.path ?? 'project.yaml';
       setSelectedPath(next);
       onDirtyChange(false);
+      if (window.confirm(`${file.path} was moved to trash. Restore it now?`)) {
+        await api.restoreProjectFile(projectId, removed.trashId);
+        await refreshFiles();
+        setSelectedPath(file.path);
+      }
     } catch (deleteError) { setError(errorText(deleteError)); }
   }
 

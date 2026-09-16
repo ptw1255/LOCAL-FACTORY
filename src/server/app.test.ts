@@ -249,6 +249,19 @@ describe('platform API', () => {
     expect(response.json()).toEqual({ items: [] });
   });
 
+  it('moves deleted files to scoped trash and restores them', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'restore-me.yaml', content: 'apiVersion: factory.agentic/v1' } });
+    const removed = await app.inject({ method: 'DELETE', url: '/api/projects/project-local/files', headers, payload: { path: 'restore-me.yaml' } });
+    expect(removed.statusCode).toBe(200);
+    const trashId = removed.json<{ trashId: string }>().trashId;
+    expect(trashId).toMatch(/^trash-/);
+    expect((await app.inject({ method: 'GET', url: '/api/projects/project-local/files?path=restore-me.yaml', headers })).statusCode).toBe(404);
+    const restored = await app.inject({ method: 'POST', url: '/api/projects/project-local/files/restore', headers, payload: { trashId } });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json<{ path: string }>().path).toBe('restore-me.yaml');
+  });
+
   it('pins a run to the selected immutable artifact version', async () => {
     const artifact = await app.inject({ method: 'POST', url: '/api/projects/project-local/compile', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' }, payload: {} });
     // The seeded project has no typed files; an absent artifact is rejected rather than silently followed.

@@ -21,7 +21,7 @@ import {
   createTenantSchema,
   workflowDefinitionSchema,
 } from '../domain/schema.js';
-import type { ArtifactRecord, EvaluationDatasetCase, ProjectFileRecord, ReplayReportRecord, SourceDiagnostic, WorkflowDefinition } from '../domain/types.js';
+import type { ArtifactRecord, DeletedProjectFileRecord, EvaluationDatasetCase, ProjectFileRecord, ReplayReportRecord, SourceDiagnostic, WorkflowDefinition } from '../domain/types.js';
 import { validateWorkflow } from '../domain/validator.js';
 import { defaultFactoryManifest } from '../factory/manifest.js';
 import { calculateFactoryMetrics } from '../factory/metrics.js';
@@ -487,12 +487,39 @@ export async function createApp(
       const body = request.body as { path?: unknown };
       if (typeof body?.path !== 'string' || body.path.trim() === '') return reply.status(422).send({ message: 'File path is required.' });
       const removed = await store.mutate((state) => {
-        const before = state.files.length;
-        state.files = state.files.filter((file) => !(file.projectId === request.params.projectId && file.tenantId === scope.tenantId && file.path === body.path));
-        return state.files.length !== before;
+        const index = state.files.findIndex((file) => file.projectId === request.params.projectId && file.tenantId === scope.tenantId && file.path === body.path);
+        if (index < 0) return undefined;
+        const file = state.files[index];
+        if (file === undefined) return undefined;
+        const trash: DeletedProjectFileRecord = { ...file, trashId: `trash-${randomUUID()}`, deletedAt: new Date().toISOString() };
+        state.files.splice(index, 1);
+        state.deletedFiles.unshift(trash);
+        return trash;
       });
-      if (!removed) return reply.status(404).send({ message: 'Project file not found.' });
-      return { deleted: true, path: body.path };
+      if (removed === undefined) return reply.status(404).send({ message: 'Project file not found.' });
+      return { deleted: true, path: body.path, trashId: removed.trashId };
+    },
+  );
+
+  app.post<{ Params: { projectId: string }; Body: unknown }>(
+    '/api/projects/:projectId/files/restore',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      const body = request.body as { trashId?: unknown };
+      if (typeof body?.trashId !== 'string' || body.trashId.trim() === '') return reply.status(422).send({ message: 'trashId is required.' });
+      const restored = await store.mutate((state) => {
+        const index = state.deletedFiles.findIndex((file) => file.trashId === body.trashId && file.projectId === request.params.projectId && file.tenantId === scope.tenantId);
+        if (index < 0) return undefined;
+        const deleted = state.deletedFiles[index];
+        if (deleted === undefined) return undefined;
+        if (state.files.some((file) => file.projectId === request.params.projectId && file.tenantId === scope.tenantId && file.path === deleted.path)) throw new Error('A file already exists at the deleted file path.');
+        const { trashId: _trashId, deletedAt: _deletedAt, ...file } = deleted;
+        state.deletedFiles.splice(index, 1);
+        state.files.push(file);
+        return file;
+      });
+      if (restored === undefined) return reply.status(404).send({ message: 'Deleted project file not found.' });
+      return restored;
     },
   );
 

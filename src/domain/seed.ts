@@ -152,6 +152,7 @@ export function createSeedState(): PlatformState {
     connections: structuredClone(seedConnections),
     proposals: [],
     files: [],
+    deletedFiles: [],
     artifacts: [],
     evidence: [],
     approvals: [],
