@@ -36,6 +36,24 @@ Open <http://localhost:5173>. Vite proxies `/api` requests to the Fastify server
 port 3100. Without `DATABASE_URL`, runtime state is stored in `.data/state.json`.
 Without Vault configuration, credential writes are rejected rather than persisted.
 
+### Control-plane authentication
+
+Local development defaults to an implicit admin principal so the Studio works without
+setup. Set `FACTORY_AUTH_MODE=required` before exposing the API to shared users. A
+single admin token can be supplied with `FACTORY_API_TOKEN`, or use a JSON list for
+scoped roles:
+
+```bash
+export FACTORY_AUTH_MODE=required
+export FACTORY_AUTH_TOKENS='[{"token":"author-token","principal":{"id":"author-1","role":"author","tenantIds":["tenant-local"],"projectIds":["project-local"]}}]'
+```
+
+Clients send `Authorization: Bearer <token>`. Roles are `reader`, `author`,
+`operator`, `reviewer`, and `admin`; tenant/project headers are accepted only when
+the principal is scoped to them. Authentication and authorization decisions are
+recorded as redacted `authz.*` events. Secret values are never included in those
+events or API responses.
+
 ### Local Ollama models
 
 Agent boxes can execute local Ollama models without a hosted provider. Start Ollama
