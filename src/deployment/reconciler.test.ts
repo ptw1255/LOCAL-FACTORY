@@ -129,4 +129,26 @@ describe('DeploymentReconciler', () => {
     await expect(failing.reconcile(second.id, scope)).rejects.toThrow('Runtime adapter unavailable.');
     expect((await failing.list(scope)).find((candidate) => candidate.id === second.id)).toEqual(expect.objectContaining({ observedState: 'failed', health: 'degraded', lastError: 'Runtime adapter unavailable.' }));
   });
+
+  it('recovers transient health adapter failures within the retry bound', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-retry', tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    let calls = 0;
+    const reconciler = new DeploymentReconciler(store, 30_000, {
+      observe: (deployment) => {
+        calls += 1;
+        if (calls < 3) throw new Error('Transient runtime unavailable.');
+        return { observedState: deployment.desiredState === 'running' ? 'live' : 'stopped', health: deployment.desiredState === 'running' ? 'healthy' : 'unknown', triggerStatus: deployment.desiredState === 'running' ? 'active' : 'inactive' };
+      },
+    }, 3);
+    const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'retry', artifactId: artifact.id, trigger: 'manual' });
+    const started = await reconciler.action(deployment.id, scope, 'start');
+    expect(started).toMatchObject({ observedState: 'live', health: 'healthy' });
+    expect(calls).toBe(3);
+  });
 });

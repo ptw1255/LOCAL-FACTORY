@@ -28,7 +28,7 @@ const localRuntimeAdapter: DeploymentRuntimeAdapter = {
 export class DeploymentReconciler {
   private readonly ownerId = `reconciler-${randomUUID()}`;
 
-  public constructor(private readonly store: PlatformStore, private readonly leaseMs = 30_000, private readonly adapter: DeploymentRuntimeAdapter = localRuntimeAdapter) {}
+  public constructor(private readonly store: PlatformStore, private readonly leaseMs = 30_000, private readonly adapter: DeploymentRuntimeAdapter = localRuntimeAdapter, private readonly maxObserveAttempts = 3) {}
 
   public list(scope: DeploymentScope): Promise<DeploymentRecord[]> {
     return this.store.read((state) => state.deployments.filter((deployment) => deployment.tenantId === scope.tenantId && deployment.projectId === scope.projectId));
@@ -81,7 +81,7 @@ export class DeploymentReconciler {
         if (action === 'stop') { deployment.desiredState = 'stopped'; deployment.observedState = 'stopping'; }
         else { deployment.desiredState = 'running'; deployment.observedState = 'starting'; }
         deployment.lastError = undefined;
-        const observation = await this.adapter.observe(deployment);
+        const observation = await this.observeWithRetry(deployment);
         deployment.observedState = observation.observedState;
         deployment.health = observation.health;
         deployment.triggerStatus = observation.triggerStatus;
@@ -124,7 +124,7 @@ export class DeploymentReconciler {
           throw new Error('Deployment artifact is no longer available for this project.');
         }
         const previousObserved = deployment.observedState;
-        const observation = await this.adapter.observe(deployment);
+        const observation = await this.observeWithRetry(deployment);
         const targetObserved = observation.observedState;
         if (previousObserved !== targetObserved) {
           deployment.observedState = targetObserved;
@@ -180,6 +180,21 @@ export class DeploymentReconciler {
       throw new Error(`Deployment is currently reconciled by ${activeLease.ownerId}.`);
     }
     deployment.lease = { ownerId: this.ownerId, expiresAt: new Date(now + Math.max(1_000, this.leaseMs)).toISOString() };
+  }
+
+  private async observeWithRetry(deployment: DeploymentRecord): Promise<DeploymentObservation> {
+    const attempts = Math.max(1, Math.min(10, Math.floor(this.maxObserveAttempts)));
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        return await this.adapter.observe(deployment);
+      } catch (error) {
+        lastError = error;
+        if (attempt >= attempts) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, Math.min(250, 25 * attempt)));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('Deployment runtime observation failed.');
   }
 
   private findArtifact(artifacts: ArtifactRecord[], id: string, scope: DeploymentScope): ArtifactRecord | undefined {
