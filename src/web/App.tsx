@@ -1293,6 +1293,7 @@ function RunsView() {
   const [observeTab, setObserveTab] = useState<ObserveTab>('runs');
   const [retentionHours, setRetentionHours] = useState(48);
   const [evidenceRetentionHours, setEvidenceRetentionHours] = useState<number | null>(null);
+  const [phoenixUiUrl, setPhoenixUiUrl] = useState<string | null>(null);
 
   const loadRuns = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -1306,6 +1307,7 @@ function RunsView() {
       setSelectedRunId((current) => current ?? sorted[0]?.id ?? null);
       setRetentionHours(health.observability.retentionHours);
       setEvidenceRetentionHours(health.observability.evidenceRetentionHours);
+      setPhoenixUiUrl(health.observability.phoenixConfigured ? health.observability.phoenixUiUrl : null);
     } catch (loadError) {
       setError(errorText(loadError));
     } finally {
@@ -1389,7 +1391,7 @@ function RunsView() {
       <AppHeader eyebrow="Observability" title="Observe">
         <button className="button secondary" onClick={() => void loadRuns()} type="button"><Icon name="refresh" /> Refresh</button>
       </AppHeader>
-      <section className="observe-retention" aria-label="Telemetry retention policy"><Icon name="clock" size={15} /><span><strong>Telemetry retention:</strong> {retentionHours} hours. Durable operation evidence is retained {evidenceRetentionHours === null ? 'independently of telemetry policy' : `for ${evidenceRetentionHours} hours`}.</span></section>
+      <section className="observe-retention" aria-label="Telemetry retention policy"><Icon name="clock" size={15} /><span><strong>Telemetry retention:</strong> {retentionHours} hours. Durable operation evidence is retained {evidenceRetentionHours === null ? 'independently of telemetry policy' : `for ${evidenceRetentionHours} hours`}.</span>{phoenixUiUrl === null ? null : <a className="observe-phoenix-link" href={phoenixUiUrl} rel="noreferrer" target="_blank">Open Phoenix <Icon name="chevron" size={12} /></a>}</section>
       <section className="summary-strip">
         <div><span>All runs</span><strong>{runs.length}</strong></div>
         <div><span>Active now</span><strong>{activeRuns}</strong></div>

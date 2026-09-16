@@ -123,6 +123,7 @@ export async function createApp(
     ? undefined
     : positiveNumber(process.env.EVIDENCE_RETENTION_HOURS, 1);
   const exporter = telemetryExporter();
+  const phoenixUiUrl = process.env.PHOENIX_UI_URL?.trim() || undefined;
   const events = new EventService(store, { retentionHours, ...(evidenceRetentionHours === undefined ? {} : { evidenceRetentionHours }), exporter });
   const ollama = new HttpOllamaClient();
   const repositoryWorkspace = options.repositoryWorkspace ?? (process.env.REPOSITORY_WORKSPACE === undefined
@@ -166,6 +167,8 @@ export async function createApp(
       retentionHours,
       evidenceRetentionHours: evidenceRetentionHours ?? null,
       otlpExportEnabled: exporter !== undefined,
+      phoenixConfigured: exporter !== undefined && phoenixUiUrl !== undefined,
+      phoenixUiUrl: phoenixUiUrl ?? null,
     },
     timestamp: new Date().toISOString(),
   }));

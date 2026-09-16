@@ -212,6 +212,7 @@ Start the optional Phoenix container with Docker Desktop:
 
 ```bash
 PHOENIX_ENDPOINT=http://phoenix:6006 \
+PHOENIX_UI_URL=http://localhost:6006 \
   docker compose --profile observability up --build
 ```
 

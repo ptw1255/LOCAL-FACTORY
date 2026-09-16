@@ -44,6 +44,7 @@ describe('platform API', () => {
     });
 
     expect(health.statusCode).toBe(200);
+    expect(health.json<{ observability: { phoenixConfigured: boolean; phoenixUiUrl: string | null } }>().observability).toEqual(expect.objectContaining({ phoenixConfigured: false, phoenixUiUrl: null }));
     expect(catalog.json<{ items: unknown[] }>().items.length).toBeGreaterThan(5);
     expect(workflows.json<{ items: unknown[] }>().items).toHaveLength(1);
     expect(metrics.json()).toEqual(

@@ -60,7 +60,7 @@ async function requestText(path: string): Promise<string> {
 }
 
 export const api = {
-  health: () => request<{ observability: { retentionHours: number; evidenceRetentionHours: number | null } }>('/api/health'),
+  health: () => request<{ observability: { retentionHours: number; evidenceRetentionHours: number | null; otlpExportEnabled: boolean; phoenixConfigured: boolean; phoenixUiUrl: string | null } }>('/api/health'),
   tenants: () => request<ItemsResponse<TenantRecord>>('/api/tenants'),
   projects: () => request<ItemsResponse<ProjectRecord>>('/api/projects'),
   createProject: (input: { name: string; description: string }) =>
