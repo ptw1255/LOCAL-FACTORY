@@ -7,12 +7,14 @@ import { telemetryResource } from './semconv.js';
 
 export class EventService {
   private readonly retentionHours: number;
+  private readonly evidenceRetentionHours: number | undefined;
 
   public constructor(
     private readonly store: PlatformStore,
-    options: { retentionHours?: number; exporter?: TelemetryExporter } = {},
+    options: { retentionHours?: number; evidenceRetentionHours?: number; exporter?: TelemetryExporter } = {},
   ) {
     this.retentionHours = options.retentionHours ?? 48;
+    this.evidenceRetentionHours = options.evidenceRetentionHours;
     this.exporter = options.exporter;
   }
 
@@ -118,15 +120,18 @@ export class EventService {
   }
 
   public prune(): Promise<number> {
-    if (this.store.pruneEvents === undefined) return Promise.resolve(0);
     const before = new Date(Date.now() - this.retentionHours * 60 * 60 * 1000).toISOString();
+    const evidenceBefore = this.evidenceRetentionHours === undefined
+      ? undefined
+      : new Date(Date.now() - this.evidenceRetentionHours * 60 * 60 * 1000).toISOString();
     return this.store.listEvents().then(async (events) => {
       const traceIds = [...new Set(events
         .filter((event) => event.timestamp < before)
         .map((event) => event.traceId))];
-      const deleted = await this.store.pruneEvents!(before);
+      const deleted = this.store.pruneEvents === undefined ? 0 : await this.store.pruneEvents(before);
+      const deletedEvidence = evidenceBefore === undefined || this.store.pruneEvidence === undefined ? 0 : await this.store.pruneEvidence(evidenceBefore);
       await this.exporter?.prune?.(traceIds);
-      return deleted;
+      return deleted + deletedEvidence;
     });
   }
 

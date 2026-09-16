@@ -163,6 +163,12 @@ export class PostgresStore implements PlatformStore {
     return result.rowCount ?? 0;
   }
 
+  public async pruneEvidence(before: string): Promise<number> {
+    await this.ensureInitialized();
+    const result = await this.pool.query('DELETE FROM operation_evidence WHERE occurred_at < $1::timestamptz', [before]);
+    return result.rowCount ?? 0;
+  }
+
   public async close(): Promise<void> {
     await this.pool.end();
   }

@@ -70,6 +70,14 @@ export class JsonStore implements PlatformStore {
     });
   }
 
+  public async pruneEvidence(before: string): Promise<number> {
+    return this.mutate((state) => {
+      const originalLength = state.evidence.length;
+      state.evidence = state.evidence.filter((entry) => entry.occurredAt >= before);
+      return originalLength - state.evidence.length;
+    });
+  }
+
   public listEvents(runId?: string): Promise<RunEvent[]> {
     return this.read((state) =>
       state.events

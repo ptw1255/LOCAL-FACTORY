@@ -118,8 +118,11 @@ export async function createApp(
   );
   const retentionHours = options.observabilityRetentionHours
     ?? positiveNumber(process.env.OBSERVABILITY_RETENTION_HOURS, 48);
+  const evidenceRetentionHours = process.env.EVIDENCE_RETENTION_HOURS === undefined
+    ? undefined
+    : positiveNumber(process.env.EVIDENCE_RETENTION_HOURS, 1);
   const exporter = telemetryExporter();
-  const events = new EventService(store, { retentionHours, exporter });
+  const events = new EventService(store, { retentionHours, ...(evidenceRetentionHours === undefined ? {} : { evidenceRetentionHours }), exporter });
   const ollama = new HttpOllamaClient();
   const repositoryWorkspace = options.repositoryWorkspace ?? (process.env.REPOSITORY_WORKSPACE === undefined
     ? undefined
@@ -160,6 +163,7 @@ export async function createApp(
     storage: databaseUrl === undefined ? 'json' : 'postgresql',
     observability: {
       retentionHours,
+      evidenceRetentionHours: evidenceRetentionHours ?? null,
       otlpExportEnabled: exporter !== undefined,
     },
     timestamp: new Date().toISOString(),
