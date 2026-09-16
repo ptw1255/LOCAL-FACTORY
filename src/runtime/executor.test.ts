@@ -109,6 +109,8 @@ describe('LocalWorkflowExecutor', () => {
     );
     expect(completed?.humanTouchpoints).toBe(1);
     expect(completed?.completedNodeIds).toContain('approval');
+    const recorded = await events.list(run.id);
+    expect(recorded.filter((event) => event.type === 'node.started' && event.nodeId === 'approval')).toHaveLength(1);
     const approval = await store.read((state) => state.approvals.find((candidate) => candidate.runId === run.id && candidate.nodeId === 'approval'));
     expect(approval).toEqual(expect.objectContaining({ decision: 'approved', bindingHash: expect.stringMatching(/^[a-f0-9]{64}$/) }));
   });

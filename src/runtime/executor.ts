@@ -56,6 +56,7 @@ function edgeMatches(edge: WorkflowEdge, result: unknown): boolean {
 
 export class LocalWorkflowExecutor {
   private readonly activeRuns = new Map<string, AbortController>();
+  private readonly pendingResumes = new Set<string>();
   private readonly runWorkspaces = new Map<string, RepositoryWorkspace>();
 
   public constructor(
@@ -181,9 +182,9 @@ export class LocalWorkflowExecutor {
       throw new Error('Approval expired before it was received.');
     }
     await this.events.emit(runId, 'approval.received', 'Human approval received.');
-    // The waiting execution is still unwinding its finally block when approval
-    // arrives. Yield once so its active-run guard is released before resuming.
-    setTimeout(() => void this.execute(runId), 0);
+    // If the waiting execution is still unwinding, execute() records a pending
+    // resume and the owner drains it after releasing the active-run guard.
+    void this.execute(runId);
     return run;
   }
 
@@ -236,6 +237,7 @@ export class LocalWorkflowExecutor {
 
   public async execute(runId: string): Promise<void> {
     if (this.activeRuns.has(runId)) {
+      this.pendingResumes.add(runId);
       return;
     }
     const controller = new AbortController();
@@ -383,6 +385,7 @@ export class LocalWorkflowExecutor {
     } finally {
       if (this.activeRuns.get(runId) === controller) {
         this.activeRuns.delete(runId);
+        if (this.pendingResumes.delete(runId)) void this.execute(runId);
       }
     }
   }

@@ -54,12 +54,15 @@ describe('coding workflow API', () => {
       expect((await waitFor(app, runId, 'waiting')).status).toBe('waiting');
       const waitingEvidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
       expect((waitingEvidence.json() as { items: Array<{ status: string }> }).items.some((entry) => entry.status === 'waiting')).toBe(true);
-      const approved = await app.inject({ method: 'POST', url: `/api/runs/${runId}/approve`, headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' }, payload: {} });
+      await app.close();
+      const restartedApp = await createApp({ store, repositoryWorkspace, serveStatic: false });
+      const approved = await restartedApp.inject({ method: 'POST', url: `/api/runs/${runId}/approve`, headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' }, payload: {} });
       expect(approved.statusCode).toBe(200);
-      expect((await waitFor(app, runId, 'succeeded')).status).toBe('succeeded');
-      const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
+      expect((await waitFor(restartedApp, runId, 'succeeded')).status).toBe('succeeded');
+      const evidence = await restartedApp.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
       expect((evidence.json() as { items: Array<{ unitId: string; status: string }> }).items.some((entry) => entry.unitId === 'prepare' && entry.status === 'succeeded')).toBe(true);
       await expect(readFile(path.join(repoRoot, 'generated.txt'), 'utf8')).rejects.toThrow();
+      await restartedApp.close();
     } finally {
       await app.close();
     }
