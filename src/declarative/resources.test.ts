@@ -34,6 +34,28 @@ describe('typed resource files', () => {
     expect(() => compileResourceFiles([project, workflow, unit, { ...unit, path: 'units/other.unit.yaml' }], { tenantId: 'tenant-local' })).toThrow(/duplicate resource identity WorkUnit\/normalize-unit/);
   });
 
+  it('validates the extended declarative resource vocabulary without mixing in runtime state', () => {
+    const resources = [
+      { path: 'factory.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: demo\n  version: 1\nspec: {}' },
+      { path: 'policies/default.policy.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Policy\nmetadata:\n  id: default\n  version: 1\nspec:\n  rules:\n    - effect: allow' },
+      { path: 'connections/github.connection.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Connection\nmetadata:\n  id: github\n  version: 1\nspec:\n  connector: GitHub\n  environment: local\n  secretRef: vault://local/github' },
+      { path: 'environments/local.environment.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Environment\nmetadata:\n  id: local\n  version: 1\nspec:\n  name: local\n  overrides: {}' },
+      { path: 'schemas/request.schema.json', source: 'apiVersion: factory.agentic/v1\nkind: Schema\nmetadata:\n  id: request\n  version: 1\nspec:\n  type: object\n  properties:\n    request:\n      type: string' },
+      { path: 'canvas/review.canvas.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Canvas\nmetadata:\n  id: review-layout\n  version: 1\nspec:\n  workflowId: review\n  nodes:\n    - id: trigger\n      position: { x: 0, y: 0 }' },
+      { path: 'workflows/review.workflow.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: review\n  version: 1\n  name: Review\nspec:\n  trigger: manual\n  steps:\n    - id: done\n      type: output\n      policy: default\n      connection: github\n      config: {}' },
+    ];
+    const result = compileResourceFiles(resources, { tenantId: 'tenant-local', projectId: 'project-local' });
+    expect(result.resources.map((resource) => resource.kind)).toEqual(expect.arrayContaining(['Policy', 'Connection', 'Environment', 'Schema', 'Canvas']));
+    expect(() => parseResourceFile({ path: 'connections/bad.connection.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Connection\nmetadata:\n  id: bad\n  version: 1\nspec:\n  connector: GitHub\n  environment: local\n  apiKey: plaintext' })).toThrow(/secret reference/);
+  });
+
+  it('rejects unresolved Canvas and workflow references by stable resource identity', () => {
+    const project = { path: 'factory.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: demo\n  version: 1\nspec: {}' };
+    const workflow = { path: 'workflows/review.workflow.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: review\n  version: 1\n  name: Review\nspec:\n  trigger: manual\n  steps:\n    - id: done\n      type: output' };
+    const canvas = { path: 'canvas/review.canvas.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Canvas\nmetadata:\n  id: layout\n  version: 1\nspec:\n  workflowId: missing' };
+    expect(() => compileResourceFiles([project, workflow, canvas], { tenantId: 'tenant-local' })).toThrow(/missing Workflow\/missing/);
+  });
+
   it('includes file, line, and field path for envelope errors', () => {
     expect(() => parseResourceFile({ path: 'workflows/bad.workflow.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: bad\n  version: 1\nspec:\n  steps: []' })).toThrow(/workflows\/bad\.workflow\.yaml:7: spec\.steps/);
   });
