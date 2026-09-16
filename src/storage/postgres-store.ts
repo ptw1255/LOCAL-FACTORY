@@ -152,6 +152,11 @@ export class PostgresStore implements PlatformStore {
     add('status', filter.status);
     if (filter.from !== undefined) { values.push(filter.from); clauses.push(`occurred_at >= $${values.length}::timestamptz`); }
     if (filter.to !== undefined) { values.push(filter.to); clauses.push(`occurred_at <= $${values.length}::timestamptz`); }
+    const addMetadata = (key: string, value: string | undefined): void => { if (value === undefined) return; values.push(value); clauses.push(`metadata ->> '${key}' = $${values.length}`); };
+    addMetadata('repository.name', filter.repository);
+    if (filter.revision !== undefined) { values.push(filter.revision); clauses.push(`(metadata ->> 'repository.revision' = $${values.length} OR metadata ->> 'repository.base_revision' = $${values.length})`); }
+    addMetadata('repository.revision', filter.commit);
+    addMetadata('pull_request.number', filter.pullRequest);
     const where = clauses.length === 0 ? '' : ` WHERE ${clauses.join(' AND ')}`;
     const result = await this.pool.query<OperationEvidence>(`SELECT id, tenant_id AS "tenantId", project_id AS "projectId", run_id AS "runId", unit_id AS "unitId", operation, idempotency_key AS "idempotencyKey", actor, source, correlation_id AS "correlationId", attempt, status, occurred_at AS "occurredAt", input_hash AS "inputHash", output_hash AS "outputHash", error, metadata FROM operation_evidence${where} ORDER BY occurred_at ASC`, values);
     return result.rows;

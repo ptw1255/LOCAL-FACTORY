@@ -702,7 +702,7 @@ export async function createApp(
     return { items: (await events.list(request.query.runId)).filter((event) => inScope(event, scope)) };
   });
 
-  app.get<{ Querystring: { runId?: string; tenantId?: string; projectId?: string; unitId?: string; operation?: string; status?: import('../domain/types.js').OperationEvidenceStatus; from?: string; to?: string } }>('/api/evidence', async (request) => {
+  app.get<{ Querystring: { runId?: string; tenantId?: string; projectId?: string; unitId?: string; operation?: string; status?: import('../domain/types.js').OperationEvidenceStatus; from?: string; to?: string; repository?: string; revision?: string; commit?: string; pullRequest?: string } }>('/api/evidence', async (request) => {
     const scope = scopeFromRequest(request);
     return {
       items: (await events.listEvidence({
@@ -714,6 +714,10 @@ export async function createApp(
         ...(request.query.status === undefined ? {} : { status: request.query.status }),
         ...(request.query.from === undefined ? {} : { from: request.query.from }),
         ...(request.query.to === undefined ? {} : { to: request.query.to }),
+        ...(request.query.repository === undefined ? {} : { repository: request.query.repository }),
+        ...(request.query.revision === undefined ? {} : { revision: request.query.revision }),
+        ...(request.query.commit === undefined ? {} : { commit: request.query.commit }),
+        ...(request.query.pullRequest === undefined ? {} : { pullRequest: request.query.pullRequest }),
       })).filter((entry) => inScope(entry, scope)),
     };
   });

@@ -241,6 +241,10 @@ export interface EvidenceQuery {
   status?: OperationEvidenceStatus;
   from?: string;
   to?: string;
+  repository?: string;
+  revision?: string;
+  commit?: string;
+  pullRequest?: string;
 }
 
 export type ApprovalDecision = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled' | 'superseded';

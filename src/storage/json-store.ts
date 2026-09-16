@@ -58,7 +58,11 @@ export class JsonStore implements PlatformStore {
         && (filter.operation === undefined || entry.operation === filter.operation)
         && (filter.status === undefined || entry.status === filter.status)
         && (filter.from === undefined || entry.occurredAt >= filter.from)
-        && (filter.to === undefined || entry.occurredAt <= filter.to))
+        && (filter.to === undefined || entry.occurredAt <= filter.to)
+        && (filter.repository === undefined || entry.metadata?.['repository.name'] === filter.repository)
+        && (filter.revision === undefined || entry.metadata?.['repository.revision'] === filter.revision || entry.metadata?.['repository.base_revision'] === filter.revision)
+        && (filter.commit === undefined || entry.metadata?.['repository.revision'] === filter.commit)
+        && (filter.pullRequest === undefined || String(entry.metadata?.['pull_request.number'] ?? '') === filter.pullRequest))
       .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)));
   }
 
