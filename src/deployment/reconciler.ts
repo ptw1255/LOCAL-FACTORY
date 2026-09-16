@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ArtifactRecord, DeploymentAction, DeploymentRecord, DeploymentTransition } from '../domain/types.js';
+import type { EventService } from '../observability/event-service.js';
 import type { PlatformStore } from '../storage/store.js';
 
 export interface DeploymentScope { tenantId: string; projectId: string }
@@ -28,7 +29,7 @@ const localRuntimeAdapter: DeploymentRuntimeAdapter = {
 export class DeploymentReconciler {
   private readonly ownerId = `reconciler-${randomUUID()}`;
 
-  public constructor(private readonly store: PlatformStore, private readonly leaseMs = 30_000, private readonly adapter: DeploymentRuntimeAdapter = localRuntimeAdapter, private readonly maxObserveAttempts = 3) {}
+  public constructor(private readonly store: PlatformStore, private readonly leaseMs = 30_000, private readonly adapter: DeploymentRuntimeAdapter = localRuntimeAdapter, private readonly maxObserveAttempts = 3, private readonly events?: EventService) {}
 
   public list(scope: DeploymentScope): Promise<DeploymentRecord[]> {
     return this.store.read((state) => state.deployments.filter((deployment) => deployment.tenantId === scope.tenantId && deployment.projectId === scope.projectId));
@@ -63,8 +64,9 @@ export class DeploymentReconciler {
     });
   }
 
-  public async action(id: string, scope: DeploymentScope, action: DeploymentAction, options: { artifactId?: string; actor?: string; reason?: string; expectedUpdatedAt?: string; idempotencyKey?: string } = {}): Promise<DeploymentRecord> {
+  public async action(id: string, scope: DeploymentScope, action: DeploymentAction, options: { artifactId?: string; actor?: string; reason?: string; expectedUpdatedAt?: string; idempotencyKey?: string; runId?: string } = {}): Promise<DeploymentRecord> {
     let transitionError: unknown;
+    let applied = false;
     const result = await this.store.mutate(async (state) => {
       const deployment = state.deployments.find((candidate) => candidate.id === id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
       if (deployment === undefined) throw new Error('Deployment not found.');
@@ -102,25 +104,76 @@ export class DeploymentReconciler {
           ...(fromArtifactId === undefined ? {} : { fromArtifactId }),
           ...(targetArtifactId === undefined ? {} : { toArtifactId: targetArtifactId }),
           ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+          ...(options.runId === undefined ? {} : { runId: options.runId, correlationId: `${options.runId}:${deployment.id}:${action}` }),
           outcome: 'succeeded',
           ...(options.reason === undefined ? {} : { reason: options.reason }),
         };
         deployment.history.unshift(transition);
+        applied = true;
         return deployment;
       } catch (error) {
         deployment.observedState = 'failed';
         deployment.health = 'degraded';
         deployment.lastError = error instanceof Error ? error.message : 'Deployment transition failed.';
         deployment.updatedAt = now;
-        deployment.history.unshift({ id: randomUUID(), action, actor, occurredAt: now, ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }), outcome: 'failed', reason: deployment.lastError });
+        const transition: DeploymentTransition = { id: randomUUID(), action, actor, occurredAt: now, ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }), ...(options.runId === undefined ? {} : { runId: options.runId, correlationId: `${options.runId}:${deployment.id}:${action}` }), outcome: 'failed', reason: deployment.lastError };
+        deployment.history.unshift(transition);
+        applied = true;
         transitionError = error;
         return deployment;
       } finally {
         delete deployment.lease;
       }
     });
+    if (applied && this.events !== undefined) {
+      const transition = result.history[0];
+      if (transition !== undefined) await this.recordTransition(id, scope, result, transition, transitionError);
+    }
     if (transitionError !== undefined) throw transitionError;
     return result;
+  }
+
+  private async recordTransition(id: string, scope: DeploymentScope, deployment: DeploymentRecord, transition: DeploymentTransition, transitionError: unknown): Promise<void> {
+    const runId = transition.runId ?? `deployment:${id}`;
+    const correlationId = transition.correlationId ?? `deployment:${id}:${transition.id}`;
+    const operation = `deployment.${transition.action}`;
+    const status = transition.outcome === 'succeeded' ? 'succeeded' : 'failed';
+    await this.events?.recordEvidence({
+      runId,
+      deploymentId: id,
+      tenantId: scope.tenantId,
+      projectId: scope.projectId,
+      unitId: `deployment:${id}`,
+      operation,
+      idempotencyKey: transition.idempotencyKey ?? transition.id,
+      actor: transition.actor,
+      source: 'deployment-reconciler',
+      correlationId,
+      status,
+      error: transitionError instanceof Error ? transitionError.message : transition.reason,
+      metadata: {
+        'deployment.id': id,
+        'deployment.environment': deployment.environment,
+        'deployment.artifact': deployment.artifactId,
+        'deployment.desired_state': deployment.desiredState,
+        'deployment.observed_state': deployment.observedState,
+        'deployment.health': deployment.health,
+      },
+    });
+    await this.events?.emit(runId, 'deployment.transition', `${operation} ${status}.`, {
+      tenantId: scope.tenantId,
+      projectId: scope.projectId,
+      traceId: correlationId.replaceAll('-', '').padEnd(32, '0').slice(0, 32),
+      signal: 'trace',
+      spanKind: 'tool',
+      severityText: status === 'succeeded' ? 'INFO' : 'ERROR',
+      attributes: {
+        'deployment.id': id,
+        'deployment.action': transition.action,
+        'deployment.status': status,
+        'deployment.environment': deployment.environment,
+      },
+    });
   }
 
   public async reconcile(id: string, scope: DeploymentScope): Promise<DeploymentRecord> {

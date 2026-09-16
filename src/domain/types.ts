@@ -217,6 +217,8 @@ export interface OperationEvidence {
   id: string;
   tenantId?: string;
   projectId?: string;
+  /** Logical deployment that produced this evidence, when the operation is not run-scoped. */
+  deploymentId?: string;
   runId: string;
   unitId: string;
   operation: string;
@@ -235,6 +237,7 @@ export interface OperationEvidence {
 
 export interface EvidenceQuery {
   runId?: string;
+  deploymentId?: string;
   tenantId?: string;
   projectId?: string;
   unitId?: string;
@@ -279,6 +282,10 @@ export interface DeploymentTransition {
   toArtifactId?: string;
   /** Client-supplied key that makes retried actions idempotent. */
   idempotencyKey?: string;
+  /** Optional run that initiated or is associated with this transition. */
+  runId?: string;
+  /** Stable correlation key shared by transition telemetry and evidence. */
+  correlationId?: string;
   outcome: 'succeeded' | 'failed';
   reason?: string;
 }

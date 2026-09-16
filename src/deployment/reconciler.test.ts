@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed.js';
+import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
 import { DeploymentReconciler, type DeploymentRuntimeAdapter } from './reconciler.js';
 
@@ -202,5 +203,24 @@ describe('DeploymentReconciler', () => {
     expect(rolledBack.artifactId).toBe(artifacts[0]!.id);
     expect(rolledBack.healthyArtifactIds).toEqual(expect.arrayContaining([artifacts[0]!.id, artifacts[1]!.id]));
     await expect(reconciler.action(deployment.id, scope, 'rollback', { artifactId: artifacts[2]!.id })).rejects.toThrow('prior healthy artifact');
+  });
+
+  it('correlates deployment transitions with durable evidence and telemetry', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-evidence', tenantId: scope.tenantId, projectId: scope.projectId, environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const events = new EventService(store);
+    const reconciler = new DeploymentReconciler(store, 30_000, undefined, 3, events);
+    const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'evidence', artifactId: artifact.id, trigger: 'manual' });
+    const started = await reconciler.action(deployment.id, scope, 'start', { actor: 'operator', runId: 'run-deployment-evidence', idempotencyKey: 'deployment-start-1' });
+    const evidence = await events.listEvidence({ deploymentId: deployment.id });
+    expect(evidence).toEqual([expect.objectContaining({ deploymentId: deployment.id, runId: 'run-deployment-evidence', operation: 'deployment.start', status: 'succeeded', idempotencyKey: 'deployment-start-1', tenantId: scope.tenantId, projectId: scope.projectId })]);
+    const telemetry = await events.list('run-deployment-evidence');
+    expect(telemetry).toEqual([expect.objectContaining({ type: 'deployment.transition', runId: 'run-deployment-evidence', signal: 'trace' })]);
+    expect(started.history[0]).toEqual(expect.objectContaining({ runId: 'run-deployment-evidence', correlationId: expect.stringContaining(deployment.id) }));
   });
 });

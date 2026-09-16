@@ -26,6 +26,9 @@ export class EventService {
     message: string,
     options: {
       nodeId?: string;
+      tenantId?: string;
+      projectId?: string;
+      traceId?: string;
       data?: Record<string, unknown>;
       signal?: 'log' | 'trace' | 'metric';
       spanKind?: AgentSpanKind;
@@ -43,15 +46,15 @@ export class EventService {
       };
     });
     const event: RunEvent = {
-      ...(runContext.tenantId === undefined ? {} : { tenantId: runContext.tenantId }),
-      ...(runContext.projectId === undefined ? {} : { projectId: runContext.projectId }),
+      ...((options.tenantId ?? runContext.tenantId) === undefined ? {} : { tenantId: options.tenantId ?? runContext.tenantId }),
+      ...((options.projectId ?? runContext.projectId) === undefined ? {} : { projectId: options.projectId ?? runContext.projectId }),
       id: randomUUID(),
       runId,
       type,
       timestamp: new Date().toISOString(),
       message,
       signal: options.signal ?? 'log',
-      traceId: runContext.traceId ?? runId.replaceAll('-', '').padEnd(32, '0').slice(0, 32),
+      traceId: options.traceId ?? runContext.traceId ?? runId.replaceAll('-', '').padEnd(32, '0').slice(0, 32),
       spanId: randomUUID().replaceAll('-', '').slice(0, 16),
       ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
       ...(options.data === undefined ? {} : { data: options.data }),
@@ -60,8 +63,8 @@ export class EventService {
       ...(options.severityText === undefined ? {} : { severityText: options.severityText }),
       attributes: {
         ...telemetryResource,
-        ...(runContext.tenantId === undefined ? {} : { 'tenant.id': runContext.tenantId }),
-        ...(runContext.projectId === undefined ? {} : { 'project.id': runContext.projectId }),
+        ...((options.tenantId ?? runContext.tenantId) === undefined ? {} : { 'tenant.id': options.tenantId ?? runContext.tenantId }),
+        ...((options.projectId ?? runContext.projectId) === undefined ? {} : { 'project.id': options.projectId ?? runContext.projectId }),
         ...(options.attributes ?? {}),
       },
     };
@@ -79,6 +82,9 @@ export class EventService {
 
   public async recordEvidence(input: {
     runId: string;
+    deploymentId?: string;
+    tenantId?: string;
+    projectId?: string;
     unitId: string;
     operation: string;
     idempotencyKey?: string;
@@ -94,11 +100,12 @@ export class EventService {
   }): Promise<OperationEvidence> {
     const scope = await this.store.read((state) => {
       const run = state.runs.find((candidate) => candidate.id === input.runId);
-      return { tenantId: run?.tenantId, projectId: run?.projectId, traceId: run?.traceId };
+      return { tenantId: input.tenantId ?? run?.tenantId, projectId: input.projectId ?? run?.projectId, traceId: run?.traceId };
     });
     const evidence: OperationEvidence = {
       ...(scope.tenantId === undefined ? {} : { tenantId: scope.tenantId }),
       ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
+      ...(input.deploymentId === undefined ? {} : { deploymentId: input.deploymentId }),
       id: input.idempotencyKey === undefined
         ? randomUUID()
         : deterministicEvidenceId(input.runId, input.unitId, input.operation, input.status, input.idempotencyKey),
