@@ -37,6 +37,7 @@ import type {
   ConnectionRecord,
   FactoryMetrics,
   DeploymentRecord,
+  DeploymentEnvelope,
   OperationEvidence,
   NodeCatalogItem,
   ProjectRecord,
@@ -1873,6 +1874,7 @@ function ProposalsView({ onOpenStudio }: { onOpenStudio: () => void }) {
 
 function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
   const [deployments, setDeployments] = useState<DeploymentRecord[]>([]);
+  const [deploymentEnvelopes, setDeploymentEnvelopes] = useState<DeploymentEnvelope[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1895,8 +1897,9 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
     setLoading(true);
     setError(null);
     try {
-      const [deploymentResponse, artifactResponse] = await Promise.all([api.deployments(), api.artifacts(projectId)]);
+      const [deploymentResponse, envelopeResponse, artifactResponse] = await Promise.all([api.deployments(), api.deploymentEnvelopes(), api.artifacts(projectId)]);
       setDeployments(deploymentResponse.items);
+      setDeploymentEnvelopes(envelopeResponse.items);
       setArtifacts(artifactResponse.items);
       setForm((current) => ({ ...current, artifactId: current.artifactId || artifactResponse.items[0]?.id || '', workflowId: current.workflowId || artifactResponse.items[0]?.workflows[0]?.id || '' }));
     }
@@ -1909,8 +1912,9 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   const refreshDeploymentState = useCallback(async () => {
     const current = await api.deployments();
     await Promise.allSettled(current.items.map((deployment) => api.reconcileDeployment(deployment.id)));
-    const refreshed = await api.deployments();
+    const [refreshed, refreshedEnvelopes] = await Promise.all([api.deployments(), api.deploymentEnvelopes()]);
     setDeployments(refreshed.items);
+    setDeploymentEnvelopes(refreshedEnvelopes.items);
   }, []);
 
   useEffect(() => {
@@ -1954,8 +1958,23 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
 
   const selectedArtifact = artifacts.find((artifact) => artifact.id === form.artifactId);
   const artifactWorkflows = selectedArtifact?.workflows ?? [];
-  const environments = [...new Set(deployments.map((deployment) => deployment.environment))].sort();
-  const filteredDeployments = deployments.filter((deployment) =>
+  const envelopeById = new Map(deploymentEnvelopes.map((envelope) => [envelope.metadata.id, envelope]));
+  const operationalDeployments: DeploymentRecord[] = deployments.map((deployment): DeploymentRecord => {
+    const envelope = envelopeById.get(deployment.id);
+    if (envelope === undefined) return deployment;
+    return {
+      ...deployment,
+      workflowId: envelope.spec.workflowId,
+      environment: envelope.spec.environment,
+      artifactId: envelope.spec.artifactId,
+      desiredState: (envelope.spec.desiredState === 'live' ? 'running' : 'stopped') as DeploymentRecord['desiredState'],
+      observedState: envelope.status.observedState,
+      updatedAt: envelope.status.updatedAt,
+      lastError: envelope.status.error ?? undefined,
+    };
+  });
+  const environments = [...new Set(operationalDeployments.map((deployment) => deployment.environment))].sort();
+  const filteredDeployments = operationalDeployments.filter((deployment) =>
     (environmentFilter === 'all' || deployment.environment === environmentFilter)
     && (stateFilter === 'all' || deployment.observedState === stateFilter)
     && (healthFilter === 'all' || deployment.health === healthFilter),
@@ -1963,8 +1982,8 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
 
   if (loading) return <LoadingState label="Loading deployments" />;
   if (error !== null && deployments.length === 0) return <ErrorState message={error} retry={() => void loadDeployments()} />;
-  const live = deployments.filter((deployment) => deployment.observedState === 'live').length;
-  const attention = deployments.filter((deployment) => ['degraded', 'failed', 'unknown'].includes(deployment.observedState)).length;
+  const live = operationalDeployments.filter((deployment) => deployment.observedState === 'live').length;
+  const attention = operationalDeployments.filter((deployment) => ['degraded', 'failed', 'unknown'].includes(deployment.observedState)).length;
 
   return (
     <div className="page">
