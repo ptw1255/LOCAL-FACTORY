@@ -680,6 +680,26 @@ describe('LocalWorkflowExecutor', () => {
     expect((await events.listEvidence(run.id)).filter((evidence) => evidence.operation === 'agent.tool' && evidence.status === 'succeeded')).toHaveLength(1);
   });
 
+  it('does not repeat a tool side effect when a provider replays the same call ID', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agent === undefined || agentNode === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider: 'openai', model: 'gpt-5' };
+    agent.tools = ['repo.check'];
+    agentNode.config.maxIterations = 2;
+    let toolCalls = 0;
+    const openai = { chat: async () => ({ content: '', model: 'gpt-5', toolCalls: [{ callId: 'stable-call', name: 'repo.check', arguments: '{"command":"npm test"}' }] }) };
+    const toolExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, openai, new Map([
+      ['repo.check', async () => { toolCalls += 1; return { passed: true }; }],
+    ]));
+    const run = await toolExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
+    expect(toolCalls).toBe(1);
+    expect((await events.listEvidence(run.id)).filter((evidence) => evidence.operation === 'agent.tool' && evidence.status === 'succeeded')).toHaveLength(1);
+    expect((await events.list(run.id)).some((event) => event.type === 'agent.tool.recovered')).toBe(true);
+  });
+
   it('fails closed when an agent requests an undeclared tool', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];
