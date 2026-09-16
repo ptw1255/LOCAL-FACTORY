@@ -519,6 +519,35 @@ describe('LocalWorkflowExecutor', () => {
     expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'ollama', 'llm.model_name': 'llama3.2' }));
   });
 
+  it('runs a bounded text-only ensemble and aggregates route output deterministically', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    if (agent === undefined) throw new Error('Seed agent is missing.');
+    agent.limits.maxIterations = 1;
+    const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agentNode === undefined) throw new Error('Agent loop node is missing.');
+    agentNode.config = { ...agentNode.config, maxIterations: 1 };
+    agent.model = {
+      routing: { strategy: 'ensemble', maxAttempts: 2 },
+      routes: [
+        { provider: 'openai', model: 'gpt-5' },
+        { provider: 'gemini', model: 'gemini-2.5-flash' },
+      ],
+    };
+    const openai = { provider: 'openai', chat: async () => ({ content: 'primary perspective', model: 'gpt-5', promptTokens: 2, completionTokens: 3 }) };
+    const gemini = { provider: 'gemini', chat: async () => ({ content: 'second perspective', model: 'gemini-2.5-flash', promptTokens: 5, completionTokens: 7 }) };
+    const ensembleExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, undefined, new Map(), undefined, new Map([['openai', openai], ['gemini', gemini]]));
+    const run = await ensembleExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
+    const recorded = await events.list(run.id);
+    expect(recorded.filter((event) => event.type === 'llm.route.selected')).toHaveLength(2);
+    expect(recorded.filter((event) => event.type === 'llm.route.selected').map((event) => event.attributes?.['llm.route.index'])).toEqual([0, 1]);
+    expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'ensemble', 'llm.route.strategy': 'ensemble', 'llm.token_count.prompt': 7, 'llm.token_count.completion': 10 }));
+    const output = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.unitOutputs.agent as { output?: string } | undefined);
+    expect(output?.output).toContain('[openai]\nprimary perspective');
+    expect(output?.output).toContain('[gemini]\nsecond perspective');
+  });
+
   it('fails closed when a route requires capabilities its provider does not expose', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];

@@ -1038,14 +1038,14 @@ export class LocalWorkflowExecutor {
     agent: AgentDefinition,
     goal: string,
     signal: AbortSignal,
-  ): Promise<{ provider: string; result: OpenAIModelResult | OllamaModelResult; routeIndex: number; routingStrategy: 'single' | 'fallback'; adapterVersion?: string } | undefined> {
+  ): Promise<{ provider: string; result: OpenAIModelResult | OllamaModelResult; routeIndex: number; routingStrategy: 'single' | 'fallback' | 'ensemble'; adapterVersion?: string } | undefined> {
     const declaredRoutes = agent.model.routes ?? [];
     const routes: Array<AgentModelRoute | undefined> = declaredRoutes.length === 0
       ? [undefined]
       : declaredRoutes;
     const strategy = agent.model.routing?.strategy ?? (declaredRoutes.length > 1 ? 'fallback' : 'single');
     const maxAttempts = Math.min(routes.length, agent.model.routing?.maxAttempts ?? routes.length);
-    for (let index = 0; index < maxAttempts; index += 1) {
+    const invokeRoute = async (index: number): Promise<{ provider: string; result: OpenAIModelResult | OllamaModelResult; adapterVersion?: string } | undefined> => {
       const route = routes[index];
       const routeAgent = route === undefined
         ? agent
@@ -1058,35 +1058,66 @@ export class LocalWorkflowExecutor {
         if (declaredRoutes.length === 0) return undefined;
         throw new Error(`Agent "${agent.id}" provider route ${index + 1} is missing a provider.`);
       }
-      try {
-        let result: OpenAIModelResult | OllamaModelResult;
-        const registered = this.providerClients.get(provider);
-        const requiredCapabilities = routeAgent.model.capabilities ?? [];
-        if (requiredCapabilities.length > 0) {
-          const supportedCapabilities = provider === 'ollama'
-            ? ['text', 'usage']
-            : registered?.capabilities ?? (provider === 'openai' ? this.openai?.capabilities : this.openaiCompatible?.capabilities) ?? [];
-          const missing = requiredCapabilities.filter((capability) => !supportedCapabilities.includes(capability));
-          if (missing.length > 0) throw new Error(`Provider "${provider}" does not support required capabilities: ${missing.join(', ')}.`);
-        }
-        if (registered !== undefined) {
-          result = await registered.chat({ agent: routeAgent, goal, signal, traceId });
-        } else if (provider === 'ollama') {
-          result = await this.ollama.chat({ agent: routeAgent, goal, signal });
-        } else if (provider === 'openai') {
-          if (this.openai === undefined) throw new Error('OpenAI credentials are not configured for this runtime.');
-          result = await this.openai.chat({ agent: routeAgent, goal, signal, traceId });
-        } else if (provider === 'openai-compatible' || provider === 'lmstudio' || provider === 'lm-studio' || provider === 'vllm' || provider === 'localai') {
-          if (this.openaiCompatible === undefined) throw new Error(`The ${provider} model adapter is not configured for this runtime.`);
-          result = await this.openaiCompatible.chat({ agent: routeAgent, goal, signal, traceId });
-        } else {
-          throw new Error(`Unsupported model provider "${provider}".`);
-        }
-        if (index > 0) {
-          await this.events.emit(runId, 'llm.route.selected', `Model fallback route ${provider} selected.`, {
+      let result: OpenAIModelResult | OllamaModelResult;
+      const registered = this.providerClients.get(provider);
+      const requiredCapabilities = routeAgent.model.capabilities ?? [];
+      if (requiredCapabilities.length > 0) {
+        const supportedCapabilities = provider === 'ollama'
+          ? ['text', 'usage']
+          : registered?.capabilities ?? (provider === 'openai' ? this.openai?.capabilities : this.openaiCompatible?.capabilities) ?? [];
+        const missing = requiredCapabilities.filter((capability) => !supportedCapabilities.includes(capability));
+        if (missing.length > 0) throw new Error(`Provider "${provider}" does not support required capabilities: ${missing.join(', ')}.`);
+      }
+      if (registered !== undefined) {
+        result = await registered.chat({ agent: routeAgent, goal, signal, traceId });
+      } else if (provider === 'ollama') {
+        result = await this.ollama.chat({ agent: routeAgent, goal, signal });
+      } else if (provider === 'openai') {
+        if (this.openai === undefined) throw new Error('OpenAI credentials are not configured for this runtime.');
+        result = await this.openai.chat({ agent: routeAgent, goal, signal, traceId });
+      } else if (provider === 'openai-compatible' || provider === 'lmstudio' || provider === 'lm-studio' || provider === 'vllm' || provider === 'localai') {
+        if (this.openaiCompatible === undefined) throw new Error(`The ${provider} model adapter is not configured for this runtime.`);
+        result = await this.openaiCompatible.chat({ agent: routeAgent, goal, signal, traceId });
+      } else {
+        throw new Error(`Unsupported model provider "${provider}".`);
+      }
+      return { provider, result, ...(routeAgent.model.adapterVersion === undefined ? {} : { adapterVersion: routeAgent.model.adapterVersion }) };
+    };
+
+    const emitRouteSelected = async (selected: { provider: string; index: number }): Promise<void> => {
+      await this.events.emit(runId, 'llm.route.selected', `Model ${strategy} route ${selected.provider} selected.`, {
+        nodeId,
+        signal: 'trace',
+        spanKind: 'llm',
+        attributes: {
+          'llm.route.provider': selected.provider,
+          'llm.route.index': selected.index,
+          'llm.route.strategy': strategy,
+        },
+      });
+    };
+
+    if (strategy === 'ensemble') {
+      const results: Array<{ provider: string; result: OpenAIModelResult | OllamaModelResult; adapterVersion?: string }> = [];
+      let lastError: unknown;
+      for (let index = 0; index < maxAttempts; index += 1) {
+        try {
+          const result = await invokeRoute(index);
+          if (result === undefined) continue;
+          if ('toolCalls' in result.result && Array.isArray(result.result.toolCalls) && result.result.toolCalls.length > 0) {
+            throw new Error('Ensemble routing does not support tool calls because they could duplicate side effects.');
+          }
+          results.push(result);
+          await emitRouteSelected({ provider: result.provider, index });
+        } catch (error) {
+          lastError = error;
+          if (signal.aborted) throw error;
+          const provider = routes[index]?.provider?.trim().toLowerCase() ?? 'unknown';
+          await this.events.emit(runId, 'llm.route.failed', `Model ensemble route ${provider} failed; continuing.`, {
             nodeId,
             signal: 'trace',
             spanKind: 'llm',
+            severityText: 'WARN',
             attributes: {
               'llm.route.provider': provider,
               'llm.route.index': index,
@@ -1094,10 +1125,37 @@ export class LocalWorkflowExecutor {
             },
           });
         }
-        return { provider, result, routeIndex: index, routingStrategy: strategy, ...(routeAgent.model.adapterVersion === undefined ? {} : { adapterVersion: routeAgent.model.adapterVersion }) };
+      }
+      if (results.length === 0) throw lastError instanceof Error ? lastError : new Error(`Agent "${agent.id}" did not produce an ensemble result.`);
+      const first = results[0];
+      if (first === undefined) throw new Error(`Agent "${agent.id}" did not produce an ensemble result.`);
+      const sum = (selector: (result: OpenAIModelResult | OllamaModelResult) => number | undefined): number | undefined => {
+        const values = results.map((entry) => selector(entry.result)).filter((value): value is number => value !== undefined);
+        return values.length === 0 ? undefined : values.reduce((total, value) => total + value, 0);
+      };
+      const aggregate: OpenAIModelResult | OllamaModelResult = {
+        ...first.result,
+        content: results.map((entry) => `[${entry.provider}]\n${entry.result.content}`).join('\n\n'),
+        model: results.map((entry) => entry.result.model).join(' + '),
+        ...(sum((result) => result.promptTokens) === undefined ? {} : { promptTokens: sum((result) => result.promptTokens) }),
+        ...(sum((result) => result.completionTokens) === undefined ? {} : { completionTokens: sum((result) => result.completionTokens) }),
+        ...('estimatedCostUsd' in first.result && sum((result) => 'estimatedCostUsd' in result ? result.estimatedCostUsd : undefined) !== undefined
+          ? { estimatedCostUsd: sum((result) => 'estimatedCostUsd' in result ? result.estimatedCostUsd : undefined) }
+          : {}),
+      };
+      return { provider: 'ensemble', result: aggregate, routeIndex: -1, routingStrategy: strategy };
+    }
+
+    for (let index = 0; index < maxAttempts; index += 1) {
+      try {
+        const result = await invokeRoute(index);
+        if (result === undefined) return undefined;
+        if (index > 0) await emitRouteSelected({ provider: result.provider, index });
+        return { ...result, routeIndex: index, routingStrategy: strategy };
       } catch (error) {
         if (signal.aborted) throw error;
         if (strategy !== 'fallback' || index + 1 >= maxAttempts) throw error;
+        const provider = routes[index]?.provider?.trim().toLowerCase() ?? 'unknown';
         await this.events.emit(runId, 'llm.route.failed', `Model route ${provider} failed; trying the next route.`, {
           nodeId,
           signal: 'trace',
