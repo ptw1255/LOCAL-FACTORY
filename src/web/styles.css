@@ -277,6 +277,12 @@ h1, h2, h3, p { margin-top: 0; }
 .deployment-create-form input, .deployment-create-form select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; padding: 8px 10px; width: 100%; }
 .deployment-create-form .form-actions { align-items: center; display: flex; gap: 10px; grid-column: 1 / -1; }
 .connection-card .form-actions select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; padding: 7px 9px; }
+.deployment-history { border-top: 1px solid var(--line); margin: 12px 0; padding-top: 10px; }
+.deployment-history summary { color: var(--subtle); cursor: pointer; font-size: 11px; }
+.deployment-history ul { display: grid; gap: 8px; list-style: none; margin: 10px 0 0; padding: 0; }
+.deployment-history li { display: grid; font-size: 11px; gap: 3px; grid-template-columns: auto 1fr auto; }
+.deployment-history li span, .deployment-history li time, .deployment-history li small { color: var(--subtle); }
+.deployment-history li small { grid-column: 1 / -1; }
 .panel-count { background: #8d4b4b; border-radius: 9px; color: #fff; font-size: 9px; padding: 2px 6px; }
 .panel-count.clean { background: #245541; }
 .ide-bottom-content { color: #7689a3; font-size: 11px; padding: 3px 0 10px; }
