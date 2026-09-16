@@ -9,6 +9,14 @@ describe('GitHubRepositoryClient', () => {
     expect(String(fetcher.mock.calls[0]?.[1]?.body)).not.toContain('secret-token');
   });
 
+  it('resolves GitHub credentials from the configured secret broker per request', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('[]', { status: 200 }));
+    const secretBroker = { put: vi.fn(), get: vi.fn().mockResolvedValue('vault-token') };
+    await new GitHubRepositoryClient({ secretRef: 'connections/github', secretBroker, owner: 'example', repo: 'repo', fetcher }).listOpenPullRequests({ head: 'feature', base: 'main' });
+    expect(secretBroker.get).toHaveBeenCalledWith('connections/github');
+    expect(fetcher.mock.calls[0]?.[1]?.headers).toEqual(expect.objectContaining({ authorization: 'Bearer vault-token' }));
+  });
+
   it('polls check runs into a normalized terminal result', async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'queued', conclusion: null }] }), { status: 200 }))
