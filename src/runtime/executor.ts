@@ -380,7 +380,7 @@ export class LocalWorkflowExecutor {
       node,
       inputs,
       signal,
-      execute: () => this.executeNodeImplementation(runId, node, signal, inputs),
+      execute: (executionSignal = signal) => this.executeNodeImplementation(runId, node, executionSignal, inputs),
     });
   }
 

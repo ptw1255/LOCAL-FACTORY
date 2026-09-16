@@ -9,13 +9,24 @@ export interface WorkUnitDispatchContext {
   node: WorkflowNode;
   inputs: unknown[];
   signal: AbortSignal;
-  execute: () => Promise<unknown> | unknown;
+  execute: (signal?: AbortSignal) => Promise<unknown> | unknown;
 }
 
 export type WorkUnitAdapter = (input: {
   envelope: WorkUnitEnvelope;
   context: WorkUnitDispatchContext;
 }) => Promise<unknown> | unknown;
+
+export type WorkUnitSchemaValidator = (payload: unknown) => boolean;
+
+export class WorkUnitTimeoutError extends Error {
+  public readonly code = 'WORK_UNIT_TIMED_OUT';
+
+  public constructor(unitId: string, timeoutMs: number) {
+    super(`WorkUnit "${unitId}" timed out after ${timeoutMs}ms.`);
+    this.name = 'WorkUnitTimeoutError';
+  }
+}
 
 const supportedKinds: WorkUnitKind[] = [
   'deterministic',
@@ -34,10 +45,23 @@ function hashPayload(payload: unknown): string {
   return createHash('sha256').update(JSON.stringify(payload) ?? 'undefined').digest('hex');
 }
 
-function validatePayload(schemaName: string, payload: unknown, direction: 'input' | 'output'): void {
+function validatePayload(
+  schemaName: string,
+  payload: unknown,
+  direction: 'input' | 'output',
+  schemas: ReadonlyMap<string, WorkUnitSchemaValidator>,
+): void {
   const schema = schemaName.trim().toLowerCase();
-  if (schema === '' || schema === 'any' || schema === 'unknown' || schema.startsWith('$ref:')) return;
-  const valid = schema === 'string'
+  if (schema === '' || schema === 'any' || schema === 'unknown') return;
+  const namedSchema = schema.startsWith('$ref:') ? schema.slice('$ref:'.length).trim() : undefined;
+  if (namedSchema !== undefined) {
+    const validator = schemas.get(namedSchema.toLowerCase());
+    if (validator === undefined) throw new Error(`WorkUnit ${direction} references unknown schema "${namedSchema}".`);
+    if (!validator(payload)) throw new Error(`WorkUnit ${direction} does not match declared schema "${schemaName}".`);
+    return;
+  }
+  const validator = schemas.get(schema);
+  const valid = validator === undefined ? schema === 'string'
     ? typeof payload === 'string'
     : schema === 'number'
       ? typeof payload === 'number' && Number.isFinite(payload)
@@ -47,7 +71,7 @@ function validatePayload(schemaName: string, payload: unknown, direction: 'input
           ? typeof payload === 'object' && payload !== null && !Array.isArray(payload)
           : schema === 'array'
             ? Array.isArray(payload)
-            : true;
+            : true : validator(payload);
   if (!valid) throw new Error(`WorkUnit ${direction} does not match declared schema "${schemaName}".`);
 }
 
@@ -58,11 +82,24 @@ function validatePayload(schemaName: string, payload: unknown, direction: 'input
  */
 export class WorkUnitDispatcher {
   private readonly adapters = new Map<string, WorkUnitAdapter>();
+  private readonly schemas = new Map<string, WorkUnitSchemaValidator>();
 
-  public constructor() {
+  public constructor(schemas: Record<string, WorkUnitSchemaValidator> = {}) {
+    this.registerSchema('string', (payload) => typeof payload === 'string');
+    this.registerSchema('number', (payload) => typeof payload === 'number' && Number.isFinite(payload));
+    this.registerSchema('boolean', (payload) => typeof payload === 'boolean');
+    this.registerSchema('object', (payload) => typeof payload === 'object' && payload !== null && !Array.isArray(payload));
+    this.registerSchema('array', (payload) => Array.isArray(payload));
+    for (const [name, validator] of Object.entries(schemas)) this.registerSchema(name, validator);
     for (const kind of supportedKinds) {
       this.register(kind, 1, ({ context }) => context.execute());
     }
+  }
+
+  public registerSchema(name: string, validator: WorkUnitSchemaValidator): void {
+    const normalized = name.trim().toLowerCase();
+    if (normalized === '' || normalized.includes(' ')) throw new Error('WorkUnit schema names must be non-empty and contain no spaces.');
+    this.schemas.set(normalized, validator);
   }
 
   public register(kind: WorkUnitKind, version: number, adapter: WorkUnitAdapter): void {
@@ -79,12 +116,25 @@ export class WorkUnitDispatcher {
       throw new Error(`No WorkUnit adapter registered for ${unit.kind}@${unit.version}.`);
     }
     const inputPayload = context.inputs.length === 1 ? context.inputs[0] : context.inputs;
-    validatePayload(unit.inputSchema, inputPayload, 'input');
+    validatePayload(unit.inputSchema, inputPayload, 'input', this.schemas);
 
     const attempts = Math.max(1, unit.retryAttempts);
     let lastError: unknown;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       context.signal.throwIfAborted();
+      const timeoutController = new AbortController();
+      const dispatchSignal = AbortSignal.any([context.signal, timeoutController.signal]);
+      const timeoutError = new WorkUnitTimeoutError(context.node.id, unit.timeoutMs);
+      let timedOut = false;
+      let rejectDeadline: (reason: unknown) => void = () => undefined;
+      const deadline = new Promise<never>((_, reject) => { rejectDeadline = reject; });
+      const abortDeadline = (): void => rejectDeadline(context.signal.reason);
+      context.signal.addEventListener('abort', abortDeadline, { once: true });
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        timeoutController.abort(timeoutError);
+        rejectDeadline(timeoutError);
+      }, Math.max(1, unit.timeoutMs));
       const envelope: WorkUnitEnvelope = {
         runId: context.runId,
         traceId: context.traceId,
@@ -98,12 +148,21 @@ export class WorkUnitDispatcher {
       try {
         const adapter = this.adapters.get(key(unit.kind, unit.version));
         if (adapter === undefined) throw new Error(`No WorkUnit adapter registered for ${unit.kind}@${unit.version}.`);
-        const result = await adapter({ envelope, context });
-        validatePayload(unit.outputSchema, result, 'output');
+        const adapterContext: WorkUnitDispatchContext = {
+          ...context,
+          signal: dispatchSignal,
+          execute: (signal = dispatchSignal) => context.execute(signal),
+        };
+        const result = await Promise.race([Promise.resolve(adapter({ envelope, context: adapterContext })), deadline]);
+        if (timedOut) throw timeoutError;
+        validatePayload(unit.outputSchema, result, 'output', this.schemas);
         return result;
       } catch (error) {
-        lastError = error;
-        if (attempt >= attempts) throw error;
+        lastError = timedOut ? timeoutError : error;
+        if (timedOut || context.signal.aborted || attempt >= attempts) throw lastError;
+      } finally {
+        clearTimeout(timeout);
+        context.signal.removeEventListener('abort', abortDeadline);
       }
     }
     throw lastError instanceof Error ? lastError : new Error('WorkUnit execution failed.');
