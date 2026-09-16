@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -149,6 +149,30 @@ describe('LocalWorkflowExecutor', () => {
     const recorded = await events.list(run.id);
     expect(recorded.some((event) => event.type === 'unit.completed' && event.nodeId === 'prepare')).toBe(true);
     await expect(repository.read('.factory-run-marker')).rejects.toThrow();
+  });
+
+  it('blocks on required repository checks but allows advisory failures', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-check-'));
+    await writeFile(path.join(directory, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node -e "process.exit(1)"' } }));
+    const repository = await (await import('../repository/workspace.js')).RepositoryWorkspace.open(directory);
+    const requiredWorkflow = structuredClone(seedWorkflow);
+    const requiredPrepare = requiredWorkflow.nodes.find((node) => node.id === 'prepare');
+    if (requiredPrepare === undefined) throw new Error('Seed prepare node is missing.');
+    requiredPrepare.type = 'repositoryCheck';
+    requiredPrepare.config = { command: 'npm run typecheck' };
+    requiredPrepare.unit = defaultWorkUnit('repositoryCheck');
+    const requiredExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, repository);
+    const requiredRun = await requiredExecutor.start(requiredWorkflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === requiredRun.id)))?.status === 'failed');
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === requiredRun.id)))?.error).toContain('Required repository check failed');
+
+    const advisoryWorkflow = structuredClone(requiredWorkflow);
+    const advisoryPrepare = advisoryWorkflow.nodes.find((node) => node.id === 'prepare');
+    if (advisoryPrepare === undefined) throw new Error('Seed prepare node is missing.');
+    advisoryPrepare.config.required = false;
+    const advisoryRun = await requiredExecutor.start(advisoryWorkflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === advisoryRun.id)))?.status === 'succeeded');
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === advisoryRun.id)?.unitOutputs.prepare))).toMatchObject({ required: false, promotionBlocked: false });
   });
 
   it('routes OpenAI agents through the provider-neutral agent lifecycle', async () => {

@@ -434,7 +434,10 @@ export class LocalWorkflowExecutor {
         const workspace = await this.workspaceForRun(runId);
         const command = typeof node.config.command === 'string' ? node.config.command : 'npm test';
         const timeoutMs = typeof node.config.timeoutMs === 'number' ? node.config.timeoutMs : undefined;
-        result = await workspace.runCheck(command, timeoutMs);
+        const required = node.config.required !== false;
+        const check = await workspace.runCheck(command, timeoutMs);
+        result = { ...check, required, promotionBlocked: required && check.exitCode !== 0 };
+        if (required && check.exitCode !== 0) throw new Error(`Required repository check failed: ${command}.`);
         break;
       }
       case 'repositoryPatch': {
