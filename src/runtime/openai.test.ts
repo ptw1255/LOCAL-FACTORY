@@ -27,6 +27,17 @@ describe('HttpOpenAIClient', () => {
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ model: 'gpt-5', store: false });
   });
 
+  it('declares creator-approved tools in the Responses request without executing them', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ model: 'gpt-5', status: 'completed', output: [] }), { status: 200 }));
+    await new HttpOpenAIClient({ apiKey: 'key', fetcher }).chat({
+      agent: { ...agent, tools: ['repo.check', 'repo.check'], model: { provider: 'openai', model: 'gpt-5' } },
+      goal: 'Use the declared tool',
+      signal: new AbortController().signal,
+    });
+    const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body)) as { tools?: Array<Record<string, unknown>> };
+    expect(body.tools).toEqual([{ type: 'function', name: 'repo.check', description: 'Declared workflow tool: repo.check', parameters: { type: 'object', additionalProperties: true } }]);
+  });
+
   it('normalizes function calls without executing undeclared tools', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ output: [{ type: 'function_call', call_id: 'call_1', name: 'repo.check', arguments: '{"command":"npm test"}' }] }), { status: 200 }));
     const result = await new HttpOpenAIClient({ apiKey: 'key', fetcher }).chat({ agent: { ...agent, model: { provider: 'openai', model: 'gpt-5' } }, goal: 'Use a tool', signal: new AbortController().signal });

@@ -20,6 +20,24 @@ export const OPENAI_CAPABILITIES: readonly OpenAICapability[] = [
   'text', 'structured_output', 'streaming', 'tools', 'usage', 'request_ids',
 ];
 
+/**
+ * Convert the creator-declared tool names into permissive Responses API
+ * function definitions. Tool execution and authorization remain in the
+ * runtime; the provider only receives the names and an object-shaped argument
+ * contract because the current agent envelope stores tool names, not schemas.
+ */
+export function openAIToolDefinitions(agent: AgentDefinition): Array<Record<string, unknown>> {
+  return [...new Set(agent.tools)].map((name) => ({
+    type: 'function',
+    name,
+    description: `Declared workflow tool: ${name}`,
+    parameters: {
+      type: 'object',
+      additionalProperties: true,
+    },
+  }));
+}
+
 export type OpenAIProviderErrorCode =
   | 'authentication'
   | 'rate_limited'
@@ -89,6 +107,7 @@ export class HttpOpenAIClient implements OpenAIClient {
         { role: 'user', content: input.goal },
       ],
       ...(input.agent.limits.maxTokens === undefined ? {} : { max_output_tokens: input.agent.limits.maxTokens }),
+      ...(input.agent.tools.length === 0 ? {} : { tools: openAIToolDefinitions(input.agent) }),
     });
     const requestSignal = AbortSignal.any([input.signal, AbortSignal.timeout(input.agent.limits.maxDurationMs)]);
     let response: Response | undefined;

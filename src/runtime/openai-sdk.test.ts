@@ -28,6 +28,16 @@ describe('OpenAISDKClient', () => {
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ model: 'gpt-5', store: false, stream: false, text: expect.objectContaining({ format: expect.objectContaining({ type: 'json_schema' }) }) }), expect.objectContaining({ signal: expect.any(AbortSignal), headers: { 'x-client-request-id': 'trace-sdk' } }));
   });
 
+  it('passes declared tools to the official Responses SDK', async () => {
+    const create = vi.fn().mockReturnValue({ withResponse: async () => ({ data: { model: 'gpt-5', status: 'completed', output_text: 'done' }, request_id: 'req-tools' }) });
+    await new OpenAISDKClient({ apiKey: 'key', clientFactory: () => ({ responses: { create } }) }).chat({
+      agent: { ...agent, tools: ['repo.check'], model: { provider: 'openai', model: 'gpt-5' } },
+      goal: 'Use a tool',
+      signal: new AbortController().signal,
+    });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ tools: [{ type: 'function', name: 'repo.check', description: 'Declared workflow tool: repo.check', parameters: { type: 'object', additionalProperties: true } }] }), expect.any(Object));
+  });
+
   it('normalizes SDK streaming tool calls and typed provider errors', async () => {
     const stream = {
       async *[Symbol.asyncIterator]() {

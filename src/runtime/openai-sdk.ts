@@ -15,6 +15,7 @@ import {
   type OpenAIClient,
   type OpenAIModelResult,
 } from './openai.js';
+import { openAIToolDefinitions } from './openai.js';
 
 interface SDKResponsesClient {
   responses: {
@@ -67,6 +68,7 @@ export class OpenAISDKClient implements OpenAIClient {
       ...(input.agent.limits.maxTokens === undefined ? {} : { max_output_tokens: input.agent.limits.maxTokens }),
       ...(this.structuredOutput(input.agent) === undefined ? {} : { text: this.structuredOutput(input.agent) }),
       ...(input.agent.model.streaming === true ? { stream: true } : { stream: false }),
+      ...(input.agent.tools.length === 0 ? {} : { tools: openAIToolDefinitions(input.agent) }),
     } satisfies Record<string, unknown>;
     try {
       const promise = client.responses.create(request, {
