@@ -25,6 +25,7 @@ export interface TemporalWorkflowInput {
 
 export interface TemporalWorkflowResult {
   completedNodeIds: string[];
+  unitOutputs: Record<string, unknown>;
   lifecycle: TemporalActivityLifecycle[];
 }
 
@@ -109,5 +110,5 @@ export async function executeWorkflow(
     }
   }
 
-  return { completedNodeIds: [...completed], lifecycle };
+  return { completedNodeIds: [...completed], unitOutputs: Object.fromEntries(outputs), lifecycle };
 }

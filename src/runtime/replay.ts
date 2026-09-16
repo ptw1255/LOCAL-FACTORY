@@ -2,7 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { ReplayReportRecord, RunRecord, WorkflowDefinition } from '../domain/types.js';
 import type { PlatformStore } from '../storage/store.js';
-import type { LocalWorkflowExecutor } from './executor.js';
+import type { RunCreationOptions } from './executor.js';
+
+interface ReplayExecutor {
+  start(workflow: WorkflowDefinition, options?: RunCreationOptions): Promise<RunRecord>;
+}
 
 export type { ReplayReportStatus } from '../domain/types.js';
 export type ReplayReport = ReplayReportRecord;
@@ -18,7 +22,7 @@ const deterministicNodeTypes = new Set(['manualTrigger', 'transform', 'output', 
 
 /** Replays a pinned run definition and compares only safe structural outputs. */
 export class WorkflowReplayService {
-  public constructor(private readonly store: PlatformStore, private readonly executor: LocalWorkflowExecutor) {}
+  public constructor(private readonly store: PlatformStore, private readonly executor: ReplayExecutor) {}
 
   public async replay(sourceRunId: string, options: { timeoutMs?: number } = {}): Promise<ReplayReport> {
     const source = await this.store.read((state) => state.runs.find((run) => run.id === sourceRunId));

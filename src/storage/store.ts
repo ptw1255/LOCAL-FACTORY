@@ -79,6 +79,7 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
     run.approvedNodeHashes ??= {};
     run.pendingApprovalHashes ??= {};
     run.ciCheckpoints ??= {};
+    run.executionEngine ??= 'local';
   }
   for (const event of state.events) {
     const run = state.runs.find((candidate) => candidate.id === event.runId);

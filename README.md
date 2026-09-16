@@ -17,8 +17,8 @@ remain at the repository root and under [`FACTORY/`](FACTORY/).
 ## Status
 
 The repository is an actively developed MVP. The current release includes the visual
-Studio, versioned workflows and agent boxes, a local durable executor, Temporal
-workflow definitions, PostgreSQL persistence, Vault-backed local secrets, standardized
+Studio, versioned workflows and agent boxes, a local durable executor, an optional
+Temporal execution adapter, PostgreSQL persistence, Vault-backed local secrets, standardized
 OpenTelemetry/OpenInference-style telemetry, bounded proposals, and factory metrics.
 The model-provider and repository-execution adapters are intentionally explicit next
 steps rather than hidden capabilities.
@@ -390,11 +390,24 @@ containers without creating a new platform container for every loop.
 The local executor makes development self-contained and explicitly reports itself as
 `local-durable-preview`. It checkpoints each unit to persistent state, supports
 bounded agent loops and human approval/resume, and records correlated telemetry. For
-a Temporal deployment, run a Temporal service and start:
+an optional Temporal execution plane, run a Temporal service and start the worker
+for the workflow version being served:
 
 ```bash
-TEMPORAL_ADDRESS=localhost:7233 npm run worker
+TEMPORAL_ADDRESS=localhost:7233 \
+TEMPORAL_TASK_QUEUE_PREFIX=agentic-workflows \
+TEMPORAL_WORKFLOW_VERSION=1 \
+npm run worker
 ```
+
+Run creation remains local unless explicitly switched. Set `EXECUTION_ENGINE=temporal`
+to route the control plane through Temporal. The API persists the run and Temporal
+identity before dispatch, uses a versioned queue (`agentic-workflows-v<workflowVersion>`),
+and records searchable factory, workflow, version, environment, status, and
+correlation attributes. The adapter reattaches to queued/running Temporal runs after
+an API restart and observes the workflow result back into the same run record. Supply
+`TEMPORAL_TASK_QUEUE` to the worker when you need an explicit queue name instead of
+the prefix/version convention.
 
 The generic Temporal workflow pins a full definition, executes nondeterministic work
 in activities, uses a signal for approvals, and applies activity retry policy. Docker
