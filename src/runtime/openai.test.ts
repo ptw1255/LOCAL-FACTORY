@@ -99,6 +99,15 @@ describe('HttpOpenAIClient', () => {
     }
   });
 
+  it('retries transient provider failures within a bounded budget', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('busy', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ model: 'gpt-5', status: 'completed', output: [{ type: 'output_text', text: 'recovered' }] }), { status: 200 }));
+    const result = await new HttpOpenAIClient({ apiKey: 'key', fetcher }).chat({ agent: { ...agent, model: { provider: 'openai', model: 'gpt-5' } }, goal: 'retry', signal: new AbortController().signal });
+    expect(result.content).toBe('recovered');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('classifies cancellation, timeout, and connection failures', async () => {
     const configuredAgent = { ...agent, model: { provider: 'openai', model: 'gpt-5' } };
     const cancelled = new AbortController();
