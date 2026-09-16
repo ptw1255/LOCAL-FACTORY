@@ -215,6 +215,24 @@ export interface OperationEvidence {
   metadata?: Record<string, string | number | boolean>;
 }
 
+export type ApprovalDecision = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled' | 'superseded';
+
+export interface ApprovalRecord {
+  id: string;
+  tenantId?: string;
+  projectId?: string;
+  runId: string;
+  nodeId: string;
+  operation: string;
+  bindingHash: string;
+  decision: ApprovalDecision;
+  requestedAt: string;
+  expiresAt: string;
+  actor?: string;
+  reason?: string;
+  decidedAt?: string;
+}
+
 export type DeploymentDesiredState = 'running' | 'stopped';
 export type DeploymentObservedState = 'unknown' | 'starting' | 'live' | 'stopping' | 'degraded' | 'failed' | 'stopped';
 export type DeploymentAction = 'deploy' | 'start' | 'stop' | 'restart' | 'rollback';
@@ -312,5 +330,6 @@ export interface PlatformState {
   files: ProjectFileRecord[];
   artifacts: ArtifactRecord[];
   evidence: OperationEvidence[];
+  approvals: ApprovalRecord[];
   deployments: DeploymentRecord[];
 }

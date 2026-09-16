@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type {
+  ApprovalRecord,
   RunRecord,
   WorkflowDefinition,
   WorkflowEdge,
@@ -17,6 +18,7 @@ import type { OpenAIClient } from './openai.js';
 
 const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
+const APPROVAL_TTL_MS = 30 * 60 * 1_000;
 
 export interface AgentToolExecutionContext {
   runId: string;
@@ -131,7 +133,8 @@ export class LocalWorkflowExecutor {
     return run;
   }
 
-  public async approve(runId: string): Promise<RunRecord> {
+  public async approve(runId: string, options: { actor?: string; reason?: string } = {}): Promise<RunRecord> {
+    let expired = false;
     const run = await this.store.mutate((state) => {
       const target = state.runs.find((candidate) => candidate.id === runId);
       if (target === undefined) {
@@ -150,18 +153,61 @@ export class LocalWorkflowExecutor {
       if (expectedHash === undefined || expectedHash !== currentHash) {
         throw new Error('Approval is no longer valid because the approved operation changed.');
       }
+      const approval = state.approvals.find((candidate) => candidate.runId === runId && candidate.nodeId === waitingNode.id && candidate.decision === 'pending');
+      if (approval === undefined) throw new Error('Approval record is missing or no longer pending.');
+      if (Date.parse(approval.expiresAt) <= Date.now()) {
+        approval.decision = 'expired';
+        approval.decidedAt = new Date().toISOString();
+        target.status = 'failed';
+        target.error = 'Approval expired before it was received.';
+        target.completedAt = approval.decidedAt;
+        expired = true;
+        return target;
+      }
       target.approvedNodeIds.push(waitingNode.id);
       target.approvedNodeHashes[waitingNode.id] = currentHash;
       delete target.pendingApprovalHashes[waitingNode.id];
       target.humanTouchpoints += 1;
       target.status = 'queued';
+      approval.decision = 'approved';
+      approval.actor = options.actor?.trim() || 'local-operator';
+      approval.reason = options.reason;
+      approval.decidedAt = new Date().toISOString();
       return target;
     });
 
+    if (expired) {
+      await this.events.emit(runId, 'approval.expired', 'Approval expired before it was received.', { severityText: 'WARN' });
+      throw new Error('Approval expired before it was received.');
+    }
     await this.events.emit(runId, 'approval.received', 'Human approval received.');
     // The waiting execution is still unwinding its finally block when approval
     // arrives. Yield once so its active-run guard is released before resuming.
     setTimeout(() => void this.execute(runId), 0);
+    return run;
+  }
+
+  public async deny(runId: string, options: { actor?: string; reason?: string } = {}): Promise<RunRecord> {
+    const run = await this.store.mutate((state) => {
+      const target = state.runs.find((candidate) => candidate.id === runId);
+      if (target === undefined) throw new Error('Run not found.');
+      if (target.status !== 'waiting') throw new Error('Only waiting runs can be denied.');
+      const waitingNode = target.workflowDefinition.nodes.find((node) => this.requiresApproval(node) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
+      if (waitingNode === undefined) throw new Error('No approval node is waiting.');
+      const approval = state.approvals.find((candidate) => candidate.runId === runId && candidate.nodeId === waitingNode.id && candidate.decision === 'pending');
+      if (approval === undefined) throw new Error('Approval record is missing or no longer pending.');
+      const now = new Date().toISOString();
+      approval.decision = 'denied';
+      approval.actor = options.actor?.trim() || 'local-operator';
+      approval.reason = options.reason;
+      approval.decidedAt = now;
+      target.status = 'failed';
+      target.error = options.reason?.trim() || 'Workflow approval was denied.';
+      target.completedAt = now;
+      delete target.pendingApprovalHashes[waitingNode.id];
+      return target;
+    });
+    await this.events.emit(runId, 'approval.denied', 'Workflow approval was denied.', { severityText: 'WARN' });
     return run;
   }
 
@@ -823,6 +869,7 @@ export class LocalWorkflowExecutor {
   }
 
   private async waitForApproval(runId: string, nodeId: string): Promise<void> {
+    let approvalId: string | undefined;
     const waiting = await this.store.mutate((state) => {
       const run = state.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
@@ -833,7 +880,32 @@ export class LocalWorkflowExecutor {
       }
       run.status = 'waiting';
       const node = run.workflowDefinition.nodes.find((candidate) => candidate.id === nodeId);
-      if (node !== undefined) run.pendingApprovalHashes[nodeId] = this.approvalFingerprint(run, node);
+      if (node !== undefined) {
+        const bindingHash = this.approvalFingerprint(run, node);
+        run.pendingApprovalHashes[nodeId] = bindingHash;
+        let approval = state.approvals.find((candidate) => candidate.runId === runId && candidate.nodeId === nodeId && candidate.decision === 'pending');
+        if (approval === undefined || approval.bindingHash !== bindingHash) {
+          if (approval !== undefined) {
+            approval.decision = 'superseded';
+            approval.decidedAt = new Date().toISOString();
+          }
+          const requestedAt = new Date();
+          approval = {
+            id: `approval-${randomUUID()}`,
+            ...(run.tenantId === undefined ? {} : { tenantId: run.tenantId }),
+            ...(run.projectId === undefined ? {} : { projectId: run.projectId }),
+            runId,
+            nodeId,
+            operation: node.type,
+            bindingHash,
+            decision: 'pending',
+            requestedAt: requestedAt.toISOString(),
+            expiresAt: new Date(requestedAt.getTime() + APPROVAL_TTL_MS).toISOString(),
+          } satisfies ApprovalRecord;
+          state.approvals.unshift(approval);
+        }
+        approvalId = approval.id;
+      }
       return true;
     });
     if (!waiting) {
@@ -845,7 +917,7 @@ export class LocalWorkflowExecutor {
       'Workflow is waiting for human approval.',
       { nodeId },
     );
-    await this.events.recordEvidence({ runId, unitId: nodeId, operation: 'approval', status: 'waiting' });
+    await this.events.recordEvidence({ runId, unitId: nodeId, operation: 'approval', status: 'waiting', metadata: approvalId === undefined ? undefined : { 'approval.id': approvalId } });
   }
 
   private async completeRun(runId: string): Promise<void> {

@@ -23,6 +23,7 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
   state.files ??= [];
   state.artifacts ??= [];
   state.evidence ??= [];
+  state.approvals ??= [];
   state.deployments ??= [];
   state.tenants ??= [{
     id: DEFAULT_TENANT_ID,

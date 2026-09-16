@@ -631,7 +631,29 @@ export async function createApp(
       try {
         const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
         if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
-        return await executor.approve(request.params.id);
+        const body = (request.body ?? {}) as Record<string, unknown>;
+        return await executor.approve(request.params.id, {
+          ...(typeof body.actor === 'string' ? { actor: body.actor } : {}),
+          ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
+        });
+      } catch (error) {
+        return reply.status(409).send({ message: errorMessage(error) });
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: unknown }>(
+    '/api/runs/:id/deny',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      try {
+        const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
+        if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
+        const body = (request.body ?? {}) as Record<string, unknown>;
+        return await executor.deny(request.params.id, {
+          ...(typeof body.actor === 'string' ? { actor: body.actor } : {}),
+          ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
+        });
       } catch (error) {
         return reply.status(409).send({ message: errorMessage(error) });
       }
