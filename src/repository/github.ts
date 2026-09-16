@@ -1,7 +1,8 @@
 export interface PullRequestInput { title: string; body: string; head: string; base: string }
 export interface PullRequest { number: number; url: string; head: string; base: string; state: string }
-export interface CheckRunSummary { name: string; status: string; conclusion: string | null; url?: string }
-export interface CiResult { ref: string; status: 'success' | 'failure' | 'pending' | 'cancelled' | 'timed_out'; checks: CheckRunSummary[] }
+export interface CheckRunSummary { name: string; status: string; conclusion: string | null; url?: string; summary?: string }
+export interface CiFailure { name: string; conclusion: string | null; url?: string; summary?: string }
+export interface CiResult { ref: string; status: 'success' | 'failure' | 'pending' | 'cancelled' | 'timed_out'; checks: CheckRunSummary[]; required: string[]; failures: CiFailure[] }
 
 export interface GitHubClientOptions { token: string; owner: string; repo: string; fetcher?: typeof fetch }
 
@@ -42,9 +43,9 @@ export class GitHubRepositoryClient {
       headers: this.headers(),
     });
     if (!response.ok) throw new Error(`GitHub check-run lookup failed with status ${response.status}.`);
-    const body = await response.json() as { check_runs?: Array<{ name?: unknown; status?: unknown; conclusion?: unknown; html_url?: unknown }> };
+    const body = await response.json() as { check_runs?: Array<{ name?: unknown; status?: unknown; conclusion?: unknown; html_url?: unknown; output?: { text?: unknown } }> };
     return (body.check_runs ?? []).flatMap((candidate) => typeof candidate.name === 'string' && typeof candidate.status === 'string'
-      ? [{ name: candidate.name, status: candidate.status, conclusion: typeof candidate.conclusion === 'string' ? candidate.conclusion : null, ...(typeof candidate.html_url === 'string' ? { url: candidate.html_url } : {}) }]
+      ? [{ name: candidate.name, status: candidate.status, conclusion: typeof candidate.conclusion === 'string' ? candidate.conclusion : null, ...(typeof candidate.html_url === 'string' ? { url: candidate.html_url } : {}), ...(typeof candidate.output?.text === 'string' && candidate.output.text !== '' ? { summary: candidate.output.text.slice(0, 2_000) } : {}) }]
       : []);
   }
 
@@ -58,9 +59,10 @@ export class GitHubRepositoryClient {
       const missingRequired = required.some((name) => !selected.some((check) => check.name === name));
       const failed = selected.some((check) => check.status === 'completed' && !['success', 'skipped', 'neutral'].includes(check.conclusion ?? ''));
       const complete = !missingRequired && selected.length > 0 && selected.every((check) => check.status === 'completed');
-      if (failed) return { ref: input.ref, status: 'failure', checks };
-      if (complete) return { ref: input.ref, status: 'success', checks };
-      if (Date.now() >= deadline) return { ref: input.ref, status: 'timed_out', checks };
+      const failures = selected.filter((check) => check.status === 'completed' && !['success', 'skipped', 'neutral'].includes(check.conclusion ?? '')).map((check) => ({ name: check.name, conclusion: check.conclusion, ...(check.url === undefined ? {} : { url: check.url }), ...(check.summary === undefined ? {} : { summary: check.summary }) }));
+      if (failed) return { ref: input.ref, status: 'failure', checks, required, failures };
+      if (complete) return { ref: input.ref, status: 'success', checks, required, failures };
+      if (Date.now() >= deadline) return { ref: input.ref, status: 'timed_out', checks, required, failures };
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(resolve, Math.min(Math.max(10, input.intervalMs ?? 2_000), Math.max(1, deadline - Date.now())));
         input.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(input.signal?.reason); }, { once: true });
