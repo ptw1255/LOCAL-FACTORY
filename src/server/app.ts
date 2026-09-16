@@ -796,6 +796,20 @@ export async function createApp(
     },
   );
 
+  app.get<{ Params: { projectId: string; artifactId: string } }>(
+    '/api/projects/:projectId/artifacts/:artifactId',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      const artifact = await store.read((state) => state.artifacts.find((candidate) =>
+        candidate.id === request.params.artifactId
+        && candidate.projectId === request.params.projectId
+        && candidate.tenantId === scope.tenantId,
+      ));
+      if (artifact === undefined) return reply.status(404).send({ message: 'Artifact not found.' });
+      return artifact;
+    },
+  );
+
   app.get('/api/workflows', async (request) => {
     const scope = scopeFromRequest(request);
     return {

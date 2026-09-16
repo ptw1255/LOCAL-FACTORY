@@ -96,6 +96,7 @@ export const api = {
   projectFiles: (projectId: string, search = '') => request<ItemsResponse<ProjectFileRecord> & { directories?: ProjectDirectoryRecord[] }>(`/api/projects/${encodeURIComponent(projectId)}/files${search.trim() === '' ? '' : `?search=${encodeURIComponent(search.trim())}`}`),
   projectFile: (projectId: string, filePath: string) => request<ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files?path=${encodeURIComponent(filePath)}`),
   artifacts: (projectId: string) => request<ItemsResponse<ArtifactRecord>>(`/api/projects/${encodeURIComponent(projectId)}/artifacts`),
+  artifact: (projectId: string, artifactId: string) => request<ArtifactRecord>(`/api/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}`),
   saveProjectFile: (projectId: string, filePath: string, content: string, expectedSha256?: string) => request<ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files`, { method: 'PUT', body: JSON.stringify({ path: filePath, content, ...(expectedSha256 === undefined ? {} : { expectedSha256 }) }) }),
   createProjectDirectory: (projectId: string, directoryPath: string) => request<ProjectDirectoryRecord>(`/api/projects/${encodeURIComponent(projectId)}/files/directory`, { method: 'POST', body: JSON.stringify({ path: directoryPath }) }),
   compileProject: (projectId: string, environment = 'local') => request<{ id: string; workflows: WorkflowDefinition[] }>(`/api/projects/${encodeURIComponent(projectId)}/compile`, { method: 'POST', body: JSON.stringify({ environment }) }),
