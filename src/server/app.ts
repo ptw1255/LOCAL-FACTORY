@@ -679,10 +679,19 @@ export async function createApp(
     return { items: (await events.list(request.query.runId)).filter((event) => inScope(event, scope)) };
   });
 
-  app.get<{ Querystring: { runId?: string } }>('/api/evidence', async (request) => {
+  app.get<{ Querystring: { runId?: string; tenantId?: string; projectId?: string; unitId?: string; operation?: string; status?: import('../domain/types.js').OperationEvidenceStatus; from?: string; to?: string } }>('/api/evidence', async (request) => {
     const scope = scopeFromRequest(request);
     return {
-      items: (await events.listEvidence(request.query.runId)).filter((entry) => inScope(entry, scope)),
+      items: (await events.listEvidence({
+        ...(request.query.runId === undefined ? {} : { runId: request.query.runId }),
+        ...(request.query.tenantId === undefined ? {} : { tenantId: request.query.tenantId }),
+        ...(request.query.projectId === undefined ? {} : { projectId: request.query.projectId }),
+        ...(request.query.unitId === undefined ? {} : { unitId: request.query.unitId }),
+        ...(request.query.operation === undefined ? {} : { operation: request.query.operation }),
+        ...(request.query.status === undefined ? {} : { status: request.query.status }),
+        ...(request.query.from === undefined ? {} : { from: request.query.from }),
+        ...(request.query.to === undefined ? {} : { to: request.query.to }),
+      })).filter((entry) => inScope(entry, scope)),
     };
   });
 

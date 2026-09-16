@@ -215,6 +215,17 @@ export interface OperationEvidence {
   metadata?: Record<string, string | number | boolean>;
 }
 
+export interface EvidenceQuery {
+  runId?: string;
+  tenantId?: string;
+  projectId?: string;
+  unitId?: string;
+  operation?: string;
+  status?: OperationEvidenceStatus;
+  from?: string;
+  to?: string;
+}
+
 export type ApprovalDecision = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled' | 'superseded';
 
 export interface ApprovalRecord {

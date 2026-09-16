@@ -1,7 +1,7 @@
 import { Pool, type PoolConfig } from 'pg';
 
 import { createSeedState } from '../domain/seed.js';
-import type { OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
+import type { EvidenceQuery, OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
 import { normalizePlatformState, type PlatformStore, type StateMutation } from './store.js';
 
 interface StateRow {
@@ -130,11 +130,26 @@ export class PostgresStore implements PlatformStore {
     );
   }
 
-  public async listEvidence(runId?: string): Promise<OperationEvidence[]> {
+  public async listEvidence(query?: string | EvidenceQuery): Promise<OperationEvidence[]> {
     await this.ensureInitialized();
-    const result = runId === undefined
-      ? await this.pool.query<OperationEvidence>('SELECT id, tenant_id AS "tenantId", project_id AS "projectId", run_id AS "runId", unit_id AS "unitId", operation, attempt, status, occurred_at AS "occurredAt", input_hash AS "inputHash", output_hash AS "outputHash", error, metadata FROM operation_evidence ORDER BY occurred_at ASC')
-      : await this.pool.query<OperationEvidence>('SELECT id, tenant_id AS "tenantId", project_id AS "projectId", run_id AS "runId", unit_id AS "unitId", operation, attempt, status, occurred_at AS "occurredAt", input_hash AS "inputHash", output_hash AS "outputHash", error, metadata FROM operation_evidence WHERE run_id = $1 ORDER BY occurred_at ASC', [runId]);
+    const filter: EvidenceQuery = typeof query === 'string' ? { runId: query } : query ?? {};
+    const clauses: string[] = [];
+    const values: string[] = [];
+    const add = (column: string, value: string | undefined): void => {
+      if (value === undefined) return;
+      values.push(value);
+      clauses.push(`${column} = $${values.length}`);
+    };
+    add('run_id', filter.runId);
+    add('tenant_id', filter.tenantId);
+    add('project_id', filter.projectId);
+    add('unit_id', filter.unitId);
+    add('operation', filter.operation);
+    add('status', filter.status);
+    if (filter.from !== undefined) { values.push(filter.from); clauses.push(`occurred_at >= $${values.length}::timestamptz`); }
+    if (filter.to !== undefined) { values.push(filter.to); clauses.push(`occurred_at <= $${values.length}::timestamptz`); }
+    const where = clauses.length === 0 ? '' : ` WHERE ${clauses.join(' AND ')}`;
+    const result = await this.pool.query<OperationEvidence>(`SELECT id, tenant_id AS "tenantId", project_id AS "projectId", run_id AS "runId", unit_id AS "unitId", operation, attempt, status, occurred_at AS "occurredAt", input_hash AS "inputHash", output_hash AS "outputHash", error, metadata FROM operation_evidence${where} ORDER BY occurred_at ASC`, values);
     return result.rows;
   }
 

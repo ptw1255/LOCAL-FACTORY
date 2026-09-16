@@ -82,4 +82,15 @@ describe('EventService retention', () => {
     expect(JSON.stringify(await service.listEvidence('run-1'))).not.toContain('must-not-be-stored');
     expect(await service.listEvidence('run-1')).toEqual([evidence]);
   });
+
+  it('queries durable evidence by unit, operation, status, and time window', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const service = new EventService(store);
+    await service.recordEvidence({ runId: 'run-1', unitId: 'check', operation: 'repositoryCheck', status: 'started', metadata: { tenant: 'local' } });
+    const terminal = await service.recordEvidence({ runId: 'run-1', unitId: 'check', operation: 'repositoryCheck', status: 'succeeded' });
+    await service.recordEvidence({ runId: 'run-1', unitId: 'patch', operation: 'repositoryPatch', status: 'succeeded' });
+    expect(await service.listEvidence({ unitId: 'check', operation: 'repositoryCheck', status: 'succeeded' })).toEqual([terminal]);
+    expect(await service.listEvidence({ from: terminal.occurredAt, to: terminal.occurredAt })).toEqual([terminal]);
+  });
 });
