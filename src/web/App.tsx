@@ -483,6 +483,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [hintDismissed, setHintDismissed] = useState(() => window.localStorage.getItem(`factory.onboarding.${projectId}.dismissed`) === 'true');
   const [yamlSource, setYamlSource] = useState('');
   const [yamlDirty, setYamlDirty] = useState(false);
+  const sourceSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const [studioMode, setStudioMode] = useState<'files' | 'tree' | 'canvas'>(() => readStudioMode(projectId));
 
   useEffect(() => {
@@ -779,6 +780,13 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       if (dirty) {
         const saved = await saveWorkflow();
         if (saved === null) return;
+      }
+      if (yamlDirty) {
+        const saved = sourceSaveRef.current === null ? false : await sourceSaveRef.current();
+        if (!saved) {
+          setNotice({ tone: 'warning', text: 'Save and compile the active source file before running.' });
+          return;
+        }
       }
       const result = await api.validateWorkflow(workflow.id);
       setValidation(result);
@@ -1100,6 +1108,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
           setDirty(false);
           setNotice({ tone: 'success', text: 'YAML applied and compiled successfully.' });
         }}
+        onRegisterSave={(save) => { sourceSaveRef.current = save; }}
         projectId={projectId}
         source={yamlSource}
         workflow={workflow}
@@ -1121,6 +1130,7 @@ function OperationalTree({
   onSourceChange,
   onSourceLoaded,
   onSourceImported,
+  onRegisterSave,
 }: {
   workflow: WorkflowDefinition;
   source: string;
@@ -1134,6 +1144,7 @@ function OperationalTree({
   onSourceChange: (source: string) => void;
   onSourceLoaded: (source: string) => void;
   onSourceImported: (workflows: WorkflowDefinition[], source: string) => void;
+  onRegisterSave: (save: () => Promise<boolean>) => void;
 }) {
   const agentById = new Map(workflow.agents.map((agent) => [agent.id, agent]));
   const [busy, setBusy] = useState(false);
@@ -1251,7 +1262,7 @@ function OperationalTree({
     .filter((file) => !file.path.split('/').slice(0, -1).some((folder, index, folders) => collapsedFolders.has(folders.slice(0, index + 1).join('/'))));
   const folders = [...new Set(visibleFiles.flatMap((file) => file.path.split('/').slice(0, -1).map((_part, index, parts) => parts.slice(0, index + 1).join('/'))))];
 
-  async function applyYaml() {
+  async function applyYaml(): Promise<boolean> {
     setBusy(true);
     setError(null);
     try {
@@ -1266,14 +1277,20 @@ function OperationalTree({
         onSourceImported(response.workflows, source);
       }
       setProblems([]);
+      return true;
     } catch (applyError) {
       setError(errorText(applyError));
       const diagnostics = (applyError as { diagnostics?: unknown }).diagnostics;
       setProblems(Array.isArray(diagnostics) ? diagnostics as SourceDiagnostic[] : [{ severity: 'error', path: selectedPath, line: 1, column: 1, code: 'declarative.invalid', message: errorText(applyError) }]);
+      return false;
     } finally {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    onRegisterSave(applyYaml);
+  }, [onRegisterSave, selectedPath, source, files]);
 
   function openProblem(problem: SourceDiagnostic): void {
     setBottomTab('problems');
