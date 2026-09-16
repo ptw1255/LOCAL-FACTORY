@@ -75,7 +75,7 @@ policies.
 ### OpenAI Responses API
 
 Hosted agent boxes use the provider-neutral runtime with a server-side Responses API
- official OpenAI Node SDK Responses adapter. Keep the key in Vault and reference only its connection path from YAML:
+official OpenAI Node SDK Responses adapter. Keep the key in Vault and reference only its connection path from YAML:
 
 ```yaml
 model:
