@@ -479,6 +479,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [agentDraft, setAgentDraft] = useState('[]');
   const [agentError, setAgentError] = useState<string | null>(null);
   const [hasRun, setHasRun] = useState(() => window.localStorage.getItem(`factory.onboarding.${projectId}.run`) === 'true');
+  const [hintDismissed, setHintDismissed] = useState(() => window.localStorage.getItem(`factory.onboarding.${projectId}.dismissed`) === 'true');
   const [yamlSource, setYamlSource] = useState('');
   const [yamlDirty, setYamlDirty] = useState(false);
   const [studioMode, setStudioMode] = useState<'files' | 'tree' | 'canvas'>(() => readStudioMode(projectId));
@@ -758,6 +759,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         current.map((item) => (item.id === saved.id ? saved : item)),
       );
       setDirty(false);
+      window.localStorage.setItem(`factory.onboarding.${projectId}.saved`, 'true');
       setNotice({ tone: 'success', text: `Saved version ${saved.version}.` });
       return saved;
     } catch (saveError) {
@@ -854,6 +856,11 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         </div>
       </div>
       <div className="workspace-command-strip"><span><Icon name="code" size={14} /> Source is the workflow definition</span><span className="workspace-command-hint"><kbd>⌘</kbd><kbd>S</kbd> save · <kbd>⌘</kbd><kbd>↵</kbd> run</span></div>
+      {hintDismissed ? (
+        <button className="workspace-hint-reopen" onClick={() => { window.localStorage.removeItem(`factory.onboarding.${projectId}.dismissed`); setHintDismissed(false); }} type="button">Show workspace guide</button>
+      ) : (
+        <div className="workspace-hint" role="status"><span><strong>Quick start</strong> Save a file, compile it, then Run and open Observe. {hasRun ? 'This project has a completed run.' : 'No run recorded for this project yet.'}</span><button aria-label="Dismiss workspace guide" onClick={() => { window.localStorage.setItem(`factory.onboarding.${projectId}.dismissed`, 'true'); setHintDismissed(true); }} type="button"><Icon name="close" size={13} /></button></div>
+      )}
       {notice !== null ? (
         <div className={`toast toast-${notice.tone}`} role="status">
           <Icon name={notice.tone === 'success' ? 'check' : 'warning'} />
