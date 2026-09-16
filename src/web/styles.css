@@ -276,6 +276,7 @@ h1, h2, h3, p { margin-top: 0; }
 .deployment-create-form label { color: var(--subtle); display: block; font-size: 11px; margin-bottom: 6px; }
 .deployment-create-form input, .deployment-create-form select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; padding: 8px 10px; width: 100%; }
 .deployment-create-form .form-actions { align-items: center; display: flex; gap: 10px; grid-column: 1 / -1; }
+.connection-card .form-actions select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; padding: 7px 9px; }
 .panel-count { background: #8d4b4b; border-radius: 9px; color: #fff; font-size: 9px; padding: 2px 6px; }
 .panel-count.clean { background: #245541; }
 .ide-bottom-content { color: #7689a3; font-size: 11px; padding: 3px 0 10px; }
