@@ -560,15 +560,26 @@ export class LocalWorkflowExecutor {
         const message = typeof node.config.message === 'string' ? node.config.message : '';
         const paths = Array.isArray(node.config.paths) ? node.config.paths.filter((value): value is string => typeof value === 'string') : [];
         if (node.config.requirePatchArtifact === true) {
-          const patch = inputs.map((input) => {
+          const patches = inputs.map((input) => {
             if (input !== null && typeof input === 'object' && 'patch' in input && (input as { patch?: unknown }).patch !== null && typeof (input as { patch?: unknown }).patch === 'object') return (input as { patch?: unknown }).patch;
             return input;
-          })
-            .find((input): input is { id: string; changedPaths?: unknown[] } => input !== null && typeof input === 'object' && typeof (input as { id?: unknown }).id === 'string' && Array.isArray((input as { changedPaths?: unknown }).changedPaths));
-          if (patch === undefined) throw new Error('Repository commit requires an upstream patch artifact.');
+          }).filter((input): input is { id: string; changedPaths?: unknown[] } => input !== null && typeof input === 'object' && typeof (input as { id?: unknown }).id === 'string' && Array.isArray((input as { changedPaths?: unknown[] }).changedPaths));
+          if (patches.length === 0) throw new Error('Repository commit requires an upstream patch artifact.');
+          if (patches.length > 1) throw new Error('Repository commit requires exactly one unambiguous upstream patch artifact.');
+          const patch = patches[0]!;
           const changedPaths = patch.changedPaths?.filter((value): value is string => typeof value === 'string') ?? [];
           const selectedPaths = paths.length === 0 ? changedPaths : paths;
           if (selectedPaths.some((path) => !changedPaths.includes(path))) throw new Error('Repository commit paths must be contained in the approved patch artifact.');
+          const patchFiles = (patch as { files?: unknown[] }).files;
+          if (Array.isArray(patchFiles) && patchFiles.length > 0) {
+            for (const selectedPath of selectedPaths) {
+              const expected = patchFiles.find((file) => file !== null && typeof file === 'object' && (file as { path?: unknown }).path === selectedPath) as { path: string; sha256?: unknown } | undefined;
+              if (expected === undefined) throw new Error(`Repository commit path "${selectedPath}" is missing from the approved patch file manifest.`);
+              let actualSha: string | undefined;
+              try { actualSha = createHash('sha256').update(await workspace.read(selectedPath)).digest('hex'); } catch { actualSha = undefined; }
+              if (actualSha !== (typeof expected.sha256 === 'string' ? expected.sha256 : undefined)) throw new Error(`Repository commit content for "${selectedPath}" no longer matches the approved patch artifact.`);
+            }
+          }
         }
         result = await workspace.commit(message, paths);
         break;

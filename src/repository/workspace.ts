@@ -11,7 +11,7 @@ const ALLOWED_CHECKS = new Set(['npm test', 'npm run typecheck', 'npm run build'
 
 export interface RepositoryEntry { path: string; kind: 'file' | 'directory'; size?: number }
 export interface CheckResult { command: string; exitCode: number; durationMs: number; output: string; timedOut: boolean }
-export interface PatchArtifact { id: string; baseRevision: string; changedPaths: string[]; patch: string; createdAt: string }
+export interface PatchArtifact { id: string; baseRevision: string; changedPaths: string[]; files?: Array<{ path: string; sha256?: string }>; patch: string; createdAt: string }
 export type RepositoryMutation =
   | { operation: 'create' | 'replace'; path: string; content: string; expectedSha256?: string }
   | { operation: 'delete'; path: string; expectedSha256?: string }
@@ -84,9 +84,16 @@ export class RepositoryWorkspace {
       this.diff().catch(() => ''),
       this.changedPaths().catch(() => []),
     ]);
+    const files = await Promise.all(paths.map(async (relativePath) => {
+      try {
+        return { path: relativePath, sha256: createHash('sha256').update(await readFile(this.safePath(relativePath))).digest('hex') };
+      } catch {
+        return { path: relativePath };
+      }
+    }));
     const createdAt = new Date().toISOString();
-    const id = `sha256:${(await import('node:crypto')).createHash('sha256').update(JSON.stringify({ revision, patch, paths })).digest('hex')}`;
-    return { id, baseRevision: revision, changedPaths: paths, patch, createdAt };
+    const id = `sha256:${(await import('node:crypto')).createHash('sha256').update(JSON.stringify({ revision, patch, paths, files })).digest('hex')}`;
+    return { id, baseRevision: revision, changedPaths: paths, files, patch, createdAt };
   }
 
   public async revision(): Promise<string> {
