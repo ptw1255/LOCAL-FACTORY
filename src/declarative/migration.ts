@@ -27,6 +27,14 @@ function file(path: string, document: Record<string, unknown>): MigrationResourc
   return { path, source: stringify(document) };
 }
 
+export function renderCanvasResource(workflow: WorkflowDefinition, nodes = workflow.nodes, edges = workflow.edges): string {
+  return stringify(envelope('Canvas', `${workflow.id}-layout`, workflow.version, workflow.name, {
+    workflowId: `Workflow/${workflow.id}`,
+    nodes: nodes.map((node) => ({ id: node.id, position: node.position })),
+    edges: edges.map((edge) => ({ source: edge.source, target: edge.target, ...(edge.condition === undefined ? {} : { condition: edge.condition }) })),
+  }));
+}
+
 /** Build a stable file-backed representation without mutating storage. */
 export function planResourceMigration(project: ProjectRecord, workflows: WorkflowDefinition[]): ResourceMigrationPlan {
   const files: MigrationResourceFile[] = [file('factory.yaml', envelope('Project', project.id, 1, project.name, { description: project.description }))];
@@ -59,11 +67,7 @@ export function planResourceMigration(project: ProjectRecord, workflows: Workflo
       ...(workflow.inputSchema === undefined ? {} : { inputSchema: workflow.inputSchema }),
       steps,
     })));
-    files.push(file(`canvas/${workflow.id}.canvas.yaml`, envelope('Canvas', `${workflow.id}-layout`, workflow.version, workflow.name, {
-      workflowId: `Workflow/${workflow.id}`,
-      nodes: workflow.nodes.map((node) => ({ id: node.id, position: node.position })),
-      edges: workflow.edges.map((edge) => ({ source: edge.source, target: edge.target, ...(edge.condition === undefined ? {} : { condition: edge.condition }) })),
-    })));
+    files.push({ path: `canvas/${workflow.id}.canvas.yaml`, source: renderCanvasResource(workflow) });
   }
   for (const [unitId, unit] of [...units.entries()].sort(([left], [right]) => left.localeCompare(right))) {
     if (unit !== undefined) files.push(file(`units/${unitId}.unit.yaml`, envelope('WorkUnit', unitId, unit.version, undefined, unit as unknown as Record<string, unknown>)));
