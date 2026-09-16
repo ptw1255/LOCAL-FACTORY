@@ -129,13 +129,15 @@ describe('coding workflow API', () => {
       const started = await app.inject({ method: 'POST', url: `/api/workflows/${workflow.id}/runs`, payload: {} });
       const runId = (started.json() as { id: string }).id;
       let terminal: Record<string, unknown> | undefined;
-      for (let attempt = 0; attempt < 40; attempt += 1) {
+      // Repository operations involve real git subprocesses; keep the wait
+      // finite but allow normal local scheduling latency.
+      for (let attempt = 0; attempt < 100; attempt += 1) {
         const current = await app.inject({ method: 'GET', url: `/api/runs/${runId}` }).then((response) => response.json() as Record<string, unknown>);
         if (current.status === 'waiting') {
           const approved = await app.inject({ method: 'POST', url: `/api/runs/${runId}/approve`, payload: {} });
           expect(approved.statusCode).toBe(200);
         } else if (current.status === 'succeeded' || current.status === 'failed') { terminal = current; break; }
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        await new Promise((resolve) => setTimeout(resolve, 50));
       }
       expect(terminal?.status).toBe('succeeded');
       expect(githubFetcher).toHaveBeenCalledTimes(4);

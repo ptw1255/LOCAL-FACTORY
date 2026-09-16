@@ -1,7 +1,7 @@
 import { Pool, type PoolConfig } from 'pg';
 
 import { createSeedState } from '../domain/seed.js';
-import type { EvidenceQuery, OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
+import type { ArtifactRecord, EvidenceQuery, OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
 import { normalizePlatformState, type PlatformStore, type StateMutation } from './store.js';
 
 interface StateRow {
@@ -186,6 +186,29 @@ export class PostgresStore implements PlatformStore {
     );
   }
 
+  /** Persist artifacts separately from mutable control-plane state. The
+   * content-addressed ID is the immutable key; a conflicting payload is
+   * rejected instead of silently overwritten. */
+  public async appendArtifact(artifact: ArtifactRecord): Promise<void> {
+    await this.ensureInitialized();
+    const existing = await this.pool.query<{ environment: string; compiler_version: string; sources: unknown; workflows: unknown }>(
+      'SELECT environment, compiler_version, sources, workflows FROM artifacts WHERE tenant_id = $1 AND project_id = $2 AND id = $3',
+      [artifact.tenantId, artifact.projectId, artifact.id],
+    );
+    const row = existing.rows[0];
+    if (row !== undefined) {
+      if (row.environment !== artifact.environment || row.compiler_version !== artifact.compilerVersion || JSON.stringify(row.sources) !== JSON.stringify(artifact.sources) || JSON.stringify(row.workflows) !== JSON.stringify(artifact.workflows)) {
+        throw new Error(`Artifact ${artifact.id} already exists with different content.`);
+      }
+      return;
+    }
+    await this.pool.query(
+      `INSERT INTO artifacts (tenant_id, project_id, id, environment, compiler_version, sources, workflows, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::timestamptz)`,
+      [artifact.tenantId, artifact.projectId, artifact.id, artifact.environment, artifact.compilerVersion, JSON.stringify(artifact.sources), JSON.stringify(artifact.workflows), artifact.createdAt],
+    );
+  }
+
   public async listEvidence(query?: string | EvidenceQuery): Promise<OperationEvidence[]> {
     await this.ensureInitialized();
     const filter: EvidenceQuery = typeof query === 'string' ? { runId: query } : query ?? {};
@@ -255,6 +278,19 @@ export class PostgresStore implements PlatformStore {
         id SMALLINT PRIMARY KEY CHECK (id = 1),
         state JSONB NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS artifacts (
+        tenant_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        id TEXT NOT NULL,
+        environment TEXT NOT NULL,
+        compiler_version TEXT NOT NULL,
+        sources JSONB NOT NULL,
+        workflows JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (tenant_id, project_id, id)
       )
     `);
     await this.pool.query(

@@ -1,4 +1,4 @@
-import type { EvidenceQuery, OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
+import type { ArtifactRecord, EvidenceQuery, OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
 import { defaultWorkUnit } from '../domain/catalog.js';
 
 export const DEFAULT_TENANT_ID = 'tenant-local';
@@ -15,6 +15,8 @@ export interface PlatformStore {
   appendEvent(event: RunEvent): Promise<void>;
   listEvents(runId?: string): Promise<RunEvent[]>;
   appendEvidence(evidence: OperationEvidence): Promise<void>;
+  /** Append an immutable compiled artifact when the backing store supports a dedicated artifact table. */
+  appendArtifact?(artifact: ArtifactRecord): Promise<void>;
   listEvidence(query?: string | EvidenceQuery): Promise<OperationEvidence[]>;
   /** Remove observability records older than the configured retention window. */
   pruneEvents?(before: string): Promise<number>;
