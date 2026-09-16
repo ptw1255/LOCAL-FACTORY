@@ -38,7 +38,7 @@ export class JsonStore implements PlatformStore {
 
   public async appendEvent(event: RunEvent): Promise<void> {
     await this.mutate((state) => {
-      state.events.push(event);
+      if (!state.events.some((candidate) => candidate.id === event.id)) state.events.push(event);
     });
   }
 
