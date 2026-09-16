@@ -6,6 +6,7 @@ export interface OpenAIModelResult {
   model: string;
   promptTokens?: number;
   completionTokens?: number;
+  estimatedCostUsd?: number;
   requestId?: string;
   toolCalls?: Array<{ callId: string; name: string; arguments: string }>;
 }
@@ -102,7 +103,7 @@ export class HttpOpenAIClient implements OpenAIClient {
           : response.status >= 500 ? 'server' : 'request';
       throw new OpenAIProviderError(code, `OpenAI Responses request failed with status ${response.status}${detail === '' ? '.' : `: ${detail}`}`, { status: response.status });
     }
-    if (input.agent.model.streaming === true) return this.parseStream(response, model);
+    if (input.agent.model.streaming === true) return this.parseStream(response, model, input.agent.model.pricing);
     let body: {
       model?: unknown;
       output?: Array<{ type?: unknown; text?: unknown; content?: Array<{ type?: unknown; text?: unknown }>; call_id?: unknown; name?: unknown; arguments?: unknown }>;
@@ -128,12 +129,15 @@ export class HttpOpenAIClient implements OpenAIClient {
       model: typeof body.model === 'string' ? body.model : model,
       ...(typeof body.usage?.input_tokens === 'number' ? { promptTokens: body.usage.input_tokens } : {}),
       ...(typeof body.usage?.output_tokens === 'number' ? { completionTokens: body.usage.output_tokens } : {}),
+      ...(typeof body.usage?.input_tokens === 'number' && typeof body.usage?.output_tokens === 'number' && input.agent.model.pricing !== undefined
+        ? { estimatedCostUsd: Number(((body.usage.input_tokens / 1_000) * input.agent.model.pricing.promptPer1kUsd + (body.usage.output_tokens / 1_000) * input.agent.model.pricing.completionPer1kUsd).toFixed(6)) }
+        : {}),
       ...(response.headers.get('x-request-id') === null ? {} : { requestId: response.headers.get('x-request-id')! }),
       ...(toolCalls.length === 0 ? {} : { toolCalls }),
     };
   }
 
-  private async parseStream(response: Response, fallbackModel: string): Promise<OpenAIModelResult> {
+  private async parseStream(response: Response, fallbackModel: string, pricing?: { promptPer1kUsd: number; completionPer1kUsd: number }): Promise<OpenAIModelResult> {
     if (response.body === null) throw new Error('OpenAI streaming response did not include a body.');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -163,7 +167,14 @@ export class HttpOpenAIClient implements OpenAIClient {
       consume(decoder.decode(next.value, { stream: true }));
     }
     consume(decoder.decode());
-    return { content, model, ...(promptTokens === undefined ? {} : { promptTokens }), ...(completionTokens === undefined ? {} : { completionTokens }), ...(response.headers.get('x-request-id') === null ? {} : { requestId: response.headers.get('x-request-id')! }) };
+    return {
+      content,
+      model,
+      ...(promptTokens === undefined ? {} : { promptTokens }),
+      ...(completionTokens === undefined ? {} : { completionTokens }),
+      ...(promptTokens !== undefined && completionTokens !== undefined && pricing !== undefined ? { estimatedCostUsd: Number(((promptTokens / 1_000) * pricing.promptPer1kUsd + (completionTokens / 1_000) * pricing.completionPer1kUsd).toFixed(6)) } : {}),
+      ...(response.headers.get('x-request-id') === null ? {} : { requestId: response.headers.get('x-request-id')! }),
+    };
   }
 
   private async resolveApiKey(agent: AgentDefinition): Promise<string> {
