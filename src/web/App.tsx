@@ -1577,11 +1577,11 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
 
   useEffect(() => void loadDeployments(), [loadDeployments]);
 
-  async function act(deployment: DeploymentRecord, action: DeploymentRecord['history'][number]['action']) {
+  async function act(deployment: DeploymentRecord, action: DeploymentRecord['history'][number]['action'], artifactId?: string) {
     setBusyId(deployment.id);
     setError(null);
     try {
-      const updated = await api.deploymentAction(deployment.id, action);
+      const updated = await api.deploymentAction(deployment.id, action, artifactId);
       setDeployments((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
     } catch (actionError) { setError(errorText(actionError)); }
     finally { setBusyId(null); }
@@ -1643,7 +1643,7 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
                 <header><span className="connector-logo"><Icon name="factory" size={18} /></span><div><h2>{workflowName}</h2><span>{deployment.environment} · artifact {deployment.artifactId.slice(0, 18)}</span></div><StatusBadge status={deployment.observedState} /></header>
                 <dl><div><dt>Desired</dt><dd>{deployment.desiredState}</dd></div><div><dt>Health</dt><dd>{deployment.health}</dd></div><div><dt>Trigger</dt><dd>{deployment.trigger}</dd></div><div><dt>Updated</dt><dd>{formatDate(deployment.updatedAt)}</dd></div></dl>
                 {deployment.lastError === undefined ? null : <p className="form-error">{deployment.lastError}</p>}
-                <div className="form-actions"><button className="button primary" disabled={busyId === deployment.id} onClick={() => void act(deployment, action)} type="button">{busyId === deployment.id ? 'Working…' : action === 'stop' ? 'Stop' : 'Start'}</button><button className="button ghost" disabled={busyId === deployment.id} onClick={() => void act(deployment, 'restart')} type="button">Restart</button><button className="text-button" onClick={() => onNavigate('observe')} type="button">Observe <Icon name="chevron" /></button></div>
+                <div className="form-actions"><button className="button primary" disabled={busyId === deployment.id} onClick={() => void act(deployment, action)} type="button">{busyId === deployment.id ? 'Working…' : action === 'stop' ? 'Stop' : 'Start'}</button><button className="button ghost" disabled={busyId === deployment.id} onClick={() => void act(deployment, 'restart')} type="button">Restart</button>{(() => { const prior = artifacts.filter((artifact) => artifact.id !== deployment.artifactId && artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)); return prior.length === 0 ? null : <><select aria-label={`Rollback artifact for ${deployment.workflowId}`} defaultValue="" disabled={busyId === deployment.id} onChange={(event) => { if (event.target.value !== '') void act(deployment, 'rollback', event.target.value); }}><option value="">Rollback…</option>{prior.map((artifact) => <option key={artifact.id} value={artifact.id}>{artifact.environment} · {artifact.id.slice(0, 12)}</option>)}</select></>; })()}<button className="text-button" onClick={() => onNavigate('observe')} type="button">Observe <Icon name="chevron" /></button></div>
               </article>
             );
           })}
