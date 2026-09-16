@@ -37,6 +37,7 @@ import type {
   ConnectionRecord,
   FactoryMetrics,
   DeploymentRecord,
+  DeploymentTransition,
   DeploymentEnvelope,
   OperationEvidence,
   NodeCatalogItem,
@@ -128,6 +129,32 @@ function formatDuration(value?: number): string {
 function formatPercent(value: number): string {
   const normalized = value <= 1 ? value * 100 : value;
   return `${normalized.toFixed(normalized >= 10 ? 0 : 1)}%`;
+}
+
+function historyFromDeploymentEvidence(items: OperationEvidence[]): DeploymentTransition[] {
+  const actions = new Set<DeploymentTransition['action']>(['deploy', 'start', 'stop', 'restart', 'rollback']);
+  return items
+    .filter((entry) => entry.operation.startsWith('deployment.'))
+    .map((entry): DeploymentTransition | undefined => {
+      const action = entry.operation.slice('deployment.'.length) as DeploymentTransition['action'];
+      if (!actions.has(action)) return undefined;
+      const metadata = entry.metadata ?? {};
+      const runId = entry.runId.startsWith('deployment:') ? undefined : entry.runId;
+      return {
+        id: entry.id,
+        action,
+        actor: entry.actor ?? 'runtime',
+        occurredAt: entry.occurredAt,
+        ...(typeof metadata['deployment.artifact'] === 'string' ? { toArtifactId: metadata['deployment.artifact'] } : {}),
+        ...(entry.idempotencyKey === undefined ? {} : { idempotencyKey: entry.idempotencyKey }),
+        ...(runId === undefined ? {} : { runId }),
+        ...(entry.correlationId === undefined ? {} : { correlationId: entry.correlationId }),
+        outcome: entry.status === 'succeeded' ? 'succeeded' : 'failed',
+        ...(entry.error === undefined ? {} : { reason: entry.error }),
+      };
+    })
+    .filter((transition): transition is DeploymentTransition => transition !== undefined)
+    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
 }
 
 function errorText(error: unknown): string {
@@ -1908,6 +1935,7 @@ function ProposalsView({ onOpenStudio }: { onOpenStudio: () => void }) {
 function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
   const [deployments, setDeployments] = useState<DeploymentRecord[]>([]);
   const [deploymentEnvelopes, setDeploymentEnvelopes] = useState<DeploymentEnvelope[]>([]);
+  const [deploymentEvidence, setDeploymentEvidence] = useState<Record<string, OperationEvidence[]>>({});
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1934,6 +1962,8 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
       setDeployments(deploymentResponse.items);
       setDeploymentEnvelopes(envelopeResponse.items);
       setArtifacts(artifactResponse.items);
+      const evidenceResponses = await Promise.allSettled(deploymentResponse.items.map(async (deployment) => [deployment.id, (await api.deploymentEvidence(deployment.id)).items] as const));
+      setDeploymentEvidence(Object.fromEntries(evidenceResponses.flatMap((response) => response.status === 'fulfilled' ? [response.value] : [])));
       setForm((current) => ({ ...current, artifactId: current.artifactId || artifactResponse.items[0]?.id || '', workflowId: current.workflowId || artifactResponse.items[0]?.workflows[0]?.id || '' }));
     }
     catch (loadError) { setError(errorText(loadError)); }
@@ -1948,6 +1978,8 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
     const [refreshed, refreshedEnvelopes] = await Promise.all([api.deployments(), api.deploymentEnvelopes()]);
     setDeployments(refreshed.items);
     setDeploymentEnvelopes(refreshedEnvelopes.items);
+    const evidenceResponses = await Promise.allSettled(refreshed.items.map(async (deployment) => [deployment.id, (await api.deploymentEvidence(deployment.id)).items] as const));
+    setDeploymentEvidence(Object.fromEntries(evidenceResponses.flatMap((response) => response.status === 'fulfilled' ? [response.value] : [])));
   }, []);
 
   useEffect(() => {
@@ -1995,6 +2027,7 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   const operationalDeployments: DeploymentRecord[] = deployments.map((deployment): DeploymentRecord => {
     const envelope = envelopeById.get(deployment.id);
     if (envelope === undefined) return deployment;
+    const evidence = deploymentEvidence[deployment.id];
     return {
       ...deployment,
       workflowId: envelope.spec.workflowId,
@@ -2004,6 +2037,9 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
       observedState: envelope.status.observedState,
       updatedAt: envelope.status.updatedAt,
       lastError: envelope.status.error ?? undefined,
+      history: evidence === undefined
+        ? deployment.history
+        : historyFromDeploymentEvidence(evidence),
     };
   });
   const environments = [...new Set(operationalDeployments.map((deployment) => deployment.environment))].sort();
