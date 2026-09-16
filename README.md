@@ -180,8 +180,8 @@ OPENAI_SMOKE=1 OPENAI_API_KEY=… npm run test -- --run src/runtime/openai.smoke
 ### Local repository checks
 
 Set `REPOSITORY_WORKSPACE` to expose the bounded repository API. Only `npm test`,
-`npm run typecheck`, and `npm run build` can execute; arbitrary commands and paths
-outside the configured root are rejected:
+`npm run test:integration`, `npm run lint`, `npm run typecheck`, and `npm run build`
+can execute; arbitrary commands and paths outside the configured root are rejected:
 
 ```bash
 REPOSITORY_WORKSPACE=/path/to/repository npm run server
