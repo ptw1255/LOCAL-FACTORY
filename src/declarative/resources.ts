@@ -152,7 +152,7 @@ export function parseResourceFile(resource: ResourceFile): z.infer<typeof resour
 }
 
 /** Compiles one project entrypoint plus typed Agent/Workflow resource files. */
-export function compileResourceFiles(resources: ResourceFile[], scope: { tenantId: string; projectId?: string }): CompiledResourceFiles {
+export function compileResourceFiles(resources: ResourceFile[], scope: { tenantId: string; projectId?: string; environment?: string }): CompiledResourceFiles {
   const envelopes = resources.map(parseResourceFile);
   envelopes.forEach((resource, index) => {
     const source = resources[index];
@@ -169,6 +169,35 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
   const projectResource = projectResources[0];
   if (projectResource === undefined) throw new Error('Resource workspace must contain one Project resource.');
   const projectSpec = projectResource.spec;
+  const selectedEnvironment = envelopes.find((resource) => resource.kind === 'Environment' && (
+    resource.metadata.id === scope.environment || resource.spec.name === scope.environment
+  ));
+  const projectDefaults = projectSpec.defaults !== null && typeof projectSpec.defaults === 'object' ? projectSpec.defaults as Record<string, unknown> : {};
+  const environmentOverrides = selectedEnvironment?.spec.overrides !== null && typeof selectedEnvironment?.spec.overrides === 'object'
+    ? selectedEnvironment.spec.overrides as Record<string, unknown>
+    : {};
+  const merge = (base: Record<string, unknown>, ...layers: unknown[]): Record<string, unknown> => {
+    const result = structuredClone(base);
+    for (const layer of layers) {
+      if (layer === null || typeof layer !== 'object' || Array.isArray(layer)) continue;
+      for (const [key, value] of Object.entries(layer as Record<string, unknown>)) {
+        const current = result[key];
+        result[key] = current !== null && typeof current === 'object' && !Array.isArray(current) && value !== null && typeof value === 'object' && !Array.isArray(value)
+          ? merge(current as Record<string, unknown>, value)
+          : structuredClone(value);
+      }
+    }
+    return result;
+  };
+  const overrideFor = (kind: string, id: string): unknown[] => {
+    const plural = `${kind.toLowerCase()}s`;
+    return [
+      projectDefaults[plural] !== null && typeof projectDefaults[plural] === 'object' ? (projectDefaults[plural] as Record<string, unknown>)[id] : undefined,
+      projectDefaults[`${kind}/${id}`],
+      environmentOverrides[plural] !== null && typeof environmentOverrides[plural] === 'object' ? (environmentOverrides[plural] as Record<string, unknown>)[id] : undefined,
+      environmentOverrides[`${kind}/${id}`],
+    ];
+  };
   const schemas = new Map(envelopes.filter((resource) => resource.kind === 'Schema').map((resource) => [resource.metadata.id, resource.spec]));
   const resolveSchema = (value: unknown, owner: string): unknown => {
     if (typeof value === 'string') {
@@ -194,7 +223,7 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
     return value;
   };
   const agents = envelopes.filter((resource) => resource.kind === 'Agent').map((resource) => ({
-    ...(resolveSchema(resource.spec, `Agent/${resource.metadata.id}`) as Record<string, unknown>),
+    ...(resolveSchema(merge({}, ...overrideFor('Agent', resource.metadata.id), resource.spec), `Agent/${resource.metadata.id}`) as Record<string, unknown>),
     id: resource.metadata.id,
     ...(resource.metadata.version === undefined ? {} : { version: resource.metadata.version }),
     ...(resource.metadata.name === undefined ? {} : { name: resource.metadata.name }),
@@ -209,12 +238,12 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
     return ids.has(id) ? id : undefined;
   };
   const workflows = envelopes.filter((resource) => resource.kind === 'Workflow').map((resource) => ({
-    ...(resource.spec as Record<string, unknown>),
+    ...merge({}, ...overrideFor('Workflow', resource.metadata.id), resource.spec),
     id: resource.metadata.id,
     ...(resource.metadata.version === undefined ? {} : { version: resource.metadata.version }),
     ...(resource.metadata.name === undefined ? {} : { name: resource.metadata.name }),
-    ...(resource.spec.inputSchema === undefined ? {} : { inputSchema: resolveSchema(resource.spec.inputSchema, `Workflow/${resource.metadata.id}`) }),
-    steps: (resource.spec.steps as Array<Record<string, unknown>>).map((step, stepIndex) => {
+    ...((merge({}, ...overrideFor('Workflow', resource.metadata.id), resource.spec).inputSchema === undefined ? {} : { inputSchema: resolveSchema(merge({}, ...overrideFor('Workflow', resource.metadata.id), resource.spec).inputSchema, `Workflow/${resource.metadata.id}`) })),
+    steps: (merge({}, ...overrideFor('Workflow', resource.metadata.id), resource.spec).steps as Array<Record<string, unknown>>).map((step, stepIndex) => {
       let resolved = { ...step };
       if (typeof step.unit === 'string') {
         const unitId = resolveReference(step.unit, 'WorkUnit', workUnitIds);
@@ -224,8 +253,16 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
         resolved = { ...resolved, unit };
       }
       if (typeof step.agent === 'string' && resolveReference(step.agent, 'Agent', agentIds) === undefined) throw new Error(`Workflow ${resource.metadata.id} step ${String(step.id ?? stepIndex + 1)} references missing Agent/${step.agent}.`);
-      if (typeof step.policy === 'string' && resolveReference(step.policy, 'Policy', policyIds) === undefined) throw new Error(`Workflow ${resource.metadata.id} step ${String(step.id ?? stepIndex + 1)} references missing Policy/${step.policy}.`);
-      if (typeof step.connection === 'string' && resolveReference(step.connection, 'Connection', connectionIds) === undefined) throw new Error(`Workflow ${resource.metadata.id} step ${String(step.id ?? stepIndex + 1)} references missing Connection/${step.connection}.`);
+      if (typeof step.policy === 'string') {
+        const policyId = resolveReference(step.policy, 'Policy', policyIds);
+        if (policyId === undefined) throw new Error(`Workflow ${resource.metadata.id} step ${String(step.id ?? stepIndex + 1)} references missing Policy/${step.policy}.`);
+        resolved.config = { ...(resolved.config as Record<string, unknown> | undefined), policyId };
+      }
+      if (typeof step.connection === 'string') {
+        const connectionId = resolveReference(step.connection, 'Connection', connectionIds);
+        if (connectionId === undefined) throw new Error(`Workflow ${resource.metadata.id} step ${String(step.id ?? stepIndex + 1)} references missing Connection/${step.connection}.`);
+        resolved.config = { ...(resolved.config as Record<string, unknown> | undefined), connectionId };
+      }
       return resolved;
     }),
   }));
@@ -278,6 +315,17 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
       for (const node of workflow.nodes) {
         node.sourcePath = sourcePath;
         node.sourceLine = lineForListId(sourceResource.source, node.id, fallbackLine);
+      }
+    }
+    const workflowById = new Map(compiled.workflows.map((workflow) => [workflow.id, workflow]));
+    for (const canvas of envelopes.filter((candidate) => candidate.kind === 'Canvas')) {
+      const workflowId = (canvas.spec as { workflowId: string }).workflowId.replace(/^Workflow\//, '');
+      const workflow = workflowById.get(workflowId);
+      if (workflow === undefined) continue;
+      const positions = new Map(((canvas.spec as { nodes?: Array<{ id: string; position: { x: number; y: number } }> }).nodes ?? []).map((node) => [node.id, node.position]));
+      for (const node of workflow.nodes) {
+        const position = positions.get(node.id);
+        if (position !== undefined) node.position = { ...position };
       }
     }
     return { ...compiled, resources: envelopes };
