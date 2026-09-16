@@ -42,4 +42,13 @@ describe('GitHubRepositoryClient', () => {
     const result = await new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher }).waitForChecks({ ref: 'def456', required: ['lint'], intervalMs: 10, timeoutMs: 200 });
     expect(result).toMatchObject({ status: 'failure', required: ['lint'], failures: [{ name: 'lint', conclusion: 'failure', url: 'https://github.com/example/repo/actions/runs/2', summary: 'line 1 failed' }] });
   });
+
+  it('retries rate-limited check polling within the deadline', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('rate limited', { status: 429, headers: { 'retry-after': '0' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'completed', conclusion: 'success' }] }), { status: 200 }));
+    const result = await new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher }).waitForChecks({ ref: 'abc123', required: ['test'], intervalMs: 10, timeoutMs: 200 });
+    expect(result.status).toBe('success');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
 });
