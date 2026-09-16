@@ -535,6 +535,7 @@ export async function createApp(
         const sources = files.map((file) => ({ path: file.path, sha256: file.sha256 }));
         const compilerVersion = '0.1.0';
         const artifact: ArtifactRecord = { tenantId: scope.tenantId, projectId: request.params.projectId, id: computeArtifactId({ environment, compilerVersion, sources, workflows: compiled.workflows }), environment, compilerVersion, sources, workflows: compiled.workflows, createdAt: new Date().toISOString() };
+        await store.appendArtifact?.(artifact);
         await store.mutate((state) => {
           if (!state.artifacts.some((candidate) => candidate.id === artifact.id && candidate.projectId === artifact.projectId && candidate.tenantId === artifact.tenantId)) state.artifacts.push(artifact);
         });
