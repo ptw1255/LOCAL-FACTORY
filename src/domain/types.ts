@@ -292,6 +292,7 @@ export interface DeploymentRecord {
   updatedAt: string;
   lease?: { ownerId: string; expiresAt: string };
   lastError?: string;
+  healthyArtifactIds: string[];
   history: DeploymentTransition[];
 }
 

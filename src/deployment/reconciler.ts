@@ -55,6 +55,7 @@ export class DeploymentReconciler {
         triggerStatus: 'inactive',
         createdAt: now,
         updatedAt: now,
+        healthyArtifactIds: [],
         history: [],
       };
       state.deployments.unshift(deployment);
@@ -76,6 +77,7 @@ export class DeploymentReconciler {
         if (action === 'deploy' || action === 'rollback') {
           const artifact = this.findArtifact(state.artifacts, targetArtifactId, scope);
           if (artifact === undefined || !artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)) throw new Error('Deployment artifact is not available for this workflow.');
+          if (action === 'rollback' && (!deployment.healthyArtifactIds.includes(targetArtifactId) || targetArtifactId === deployment.artifactId)) throw new Error('Rollback requires a prior healthy artifact for this deployment.');
           deployment.artifactId = targetArtifactId;
         }
         if (action === 'stop') { deployment.desiredState = 'stopped'; deployment.observedState = 'stopping'; }
@@ -86,6 +88,7 @@ export class DeploymentReconciler {
         deployment.health = observation.health;
         deployment.triggerStatus = observation.triggerStatus;
         deployment.lastError = observation.lastError;
+        if (deployment.observedState === 'live' && deployment.health === 'healthy' && !deployment.healthyArtifactIds.includes(deployment.artifactId)) deployment.healthyArtifactIds.unshift(deployment.artifactId);
         deployment.updatedAt = now;
         const transition: DeploymentTransition = {
           id: randomUUID(), action, actor, occurredAt: now,
@@ -143,6 +146,7 @@ export class DeploymentReconciler {
         deployment.health = observation.health;
         deployment.triggerStatus = observation.triggerStatus;
         deployment.lastError = observation.lastError;
+        if (deployment.observedState === 'live' && deployment.health === 'healthy' && !deployment.healthyArtifactIds.includes(deployment.artifactId)) deployment.healthyArtifactIds.unshift(deployment.artifactId);
         deployment.updatedAt = now.toISOString();
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Deployment reconciliation failed.';
