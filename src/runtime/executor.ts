@@ -730,6 +730,7 @@ export class LocalWorkflowExecutor {
             ...(modelResult.requestId === undefined ? {} : { 'llm.request_id': modelResult.requestId }),
             ...(modelResult.promptTokens === undefined ? {} : { 'llm.token_count.prompt': modelResult.promptTokens }),
             ...(modelResult.completionTokens === undefined ? {} : { 'llm.token_count.completion': modelResult.completionTokens }),
+            ...('finishReason' in modelResult && typeof (modelResult as { finishReason?: unknown }).finishReason === 'string' ? { 'llm.finish_reason': (modelResult as { finishReason: string }).finishReason } : {}),
           },
           ...(agent.observability.captureOutputs ? { data: { output: modelResult.content } } : {}),
         });

@@ -7,6 +7,7 @@ export interface OpenAIModelResult {
   promptTokens?: number;
   completionTokens?: number;
   estimatedCostUsd?: number;
+  finishReason?: string;
   requestId?: string;
   toolCalls?: Array<{ callId: string; name: string; arguments: string }>;
 }
@@ -108,6 +109,7 @@ export class HttpOpenAIClient implements OpenAIClient {
       model?: unknown;
       output?: Array<{ type?: unknown; text?: unknown; content?: Array<{ type?: unknown; text?: unknown }>; call_id?: unknown; name?: unknown; arguments?: unknown }>;
       usage?: { input_tokens?: unknown; output_tokens?: unknown };
+      status?: unknown;
     };
     try {
       body = await response.json() as typeof body;
@@ -129,6 +131,7 @@ export class HttpOpenAIClient implements OpenAIClient {
       model: typeof body.model === 'string' ? body.model : model,
       ...(typeof body.usage?.input_tokens === 'number' ? { promptTokens: body.usage.input_tokens } : {}),
       ...(typeof body.usage?.output_tokens === 'number' ? { completionTokens: body.usage.output_tokens } : {}),
+      ...(typeof body.status === 'string' ? { finishReason: body.status } : {}),
       ...(typeof body.usage?.input_tokens === 'number' && typeof body.usage?.output_tokens === 'number' && input.agent.model.pricing !== undefined
         ? { estimatedCostUsd: Number(((body.usage.input_tokens / 1_000) * input.agent.model.pricing.promptPer1kUsd + (body.usage.output_tokens / 1_000) * input.agent.model.pricing.completionPer1kUsd).toFixed(6)) }
         : {}),
@@ -144,6 +147,7 @@ export class HttpOpenAIClient implements OpenAIClient {
     let buffer = '';
     let content = '';
     let model = fallbackModel;
+    let finishReason: string | undefined;
     let promptTokens: number | undefined;
     let completionTokens: number | undefined;
     const consume = (chunk: string): void => {
@@ -153,10 +157,11 @@ export class HttpOpenAIClient implements OpenAIClient {
       for (const record of records) {
         const data = record.split(/\r?\n/).find((line) => line.startsWith('data:'))?.slice(5).trim();
         if (data === undefined || data === '[DONE]') continue;
-        let event: { type?: unknown; delta?: unknown; response?: { model?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown } } };
+        let event: { type?: unknown; delta?: unknown; response?: { model?: unknown; status?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown } } };
         try { event = JSON.parse(data) as typeof event; } catch { continue; }
         if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') content += event.delta;
         if (typeof event.response?.model === 'string') model = event.response.model;
+        if (typeof event.response?.status === 'string') finishReason = event.response.status;
         if (typeof event.response?.usage?.input_tokens === 'number') promptTokens = event.response.usage.input_tokens;
         if (typeof event.response?.usage?.output_tokens === 'number') completionTokens = event.response.usage.output_tokens;
       }
@@ -172,6 +177,7 @@ export class HttpOpenAIClient implements OpenAIClient {
       model,
       ...(promptTokens === undefined ? {} : { promptTokens }),
       ...(completionTokens === undefined ? {} : { completionTokens }),
+      ...(finishReason === undefined ? {} : { finishReason }),
       ...(promptTokens !== undefined && completionTokens !== undefined && pricing !== undefined ? { estimatedCostUsd: Number(((promptTokens / 1_000) * pricing.promptPer1kUsd + (completionTokens / 1_000) * pricing.completionPer1kUsd).toFixed(6)) } : {}),
       ...(response.headers.get('x-request-id') === null ? {} : { requestId: response.headers.get('x-request-id')! }),
     };
