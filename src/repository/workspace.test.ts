@@ -36,6 +36,15 @@ describe('RepositoryWorkspace', () => {
     expect(result).toMatchObject({ command: 'npm run typecheck', timedOut: true, exitCode: expect.any(Number) });
   });
 
+  it('cancels an in-flight allow-listed check through its abort signal', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-check-cancel-'));
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node -e "setTimeout(() => {}, 1000)"' } }));
+    const controller = new AbortController();
+    const check = (await RepositoryWorkspace.open(root)).runCheck('npm run typecheck', 5_000, controller.signal);
+    setTimeout(() => controller.abort(new Error('operator cancelled')), 20);
+    await expect(check).resolves.toMatchObject({ command: 'npm run typecheck', cancelled: true, timedOut: false });
+  });
+
   it('creates a content-addressed patch artifact with revision provenance', async () => {
     const workspace = await RepositoryWorkspace.open(process.cwd());
     const artifact = await workspace.patchArtifact();

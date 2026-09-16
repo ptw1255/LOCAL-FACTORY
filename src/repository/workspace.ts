@@ -10,7 +10,7 @@ const MAX_OUTPUT = 20_000;
 const ALLOWED_CHECKS = new Set(['npm test', 'npm run typecheck', 'npm run build']);
 
 export interface RepositoryEntry { path: string; kind: 'file' | 'directory'; size?: number }
-export interface CheckResult { command: string; exitCode: number; durationMs: number; output: string; timedOut: boolean }
+export interface CheckResult { command: string; exitCode: number; durationMs: number; output: string; timedOut: boolean; cancelled?: boolean }
 export class RepositoryCheckError extends Error {
   public readonly code = 'REPOSITORY_CHECK_FAILED';
   public constructor(message: string, public readonly result: CheckResult) { super(message); this.name = 'RepositoryCheckError'; }
@@ -127,15 +127,17 @@ export class RepositoryWorkspace {
     return result.stdout.split('\n').map((value) => value.trim()).filter(Boolean);
   }
 
-  public async runCheck(command: string, timeoutMs = 120_000): Promise<CheckResult> {
+  public async runCheck(command: string, timeoutMs = 120_000, signal?: AbortSignal): Promise<CheckResult> {
     if (!ALLOWED_CHECKS.has(command)) throw new Error(`Unsupported repository check "${command}".`);
     const started = Date.now();
     try {
-      const result = await execFileAsync(command.split(' ')[0]!, command.split(' ').slice(1), { cwd: this.root, timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2 });
+      const result = await execFileAsync(command.split(' ')[0]!, command.split(' ').slice(1), { cwd: this.root, timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2, ...(signal === undefined ? {} : { signal }) });
       return { command, exitCode: 0, durationMs: Date.now() - started, output: truncate(`${result.stdout}${result.stderr}`), timedOut: false };
     } catch (error) {
       const failure = error as { code?: number | string; killed?: boolean; stdout?: string; stderr?: string; message?: string };
-      return { command, exitCode: typeof failure.code === 'number' ? failure.code : 1, durationMs: Date.now() - started, output: truncate(`${failure.stdout ?? ''}${failure.stderr ?? failure.message ?? ''}`), timedOut: failure.killed === true };
+      const timeoutSignal = signal?.aborted === true && typeof signal.reason === 'object' && signal.reason !== null && 'code' in signal.reason && String((signal.reason as { code?: unknown }).code).includes('TIMED_OUT');
+      const cancelled = signal?.aborted === true && !timeoutSignal;
+      return { command, exitCode: typeof failure.code === 'number' ? failure.code : 1, durationMs: Date.now() - started, output: truncate(`${failure.stdout ?? ''}${failure.stderr ?? failure.message ?? ''}`), timedOut: timeoutSignal || (!cancelled && failure.killed === true), ...(cancelled ? { cancelled: true } : {}) };
     }
   }
 
