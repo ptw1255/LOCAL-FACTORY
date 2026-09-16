@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
 import type { WorkflowNode } from '../domain/types.js';
-import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
+import { WorkUnitDispatcher, WorkUnitTimeoutError } from './work-unit-dispatcher.js';
 
 const node: WorkflowNode = {
   id: 'unit-1',
@@ -72,5 +72,24 @@ describe('WorkUnitDispatcher', () => {
   it('fails closed for an unregistered version', async () => {
     const dispatcher = new WorkUnitDispatcher();
     await expect(dispatcher.dispatch({ ...node.unit!, version: 2 }, context())).rejects.toThrow('deterministic@2');
+  });
+
+  it('resolves named schemas and rejects unknown references', async () => {
+    const dispatcher = new WorkUnitDispatcher({
+      'review-input': (payload) => typeof payload === 'object' && payload !== null && 'request' in payload,
+    });
+    const named = { ...node.unit!, inputSchema: '$ref:review-input' };
+    await expect(dispatcher.dispatch(named, context({ inputs: [{ request: 'check' }] }))).resolves.toBe('output');
+    await expect(dispatcher.dispatch(named, context({ inputs: [{ wrong: true }] }))).rejects.toThrow('input');
+    await expect(dispatcher.dispatch({ ...node.unit!, inputSchema: '$ref:missing' }, context())).rejects.toThrow('unknown schema');
+  });
+
+  it('aborts a timed-out adapter and reports the bounded timeout', async () => {
+    const dispatcher = new WorkUnitDispatcher();
+    const timed = { ...node.unit!, timeoutMs: 10 };
+    dispatcher.register('deterministic', 1, ({ context: dispatchContext }) => new Promise((_resolve, reject) => {
+      dispatchContext.signal.addEventListener('abort', () => reject(dispatchContext.signal.reason), { once: true });
+    }));
+    await expect(dispatcher.dispatch(timed, context())).rejects.toBeInstanceOf(WorkUnitTimeoutError);
   });
 });
