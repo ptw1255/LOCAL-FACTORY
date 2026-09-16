@@ -224,6 +224,19 @@ records from arbitrary third-party storage.
 
 `npm run check` runs type checking, tests, and the production web build.
 
+The default suite keeps the PostgreSQL restart probe opt-in so contributors do not
+need a database daemon. To exercise the supported local persistence boundary, start
+the Compose database and run the integration file explicitly:
+
+```bash
+docker compose up -d postgres
+TEST_DATABASE_URL=postgresql://factory:factory@localhost:5432/factory \
+  npm test -- --run src/storage/postgres-store.integration.test.ts
+```
+
+Vault boundary tests use a mocked local transport in the default suite; the Compose
+Vault service is available for the real secret flow described above.
+
 ## Product workflow
 
 ```text
