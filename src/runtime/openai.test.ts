@@ -18,8 +18,8 @@ describe('HttpOpenAIClient', () => {
       id: 'resp_1', model: 'gpt-5', output: [{ type: 'message', content: [{ type: 'output_text', text: 'done' }] }], usage: { input_tokens: 4, output_tokens: 2 },
     }), { status: 200, headers: { 'x-request-id': 'req_1' } }));
     const secretBroker = { put: vi.fn(), get: vi.fn().mockResolvedValue('secret-key') };
-    const result = await new HttpOpenAIClient({ baseUrl: 'https://api.openai.test/v1', fetcher, secretBroker }).chat({ agent, goal: 'Do it', traceId: 'trace-1', signal: new AbortController().signal });
-    expect(result).toEqual({ content: 'done', model: 'gpt-5', promptTokens: 4, completionTokens: 2, requestId: 'req_1' });
+    const result = await new HttpOpenAIClient({ baseUrl: 'https://api.openai.test/v1', fetcher, secretBroker }).chat({ agent: { ...agent, model: { ...agent.model, pricing: { promptPer1kUsd: 1, completionPer1kUsd: 2 } } }, goal: 'Do it', traceId: 'trace-1', signal: new AbortController().signal });
+    expect(result).toEqual({ content: 'done', model: 'gpt-5', promptTokens: 4, completionTokens: 2, estimatedCostUsd: 0.008, requestId: 'req_1' });
     expect(secretBroker.get).toHaveBeenCalledWith('connections/openai');
     expect(String(fetcher.mock.calls[0]?.[1]?.headers)).not.toContain('secret-key');
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ model: 'gpt-5', store: false });

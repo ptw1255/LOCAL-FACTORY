@@ -734,6 +734,10 @@ export class LocalWorkflowExecutor {
           ...(agent.observability.captureOutputs ? { data: { output: modelResult.content } } : {}),
         });
       }
+      const configuredModelCost = modelResult !== undefined && 'estimatedCostUsd' in modelResult && typeof (modelResult as { estimatedCostUsd?: unknown }).estimatedCostUsd === 'number'
+        ? (modelResult as { estimatedCostUsd: number }).estimatedCostUsd
+        : undefined;
+      const iterationCost = configuredModelCost ?? (provider === 'ollama' ? 0 : 0.0015);
       const continued = await this.store.mutate((state) => {
         const run = state.runs.find((candidate) => candidate.id === runId);
         if (run === undefined || run.status === 'cancelled') {
@@ -741,7 +745,7 @@ export class LocalWorkflowExecutor {
         }
         // Local inference has no provider charge; retain the preview charge for
         // unconfigured/simulated providers until their adapters are implemented.
-        run.costUsd = Number((run.costUsd + (provider === 'ollama' ? 0 : 0.0015)).toFixed(4));
+        run.costUsd = Number((run.costUsd + iterationCost).toFixed(6));
         return true;
       });
       await this.events.emit(runId, 'agent.cost', 'Agent cost recorded.', {
@@ -750,7 +754,7 @@ export class LocalWorkflowExecutor {
         spanKind: 'agent',
         attributes: {
           'metric.name': 'gen_ai.cost.usd',
-          'metric.value': provider === 'ollama' ? 0 : 0.0015,
+          'metric.value': iterationCost,
           'agent.id': agent.id,
           'agent.version': agent.version,
         },

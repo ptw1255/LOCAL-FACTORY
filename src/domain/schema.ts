@@ -27,6 +27,7 @@ export const agentDefinitionSchema = z.object({
     endpoint: z.string().url().optional(),
     secretRef: z.string().min(1).optional(),
     streaming: z.boolean().optional(),
+    pricing: z.object({ promptPer1kUsd: z.number().nonnegative(), completionPer1kUsd: z.number().nonnegative() }).optional(),
     provisioning: z.object({
       mode: z.enum(['never', 'pull-on-start', 'baked']).default('never'),
       digest: z.string().min(1).optional(),
