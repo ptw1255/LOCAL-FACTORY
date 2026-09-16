@@ -44,20 +44,21 @@ export class DeploymentReconciler {
   }
 
   public async action(id: string, scope: DeploymentScope, action: DeploymentAction, options: { artifactId?: string; actor?: string; reason?: string } = {}): Promise<DeploymentRecord> {
-    return this.store.mutate((state) => {
+    let transitionError: unknown;
+    const result = await this.store.mutate((state) => {
       const deployment = state.deployments.find((candidate) => candidate.id === id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
       if (deployment === undefined) throw new Error('Deployment not found.');
       const fromArtifactId = deployment.artifactId;
       const targetArtifactId = options.artifactId ?? deployment.artifactId;
-      if (action === 'deploy' || action === 'rollback') {
-        const artifact = this.findArtifact(state.artifacts, targetArtifactId, scope);
-        if (artifact === undefined || !artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)) throw new Error('Deployment artifact is not available for this workflow.');
-        deployment.artifactId = targetArtifactId;
-      }
       const actor = options.actor?.trim() || 'local-operator';
       const now = new Date().toISOString();
       this.acquireLease(deployment, now);
       try {
+        if (action === 'deploy' || action === 'rollback') {
+          const artifact = this.findArtifact(state.artifacts, targetArtifactId, scope);
+          if (artifact === undefined || !artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)) throw new Error('Deployment artifact is not available for this workflow.');
+          deployment.artifactId = targetArtifactId;
+        }
         if (action === 'stop') { deployment.desiredState = 'stopped'; deployment.observedState = 'stopping'; }
         else { deployment.desiredState = 'running'; deployment.observedState = 'starting'; }
         deployment.lastError = undefined;
@@ -82,11 +83,14 @@ export class DeploymentReconciler {
         deployment.lastError = error instanceof Error ? error.message : 'Deployment transition failed.';
         deployment.updatedAt = now;
         deployment.history.unshift({ id: randomUUID(), action, actor, occurredAt: now, outcome: 'failed', reason: deployment.lastError });
-        throw error;
+        transitionError = error;
+        return deployment;
       } finally {
         delete deployment.lease;
       }
     });
+    if (transitionError !== undefined) throw transitionError;
+    return result;
   }
 
   public async reconcile(id: string, scope: DeploymentScope): Promise<DeploymentRecord> {

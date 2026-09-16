@@ -69,4 +69,19 @@ describe('DeploymentReconciler', () => {
     expect(reconciled).toMatchObject({ observedState: 'live', health: 'healthy', triggerStatus: 'active' });
     expect(reconciled.history[0]).toEqual(expect.objectContaining({ action: 'start', actor: 'reconciler', outcome: 'succeeded' }));
   });
+
+  it('records rejected artifact transitions as failed history', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-reject', tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const reconciler = new DeploymentReconciler(store);
+    const deployment = await reconciler.create({ scope: { tenantId: 'tenant-local', projectId: 'project-local' }, workflowId: seedWorkflow.id, environment: 'reject', artifactId: artifact.id, trigger: 'manual' });
+    await expect(reconciler.action(deployment.id, { tenantId: 'tenant-local', projectId: 'project-local' }, 'rollback', { artifactId: 'missing-artifact', actor: 'test-operator', reason: 'Artifact was not promoted.' })).rejects.toThrow('not available');
+    const rejected = await reconciler.list({ tenantId: 'tenant-local', projectId: 'project-local' });
+    expect(rejected[0]?.history[0]).toEqual(expect.objectContaining({ action: 'rollback', actor: 'test-operator', outcome: 'failed', reason: 'Deployment artifact is not available for this workflow.' }));
+    expect(rejected[0]?.artifactId).toBe(artifact.id);
+  });
 });
