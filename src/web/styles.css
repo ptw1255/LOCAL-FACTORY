@@ -269,6 +269,8 @@ h1, h2, h3, p { margin-top: 0; }
 .view-toggle button { align-items: center; background: transparent; border: 0; border-radius: 5px; color: var(--subtle); display: inline-flex; font-size: 10px; font-weight: 700; gap: 5px; padding: 6px 9px; }
 .view-toggle button.active { background: #253651; color: var(--text); }
 .ide-layout { background: #090f19; display: grid; gap: 0; grid-template-columns: 190px minmax(420px, 1fr) minmax(330px, .85fr); height: calc(100vh - 67px); overflow: hidden; }
+.ide-layout.ide-mode-files { grid-template-columns: 190px minmax(0, 1fr); }
+.ide-layout.ide-mode-files .ide-tree-panel { display: none; }
 .ide-explorer { background: #0b121e; border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; padding: 17px 10px; }
 .ide-explorer-title { align-items: center; color: var(--subtle); display: flex; font-size: 9px; justify-content: space-between; letter-spacing: .1em; padding: 0 7px 17px; text-transform: uppercase; }
 .ide-view-selector { display: grid; gap: 5px; margin: -7px 0 14px; }
