@@ -16,6 +16,8 @@ export interface PlatformStore {
   listEvidence(query?: string | EvidenceQuery): Promise<OperationEvidence[]>;
   /** Remove observability records older than the configured retention window. */
   pruneEvents?(before: string): Promise<number>;
+  /** Remove durable operation evidence older than the configured policy. */
+  pruneEvidence?(before: string): Promise<number>;
   close?(): Promise<void>;
 }
 

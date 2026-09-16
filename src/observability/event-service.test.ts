@@ -104,4 +104,15 @@ describe('EventService retention', () => {
     expect(await service.listEvidence('run-1')).toHaveLength(1);
     expect(first.idempotencyKey).toBe('commit-attempt-1');
   });
+
+  it('prunes durable evidence only when its separate policy is configured', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const service = new EventService(store, { retentionHours: 48, evidenceRetentionHours: 1 });
+    const old = await service.recordEvidence({ runId: 'run-1', unitId: 'old', operation: 'repositoryCheck', status: 'succeeded' });
+    await store.mutate((state) => { const entry = state.evidence.find((candidate) => candidate.id === old.id); if (entry !== undefined) entry.occurredAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(); });
+    await service.recordEvidence({ runId: 'run-1', unitId: 'new', operation: 'repositoryCheck', status: 'succeeded' });
+    expect(await service.prune()).toBe(1);
+    expect((await service.listEvidence('run-1')).map((entry) => entry.unitId)).toEqual(['new']);
+  });
 });
