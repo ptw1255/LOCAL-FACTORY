@@ -166,6 +166,19 @@ export async function createApp(
   const artifactDirectory = process.env.ARTIFACT_STORE_DIR?.trim() || path.join(path.dirname(dataFile), 'artifacts');
   const artifactStore = options.artifactStore ?? new FileArtifactStore(artifactDirectory);
   const events = new EventService(store, { retentionHours, ...(evidenceRetentionHours === undefined ? {} : { evidenceRetentionHours }), exporter, artifactStore });
+  const emitWorkspaceFileEvent = async (scope: { tenantId: string; projectId: string }, operation: 'created' | 'updated' | 'renamed' | 'deleted' | 'restored', filePath: string, sha256?: string): Promise<void> => {
+    await events.emit(`workspace:${scope.projectId}`, 'workspace.file.changed', `Project file ${operation}.`, {
+      tenantId: scope.tenantId,
+      projectId: scope.projectId,
+      signal: 'log',
+      severityText: 'INFO',
+      attributes: {
+        'workspace.file.operation': operation,
+        'workspace.file.path': filePath,
+        ...(sha256 === undefined ? {} : { 'workspace.file.sha256': sha256 }),
+      },
+    });
+  };
   const configuredAuthMode = options.authMode ?? process.env.FACTORY_AUTH_MODE;
   const authMode: AuthMode = configuredAuthMode === 'required' || (configuredAuthMode === undefined && process.env.NODE_ENV === 'production') ? 'required' : 'local';
   const configuredTokens = options.authTokens ?? parseAuthTokens(process.env.FACTORY_AUTH_TOKENS);
@@ -451,6 +464,21 @@ export async function createApp(
     },
   );
 
+  app.get<{ Params: { projectId: string }; Querystring: { since?: string } }>(
+    '/api/projects/:projectId/files/events',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      if (scope.projectId !== request.params.projectId) return reply.status(404).send({ message: 'Project not found.' });
+      const projectExists = await store.read((state) => state.projects.some((project) => project.id === request.params.projectId && project.tenantId === scope.tenantId));
+      if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
+      const since = request.query.since;
+      const items = (await events.list())
+        .filter((event) => event.type === 'workspace.file.changed' && event.tenantId === scope.tenantId && event.projectId === request.params.projectId)
+        .filter((event) => since === undefined || event.timestamp > since);
+      return { items };
+    },
+  );
+
   app.put<{ Params: { projectId: string }; Body: unknown }>(
     '/api/projects/:projectId/files',
     async (request, reply) => {
@@ -463,6 +491,7 @@ export async function createApp(
       if (pathError !== undefined) return reply.status(422).send({ message: pathError });
       const projectExists = await store.read((state) => state.projects.some((project) => project.id === request.params.projectId && project.tenantId === scope.tenantId));
       if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
+      const existed = await store.read((state) => state.files.some((candidate) => candidate.projectId === request.params.projectId && candidate.tenantId === scope.tenantId && candidate.path === body.path));
       const file: ProjectFileRecord = {
         tenantId: scope.tenantId,
         projectId: request.params.projectId,
@@ -484,6 +513,7 @@ export async function createApp(
         return true;
       });
       if (!saved) return reply.status(409).send({ message: 'File changed since it was loaded; refresh before saving.' });
+      await emitWorkspaceFileEvent(scope, existed ? 'updated' : 'created', file.path, file.sha256);
       return file;
     },
   );
@@ -505,6 +535,7 @@ export async function createApp(
       return true;
     });
     if (!renamed) return reply.status(404).send({ message: 'Project file not found.' });
+    await emitWorkspaceFileEvent(scope, 'renamed', newPath);
     return { renamed: true, path: oldPath, newPath };
   });
 
@@ -525,6 +556,7 @@ export async function createApp(
         return trash;
       });
       if (removed === undefined) return reply.status(404).send({ message: 'Project file not found.' });
+      await emitWorkspaceFileEvent(scope, 'deleted', removed.path, removed.sha256);
       return { deleted: true, path: body.path, trashId: removed.trashId };
     },
   );
@@ -547,6 +579,7 @@ export async function createApp(
         return file;
       });
       if (restored === undefined) return reply.status(404).send({ message: 'Deleted project file not found.' });
+      await emitWorkspaceFileEvent(scope, 'restored', restored.path, restored.sha256);
       return restored;
     },
   );

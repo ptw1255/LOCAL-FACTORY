@@ -157,6 +157,8 @@ export const api = {
     }),
   events: (runId: string) =>
     request<ItemsResponse<RunEvent>>(`/api/events?runId=${encodeURIComponent(runId)}`),
+  projectFileEvents: (projectId: string, since?: string) =>
+    request<ItemsResponse<RunEvent>>(`/api/projects/${encodeURIComponent(projectId)}/files/events${since === undefined ? '' : `?since=${encodeURIComponent(since)}`}`),
   evidence: (runId: string) =>
     request<ItemsResponse<OperationEvidence>>(`/api/evidence?runId=${encodeURIComponent(runId)}`),
   approvals: (runId: string) =>
