@@ -4,7 +4,7 @@ export interface CheckRunSummary { name: string; status: string; conclusion: str
 export interface CiFailure { name: string; conclusion: string | null; url?: string; summary?: string }
 export interface CiResult { ref: string; status: 'success' | 'failure' | 'pending' | 'cancelled' | 'timed_out'; checks: CheckRunSummary[]; required: string[]; failures: CiFailure[] }
 
-export interface GitHubClientOptions { token: string; owner: string; repo: string; fetcher?: typeof fetch }
+export interface GitHubClientOptions { token?: string; secretRef?: string; secretBroker?: SecretBroker; owner: string; repo: string; fetcher?: typeof fetch }
 
 export class GitHubRepositoryClient {
   private readonly fetcher: typeof fetch;
@@ -13,7 +13,7 @@ export class GitHubRepositoryClient {
   public async createPullRequest(input: PullRequestInput): Promise<PullRequest> {
     const response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.owner)}/${encodeURIComponent(this.options.repo)}/pulls`, {
       method: 'POST',
-      headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${this.options.token}`, 'content-type': 'application/json', 'x-github-api-version': '2022-11-28' },
+      headers: { ...(await this.headers()), 'content-type': 'application/json' },
       body: JSON.stringify(input),
     });
     if (!response.ok) throw new Error(`GitHub pull request creation failed with status ${response.status}.`);
@@ -24,7 +24,7 @@ export class GitHubRepositoryClient {
 
   public async listOpenPullRequests(input: { head: string; base: string }): Promise<PullRequest[]> {
     const response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.owner)}/${encodeURIComponent(this.options.repo)}/pulls?state=open&head=${encodeURIComponent(`${this.options.owner}:${input.head}`)}&base=${encodeURIComponent(input.base)}`, {
-      headers: this.headers(),
+      headers: await this.headers(),
     });
     if (!response.ok) throw new Error(`GitHub pull request lookup failed with status ${response.status}.`);
     const body = await response.json() as Array<{ number?: unknown; html_url?: unknown; head?: { ref?: unknown }; base?: { ref?: unknown }; state?: unknown }>;
@@ -40,7 +40,7 @@ export class GitHubRepositoryClient {
 
   public async getCheckRuns(ref: string): Promise<CheckRunSummary[]> {
     const response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.owner)}/${encodeURIComponent(this.options.repo)}/commits/${encodeURIComponent(ref)}/check-runs`, {
-      headers: this.headers(),
+      headers: await this.headers(),
     });
     if (!response.ok) throw new Error(`GitHub check-run lookup failed with status ${response.status}.`);
     const body = await response.json() as { check_runs?: Array<{ name?: unknown; status?: unknown; conclusion?: unknown; html_url?: unknown; output?: { text?: unknown } }> };
@@ -70,7 +70,14 @@ export class GitHubRepositoryClient {
     }
   }
 
-  private headers(): Record<string, string> {
-    return { accept: 'application/vnd.github+json', authorization: `Bearer ${this.options.token}`, 'x-github-api-version': '2022-11-28' };
+  private async headers(): Promise<Record<string, string>> {
+    const token = this.options.secretRef === undefined
+      ? this.options.token
+      : this.options.secretBroker === undefined
+        ? undefined
+        : await this.options.secretBroker.get(this.options.secretRef);
+    if (token === undefined || token.trim() === '') throw new Error('GitHub credentials are not configured.');
+    return { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'x-github-api-version': '2022-11-28' };
   }
 }
+import type { SecretBroker } from '../connections/secret-broker.js';
