@@ -247,10 +247,15 @@ describe('platform API', () => {
     const artifacts = await app.inject({ method: 'GET', url: '/api/projects/project-local/artifacts', headers });
     expect(artifacts.json<{ items: unknown[] }>().items).toHaveLength(1);
     const artifactId = compiled.json<{ id: string }>().id;
+    const retrieved = await app.inject({ method: 'GET', url: `/api/projects/project-local/artifacts/${encodeURIComponent(artifactId)}`, headers });
+    expect(retrieved.statusCode).toBe(200);
+    expect(retrieved.json<{ id: string; workflows: unknown[] }>()).toEqual(expect.objectContaining({ id: artifactId, workflows: expect.any(Array) }));
     const diff = await app.inject({ method: 'GET', url: `/api/projects/project-local/artifacts/diff?from=${encodeURIComponent(artifactId)}&to=${encodeURIComponent(artifactId)}`, headers });
     expect(diff.statusCode).toBe(200);
     expect(diff.json<{ changedSources: unknown[]; changedWorkflows: unknown[] }>().changedSources).toEqual([]);
     expect(diff.json<{ changedSources: unknown[]; changedWorkflows: unknown[] }>().changedWorkflows).toEqual([]);
+    const missing = await app.inject({ method: 'GET', url: '/api/projects/project-local/artifacts/sha256:missing', headers });
+    expect(missing.statusCode).toBe(404);
   });
 
   it('previews and idempotently migrates aggregate workflow records into resource files', async () => {
