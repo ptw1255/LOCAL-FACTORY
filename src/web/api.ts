@@ -116,6 +116,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
+  expireRun: (id: string, reason = 'Approval expired by operator') =>
+    request<RunRecord>(`/api/runs/${encodeURIComponent(id)}/expire`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
   cancelRun: (id: string) =>
     request<RunRecord>(`/api/runs/${encodeURIComponent(id)}/cancel`, {
       method: 'POST',
