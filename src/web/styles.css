@@ -628,6 +628,8 @@ kbd { background: #1a2638; border: 1px solid #35445c; border-radius: 4px; box-sh
 .timeline-card time { color: var(--subtle); font-size: 8px; }
 .timeline-card p { color: #9aa8ba; font-size: 10px; margin: 5px 0 0; }
 .node-reference { align-items: center; background: #18253a; border-radius: 4px; color: #7fa8dc; display: inline-flex; font-size: 8px; gap: 4px; margin-top: 8px; padding: 3px 6px; }
+.source-link { align-items: center; background: #12382f; border: 1px solid #235c4c; border-radius: 4px; color: #70dfb8; display: inline-flex; font-size: 9px; gap: 4px; margin: 8px 0 0; padding: 3px 6px; text-align: left; }
+.source-link:hover { background: #174936; }
 .timeline-card pre { background: #0a111d; border-radius: 5px; color: #91a4be; font-size: 8px; margin: 8px 0 0; max-height: 120px; overflow: auto; padding: 8px; }
 .run-detail > .state-panel { margin: 0; min-height: 100%; }
 
