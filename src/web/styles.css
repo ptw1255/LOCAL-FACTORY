@@ -311,6 +311,8 @@ h1, h2, h3, p { margin-top: 0; }
 .workspace-hint button, .workspace-hint-reopen { background: transparent; border: 0; color: var(--muted); cursor: pointer; }
 .workspace-hint button:hover, .workspace-hint-reopen:hover { color: var(--text); }
 .workspace-hint-reopen { display: block; font-size: 10px; margin: 0 18px 8px auto; padding: 3px 0; }
+.tree-node, .operational-agent { font: inherit; text-align: left; }
+.tree-node:disabled, .operational-agent:disabled { cursor: default; opacity: .75; }
 .observe-retention svg { color: var(--blue); flex: 0 0 auto; }
 .observe-retention strong { color: var(--text); }
 .observe-phoenix-link { align-items: center; color: var(--blue); display: inline-flex; font-size: 10px; gap: 4px; margin-left: auto; white-space: nowrap; }
