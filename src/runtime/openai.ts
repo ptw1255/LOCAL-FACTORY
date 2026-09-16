@@ -141,7 +141,7 @@ export class HttpOpenAIClient implements OpenAIClient {
   }
 
   private async parseStream(response: Response, fallbackModel: string, pricing?: { promptPer1kUsd: number; completionPer1kUsd: number }): Promise<OpenAIModelResult> {
-    if (response.body === null) throw new Error('OpenAI streaming response did not include a body.');
+    if (response.body === null) throw new OpenAIProviderError('incomplete', 'OpenAI streaming response did not include a body.', { retryable: true });
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -150,6 +150,8 @@ export class HttpOpenAIClient implements OpenAIClient {
     let finishReason: string | undefined;
     let promptTokens: number | undefined;
     let completionTokens: number | undefined;
+    let completed = false;
+    let refused = false;
     const consume = (chunk: string): void => {
       buffer += chunk;
       const records = buffer.split(/\r?\n\r?\n/);
@@ -160,6 +162,8 @@ export class HttpOpenAIClient implements OpenAIClient {
         let event: { type?: unknown; delta?: unknown; response?: { model?: unknown; status?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown } } };
         try { event = JSON.parse(data) as typeof event; } catch { continue; }
         if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') content += event.delta;
+        if (event.type === 'response.refusal.delta') refused = true;
+        if (event.type === 'response.completed') completed = true;
         if (typeof event.response?.model === 'string') model = event.response.model;
         if (typeof event.response?.status === 'string') finishReason = event.response.status;
         if (typeof event.response?.usage?.input_tokens === 'number') promptTokens = event.response.usage.input_tokens;
@@ -172,6 +176,8 @@ export class HttpOpenAIClient implements OpenAIClient {
       consume(decoder.decode(next.value, { stream: true }));
     }
     consume(decoder.decode());
+    if (refused) throw new OpenAIProviderError('refusal', 'OpenAI declined the requested response.', { retryable: false });
+    if (!completed) throw new OpenAIProviderError('incomplete', 'OpenAI streaming response ended before completion.', { retryable: true });
     return {
       content,
       model,
