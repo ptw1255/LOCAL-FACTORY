@@ -253,6 +253,13 @@ change identity. Environment values merge from the project defaults, then the
 selected environment resource, then workflow-local overrides; later layers
 win and secret values are rejected at every layer (use Vault `secretRef`).
 
+Environment overlays may be grouped by resource kind (for example,
+`spec.overrides.agents.reviewer.limits.maxIterations`) or addressed directly
+with a stable key such as `Agent/reviewer`. Agent and workflow contracts can
+reuse a JSON Schema with `inputSchema: '$ref:Schema/request'` or
+`inputSchema: { $ref: Schema/request }`. Canvas files only contribute node
+positions; policy and connection references remain explicit on workflow steps.
+
 ```bash
 npm run factory -- validate examples/code-review-loop.yaml
 npm run factory -- plan examples/code-review-loop.yaml
@@ -265,6 +272,7 @@ The control plane exposes the same workflow for automation and GitOps tooling:
 ```text
 GET  /api/projects/:projectId/declarative.yaml  # export the project
 POST /api/projects/:projectId/declarative       # replace project config from { source }
+GET  /api/projects/:projectId/artifacts/diff    # compare immutable artifacts with ?from=&to=
 ```
 
 Imports are validated and compiled through the same canonical schemas used by the
