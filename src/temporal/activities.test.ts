@@ -83,6 +83,28 @@ describe('Temporal node activities', () => {
     expect(lifecycle[1]?.error).toContain('Unsupported deterministic code operation');
   });
 
+  it('fails closed for unsupported Temporal node types instead of returning a placeholder result', async () => {
+    await expect(executeNodeActivity({
+      runId: 'run-unsupported',
+      nodeId: 'repository',
+      nodeType: 'repositoryMutation',
+      label: 'Repository mutation',
+      config: { operations: [] },
+      unit: defaultWorkUnit('repositoryMutation'),
+    })).rejects.toThrow('does not support node type');
+  });
+
+  it('does not report simulated agent completion on the Temporal worker', async () => {
+    await expect(executeNodeActivity({
+      runId: 'run-agent',
+      nodeId: 'agent',
+      nodeType: 'agentLoop',
+      label: 'Agent',
+      config: { maxIterations: 1 },
+      unit: defaultWorkUnit('agentLoop'),
+    })).rejects.toThrow('agentLoop activity adapter is not available');
+  });
+
   it('enforces WorkUnit timeouts for Temporal activities', async () => {
     await expect(executeNodeActivity({
       runId: 'run-temporal',
