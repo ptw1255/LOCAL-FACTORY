@@ -1254,7 +1254,7 @@ function RunsView() {
     ? events
     : events.filter((event) => event.signal === (observeTab === 'logs' ? 'log' : observeTab === 'traces' ? 'trace' : 'metric'));
 
-  async function runAction(action: 'approve' | 'deny' | 'expire' | 'cancel') {
+  async function runAction(action: 'approve' | 'deny' | 'expire' | 'supersede' | 'cancel') {
     if (selectedRun === null) return;
     setActionLoading(true);
     setActionError(null);
@@ -1266,6 +1266,8 @@ function RunsView() {
             ? await api.denyRun(selectedRun.id)
             : action === 'expire'
               ? await api.expireRun(selectedRun.id)
+              : action === 'supersede'
+                ? await api.supersedeRun(selectedRun.id)
               : await api.cancelRun(selectedRun.id);
       setSelectedRun(updated);
       await loadRuns(true);
@@ -1341,6 +1343,8 @@ function RunsView() {
                         <Icon name="close" /> {actionLoading ? 'Updating…' : 'Deny'}
                       </button><button className="button ghost" disabled={actionLoading} onClick={() => { if (window.confirm('Expire this approval?')) void runAction('expire'); }} type="button">
                         {actionLoading ? 'Updating…' : 'Expire'}
+                      </button><button className="button ghost" disabled={actionLoading} onClick={() => { if (window.confirm('Request a fresh approval for this operation?')) void runAction('supersede'); }} type="button">
+                        {actionLoading ? 'Updating…' : 'Fresh approval'}
                       </button></>
                     ) : null}
                     {['queued', 'running', 'waiting'].includes(selectedRun.status) ? (

@@ -122,6 +122,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
+  supersedeRun: (id: string, reason = 'Approval superseded by operator') =>
+    request<RunRecord>(`/api/runs/${encodeURIComponent(id)}/supersede`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
   cancelRun: (id: string) =>
     request<RunRecord>(`/api/runs/${encodeURIComponent(id)}/cancel`, {
       method: 'POST',
