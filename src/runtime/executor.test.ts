@@ -410,6 +410,7 @@ describe('LocalWorkflowExecutor', () => {
     const recorded = await events.list(run.id);
     expect(recorded.some((event) => event.type === 'llm.route.failed' && event.attributes?.['llm.route.provider'] === 'openai')).toBe(true);
     expect(recorded.some((event) => event.type === 'llm.route.selected' && event.attributes?.['llm.route.provider'] === 'ollama')).toBe(true);
+    expect(recorded.find((event) => event.type === 'agent.iteration')?.attributes).toEqual(expect.objectContaining({ 'llm.model_name': 'llama3.2', 'llm.route.index': 1, 'llm.route.strategy': 'fallback' }));
     expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'ollama', 'llm.model_name': 'llama3.2' }));
   });
 
