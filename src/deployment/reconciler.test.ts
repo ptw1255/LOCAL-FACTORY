@@ -259,6 +259,26 @@ describe('DeploymentReconciler', () => {
     expect(promoted).toMatchObject({ observedState: 'live', health: 'healthy', lastVerifiedRunId: run.id });
   });
 
+  it('does not retain a verified run when protected promotion health fails', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-production-failure', tenantId: scope.tenantId, projectId: scope.projectId, environment: 'production', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const run: RunRecord = {
+      tenantId: scope.tenantId, projectId: scope.projectId, id: 'run-production-failure', workflowId: seedWorkflow.id, workflowName: seedWorkflow.name, workflowVersion: seedWorkflow.version, artifactId: artifact.id, traceId: 'b'.repeat(32), status: 'succeeded', startedAt: new Date().toISOString(), costUsd: 0, humanTouchpoints: 1, workflowDefinition: structuredClone(seedWorkflow), completedNodeIds: [], activatedNodeIds: [], approvedNodeIds: [], approvedNodeHashes: {}, pendingApprovalHashes: {}, unitOutputs: {}, ciCheckpoints: {},
+    };
+    await store.mutate((state) => { state.runs.push(run); });
+    await store.appendEvidence({ id: 'evidence-production-patch', tenantId: scope.tenantId, projectId: scope.projectId, runId: run.id, unitId: 'patch', operation: 'repositoryPatch', attempt: 1, status: 'succeeded', occurredAt: new Date().toISOString() });
+    await store.appendEvidence({ id: 'evidence-production-ci', tenantId: scope.tenantId, projectId: scope.projectId, runId: run.id, unitId: 'ci', operation: 'repositoryCi', attempt: 1, status: 'succeeded', occurredAt: new Date().toISOString(), metadata: { 'ci.status': 'success' } });
+    const reconciler = new DeploymentReconciler(store, 30_000, { observe: () => ({ observedState: 'degraded', health: 'degraded', triggerStatus: 'active', lastError: 'Health check failed.' }) });
+    const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'production', artifactId: artifact.id, trigger: 'manual' });
+    await expect(reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifact.id, runId: run.id })).resolves.toMatchObject({ observedState: 'degraded', health: 'degraded' });
+    expect((await reconciler.list(scope)).find((candidate) => candidate.id === deployment.id)?.lastVerifiedRunId).toBeUndefined();
+  });
+
   it('correlates deployment transitions with durable evidence and telemetry', async () => {
     const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
     const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
