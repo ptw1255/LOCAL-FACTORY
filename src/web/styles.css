@@ -269,6 +269,9 @@ h1, h2, h3, p { margin-top: 0; }
 .ide-bottom-panel { border-top: 1px solid var(--border); margin-top: 12px; }
 .ide-bottom-tabs { align-items: center; color: var(--subtle); display: flex; font-size: 10px; gap: 18px; padding: 9px 0 7px; text-transform: uppercase; }
 .ide-bottom-tabs strong { color: #d9e5f5; }
+.observe-tabs { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 4px; margin: 18px 0; }
+.observe-tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--subtle); cursor: pointer; font: inherit; font-size: 12px; padding: 8px 12px; }
+.observe-tabs button:hover, .observe-tabs button.active { border-bottom-color: var(--accent); color: var(--text); }
 .panel-count { background: #8d4b4b; border-radius: 9px; color: #fff; font-size: 9px; padding: 2px 6px; }
 .panel-count.clean { background: #245541; }
 .ide-bottom-content { color: #7689a3; font-size: 11px; padding: 3px 0 10px; }
