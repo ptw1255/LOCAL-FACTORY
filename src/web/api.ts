@@ -89,7 +89,7 @@ export const api = {
       `/api/projects/${encodeURIComponent(projectId)}/declarative`,
       { method: 'POST', body: JSON.stringify({ source }) },
     ),
-  projectFiles: (projectId: string) => request<ItemsResponse<ProjectFileRecord>>(`/api/projects/${encodeURIComponent(projectId)}/files`),
+  projectFiles: (projectId: string, search = '') => request<ItemsResponse<ProjectFileRecord>>(`/api/projects/${encodeURIComponent(projectId)}/files${search.trim() === '' ? '' : `?search=${encodeURIComponent(search.trim())}`}`),
   projectFile: (projectId: string, filePath: string) => request<ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files?path=${encodeURIComponent(filePath)}`),
   artifacts: (projectId: string) => request<ItemsResponse<ArtifactRecord>>(`/api/projects/${encodeURIComponent(projectId)}/artifacts`),
   saveProjectFile: (projectId: string, filePath: string, content: string) => request<ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files`, { method: 'PUT', body: JSON.stringify({ path: filePath, content }) }),
