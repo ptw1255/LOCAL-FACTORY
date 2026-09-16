@@ -52,6 +52,7 @@ export class JsonStore implements PlatformStore {
     const filter: EvidenceQuery = typeof query === 'string' ? { runId: query } : query ?? {};
     return this.read((state) => state.evidence
       .filter((entry) => (filter.runId === undefined || entry.runId === filter.runId)
+        && (filter.deploymentId === undefined || entry.deploymentId === filter.deploymentId)
         && (filter.tenantId === undefined || entry.tenantId === filter.tenantId)
         && (filter.projectId === undefined || entry.projectId === filter.projectId)
         && (filter.unitId === undefined || entry.unitId === filter.unitId)

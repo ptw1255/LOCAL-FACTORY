@@ -139,7 +139,7 @@ export async function createApp(
   }
   const connections = new ConnectionService(store, secretBroker);
   const proposals = new ProposalService(store);
-  const deployments = new DeploymentReconciler(store, 30_000, options.deploymentAdapter);
+  const deployments = new DeploymentReconciler(store, 30_000, options.deploymentAdapter, 3, events);
   if (store.close !== undefined) {
     app.addHook('onClose', async () => store.close?.());
   }
@@ -600,7 +600,7 @@ export async function createApp(
   });
 
   app.post<{ Params: { id: string }; Body: unknown }>('/api/deployments/:id/action', async (request, reply) => {
-    const body = request.body as { action?: unknown; artifactId?: unknown; reason?: unknown; expectedUpdatedAt?: unknown; idempotencyKey?: unknown };
+    const body = request.body as { action?: unknown; artifactId?: unknown; reason?: unknown; expectedUpdatedAt?: unknown; idempotencyKey?: unknown; runId?: unknown };
     const actions = new Set(['deploy', 'start', 'stop', 'restart', 'rollback']);
     if (typeof body?.action !== 'string' || !actions.has(body.action)) return reply.status(422).send({ message: 'A supported deployment action is required.' });
     try {
@@ -609,6 +609,7 @@ export async function createApp(
         ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
         ...(typeof body.expectedUpdatedAt === 'string' ? { expectedUpdatedAt: body.expectedUpdatedAt } : {}),
         ...(typeof body.idempotencyKey === 'string' ? { idempotencyKey: body.idempotencyKey } : {}),
+        ...(typeof body.runId === 'string' ? { runId: body.runId } : {}),
       });
     } catch (error) {
       return reply.status(409).send({ message: errorMessage(error) });
@@ -722,11 +723,12 @@ export async function createApp(
     return { items: (await events.list(request.query.runId)).filter((event) => inScope(event, scope)) };
   });
 
-  app.get<{ Querystring: { runId?: string; tenantId?: string; projectId?: string; unitId?: string; operation?: string; status?: import('../domain/types.js').OperationEvidenceStatus; from?: string; to?: string; repository?: string; revision?: string; commit?: string; pullRequest?: string } }>('/api/evidence', async (request) => {
+  app.get<{ Querystring: { runId?: string; deploymentId?: string; tenantId?: string; projectId?: string; unitId?: string; operation?: string; status?: import('../domain/types.js').OperationEvidenceStatus; from?: string; to?: string; repository?: string; revision?: string; commit?: string; pullRequest?: string } }>('/api/evidence', async (request) => {
     const scope = scopeFromRequest(request);
     return {
       items: (await events.listEvidence({
         ...(request.query.runId === undefined ? {} : { runId: request.query.runId }),
+        ...(request.query.deploymentId === undefined ? {} : { deploymentId: request.query.deploymentId }),
         ...(request.query.tenantId === undefined ? {} : { tenantId: request.query.tenantId }),
         ...(request.query.projectId === undefined ? {} : { projectId: request.query.projectId }),
         ...(request.query.unitId === undefined ? {} : { unitId: request.query.unitId }),
