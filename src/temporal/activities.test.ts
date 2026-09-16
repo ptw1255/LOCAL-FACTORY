@@ -63,6 +63,25 @@ describe('Temporal node activities', () => {
     expect(lifecycle.every((record) => record.traceId === 'trace-sink' && record.spanId.length === 16)).toBe(true);
   });
 
+  it('preserves a non-first Temporal attempt in lifecycle records', async () => {
+    const lifecycle: Array<{ status: string; attempt: number }> = [];
+    configureTemporalObservabilitySink({ record: (record) => { lifecycle.push(record); } });
+    try {
+      await executeNodeActivity({
+        runId: 'run-retry',
+        nodeId: 'normalize',
+        nodeType: 'code',
+        label: 'Normalize',
+        config: { operation: 'uppercase', value: 'retry' },
+        attempt: 3,
+        unit: defaultWorkUnit('code'),
+      });
+    } finally {
+      configureTemporalObservabilitySink(undefined);
+    }
+    expect(lifecycle.map((record) => record.attempt)).toEqual([3, 3]);
+  });
+
   it('reports a failed lifecycle when activity execution rejects', async () => {
     const lifecycle: Array<{ status: string; error?: string }> = [];
     configureTemporalObservabilitySink({ record: (record) => { lifecycle.push(record); } });

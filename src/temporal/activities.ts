@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 
+import { activityInfo } from '@temporalio/activity';
+
 import { defaultWorkUnit } from '../domain/catalog.js';
 import type { WorkUnitDefinition, WorkflowNode } from '../domain/types.js';
 import { WorkUnitDispatcher } from '../runtime/work-unit-dispatcher.js';
@@ -22,6 +24,8 @@ export interface NodeActivityInput {
   config: Record<string, unknown>;
   traceId?: string;
   sequence?: number;
+  /** Optional deterministic override for direct callers/tests; Temporal workers use activityInfo().attempt. */
+  attempt?: number;
   inputs?: unknown[];
   unit?: WorkUnitDefinition;
 }
@@ -49,6 +53,7 @@ export async function executeNodeActivity(
   const sequence = input.sequence ?? 1;
   const spanId = createHash('sha256').update(`${input.runId}:${input.nodeId}:${sequence}`).digest('hex').slice(0, 16);
   const idempotencyKey = `${input.runId}:temporal:${input.nodeId}:${sequence}`;
+  const attempt = input.attempt ?? currentActivityAttempt();
   const startedAt = Date.now();
   const inputHash = hashPayload(input.inputs ?? []);
   const baseLifecycle = {
@@ -62,7 +67,7 @@ export async function executeNodeActivity(
     traceId,
     spanId,
     sequence,
-    attempt: 1,
+    attempt,
     idempotencyKey,
     inputHash,
   } satisfies Omit<TemporalActivityLifecycle, 'status' | 'occurredAt'>;
@@ -97,6 +102,20 @@ export async function executeNodeActivity(
     };
     await recordLifecycle(lifecycle);
     throw error;
+  }
+}
+
+/**
+ * Temporal's activity context is unavailable when the activity is invoked
+ * directly in unit tests or local tooling. Keep that path deterministic while
+ * preserving the real retry number inside a worker.
+ */
+function currentActivityAttempt(): number {
+  try {
+    const attempt = activityInfo().attempt;
+    return Number.isInteger(attempt) && attempt >= 1 ? attempt : 1;
+  } catch {
+    return 1;
   }
 }
 
