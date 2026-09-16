@@ -32,4 +32,21 @@ describe('DeploymentReconciler', () => {
     const reconciler = new DeploymentReconciler(store);
     await expect(reconciler.create({ scope: { tenantId: 'other', projectId: 'other' }, workflowId: seedWorkflow.id, environment: 'local', artifactId: 'missing', trigger: 'manual' })).rejects.toThrow();
   });
+
+  it('rejects an active lease held by another reconciler owner', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-lease', tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const reconciler = new DeploymentReconciler(store);
+    const deployment = await reconciler.create({ scope: { tenantId: 'tenant-local', projectId: 'project-local' }, workflowId: seedWorkflow.id, environment: 'lease-test', artifactId: artifact.id, trigger: 'manual' });
+    await store.mutate((state) => {
+      const target = state.deployments.find((candidate) => candidate.id === deployment.id);
+      if (target === undefined) throw new Error('Deployment missing.');
+      target.lease = { ownerId: 'other-owner', expiresAt: new Date(Date.now() + 10_000).toISOString() };
+    });
+    await expect(reconciler.reconcile(deployment.id, { tenantId: 'tenant-local', projectId: 'project-local' })).rejects.toThrow('currently reconciled');
+  });
 });
