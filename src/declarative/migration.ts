@@ -1,4 +1,4 @@
-import { stringify } from 'yaml';
+import { parse, stringify } from 'yaml';
 
 import type { ProjectRecord, WorkflowDefinition } from '../domain/types.js';
 
@@ -33,6 +33,49 @@ export function renderCanvasResource(workflow: WorkflowDefinition, nodes = workf
     nodes: nodes.map((node) => ({ id: node.id, position: node.position })),
     edges: edges.map((edge) => ({ source: edge.source, target: edge.target, ...(edge.condition === undefined ? {} : { condition: edge.condition }) })),
   }));
+}
+
+/** Apply a file-backed Canvas projection without changing workflow semantics. */
+export function applyCanvasResource(workflow: WorkflowDefinition, source: string): WorkflowDefinition {
+  const parsed = parse(source) as unknown;
+  if (parsed === null || typeof parsed !== 'object') return workflow;
+  const document = parsed as { kind?: unknown; spec?: unknown };
+  if (document.kind !== 'Canvas' || document.spec === null || typeof document.spec !== 'object') return workflow;
+  const spec = document.spec as { workflowId?: unknown; nodes?: unknown; edges?: unknown };
+  const workflowId = typeof spec.workflowId === 'string' ? spec.workflowId.replace(/^Workflow\//, '') : undefined;
+  if (workflowId !== workflow.id) return workflow;
+  const positions = new Map(
+    (Array.isArray(spec.nodes) ? spec.nodes : [])
+      .filter((node): node is { id: string; position: { x: number; y: number } } =>
+        node !== null && typeof node === 'object'
+        && typeof (node as { id?: unknown }).id === 'string'
+        && (node as { position?: unknown }).position !== null
+        && typeof (node as { position?: unknown }).position === 'object'
+        && typeof ((node as { position: { x?: unknown } }).position.x) === 'number'
+        && typeof ((node as { position: { y?: unknown } }).position.y) === 'number',
+      )
+      .map((node) => [node.id, node.position] as const),
+  );
+  const conditions = new Map(
+    (Array.isArray(spec.edges) ? spec.edges : [])
+      .filter((edge): edge is { source: string; target: string; condition?: string } =>
+        edge !== null && typeof edge === 'object'
+        && typeof (edge as { source?: unknown }).source === 'string'
+        && typeof (edge as { target?: unknown }).target === 'string',
+      )
+      .map((edge) => [`${edge.source}\u0000${edge.target}`, edge.condition] as const),
+  );
+  return {
+    ...workflow,
+    nodes: workflow.nodes.map((node) => {
+      const position = positions.get(node.id);
+      return position === undefined ? node : { ...node, position: { ...position } };
+    }),
+    edges: workflow.edges.map((edge) => {
+      const condition = conditions.get(`${edge.source}\u0000${edge.target}`);
+      return condition === undefined ? edge : { ...edge, condition };
+    }),
+  };
 }
 
 /** Build a stable file-backed representation without mutating storage. */

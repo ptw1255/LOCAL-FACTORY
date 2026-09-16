@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createSeedState, seedWorkflow } from '../domain/seed.js';
-import { planResourceMigration } from './migration.js';
+import { applyCanvasResource, planResourceMigration, renderCanvasResource } from './migration.js';
 
 describe('resource migration planner', () => {
   it('creates stable project, agent, workflow, unit, and Canvas files', () => {
@@ -32,5 +32,18 @@ describe('resource migration planner', () => {
     expect(second).toEqual(first);
     expect(first.sourceProjectId).toBe(project.id);
     expect(first.sourceWorkflowIds).toEqual([seedWorkflow.id]);
+  });
+
+  it('hydrates a workflow from its Canvas layout projection', () => {
+    const workflow = structuredClone(seedWorkflow);
+    const source = renderCanvasResource(workflow, [
+      { ...workflow.nodes[0]!, position: { x: 321, y: 123 } },
+      ...workflow.nodes.slice(1),
+    ], workflow.edges.map((edge) => ({ ...edge, condition: edge.id === workflow.edges[0]?.id ? 'approved' : undefined })));
+    const hydrated = applyCanvasResource(workflow, source);
+    expect(hydrated.nodes[0]?.position).toEqual({ x: 321, y: 123 });
+    expect(hydrated.edges[0]?.condition).toBe('approved');
+    expect(hydrated.nodes[0]).not.toBe(workflow.nodes[0]);
+    expect(applyCanvasResource(workflow, renderCanvasResource({ ...workflow, id: 'other' }))).toBe(workflow);
   });
 });
