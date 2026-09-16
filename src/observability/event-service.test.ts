@@ -93,4 +93,15 @@ describe('EventService retention', () => {
     expect(await service.listEvidence({ unitId: 'check', operation: 'repositoryCheck', status: 'succeeded' })).toEqual([terminal]);
     expect(await service.listEvidence({ from: terminal.occurredAt, to: terminal.occurredAt })).toEqual([terminal]);
   });
+
+  it('derives stable evidence identity for retry-safe lifecycle writes', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const service = new EventService(store);
+    const first = await service.recordEvidence({ runId: 'run-1', unitId: 'commit', operation: 'repositoryCommit', status: 'started', idempotencyKey: 'commit-attempt-1' });
+    const retry = await service.recordEvidence({ runId: 'run-1', unitId: 'commit', operation: 'repositoryCommit', status: 'started', idempotencyKey: 'commit-attempt-1' });
+    expect(retry.id).toBe(first.id);
+    expect(await service.listEvidence('run-1')).toHaveLength(1);
+    expect(first.idempotencyKey).toBe('commit-attempt-1');
+  });
 });

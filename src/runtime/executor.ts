@@ -305,6 +305,7 @@ export class LocalWorkflowExecutor {
           runId,
           unitId: nextNode.id,
           operation: nextNode.type,
+          idempotencyKey: nextNode.unit?.idempotencyKey === undefined ? undefined : `${nextNode.unit.idempotencyKey}:started`,
           status: 'started',
           input: inputs,
           metadata: { 'work.unit.kind': nextNode.unit?.kind ?? 'unknown', 'work.unit.version': nextNode.unit?.version ?? 0 },
@@ -337,10 +338,10 @@ export class LocalWorkflowExecutor {
           });
           const completed = await this.completeNode(context.run.id, context.workflow, nextNode, result);
           if (!completed) {
-            await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'cancelled', output: result });
+            await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'cancelled', idempotencyKey: nextNode.unit?.idempotencyKey === undefined ? undefined : `${nextNode.unit.idempotencyKey}:cancelled`, output: result });
             return;
           }
-          await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'succeeded', output: result, metadata: this.operationMetadata(result) });
+          await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'succeeded', idempotencyKey: nextNode.unit?.idempotencyKey === undefined ? undefined : `${nextNode.unit.idempotencyKey}:succeeded`, output: result, metadata: this.operationMetadata(result) });
           await this.events.emit(runId, 'unit.completed', `${nextNode.label} unit completed.`, {
             nodeId: nextNode.id,
             signal: 'trace',
@@ -365,6 +366,7 @@ export class LocalWorkflowExecutor {
             unitId: nextNode.id,
             operation: nextNode.type,
             status: controller.signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && error.code === 'WORK_UNIT_TIMED_OUT' ? 'timed_out' : 'failed',
+            idempotencyKey: nextNode.unit?.idempotencyKey === undefined ? undefined : `${nextNode.unit.idempotencyKey}:failed`,
             error: error instanceof Error ? error.message : 'Unknown unit failure.',
             metadata: error instanceof RepositoryCiError ? this.operationMetadata(error.result) : undefined,
           });
@@ -678,7 +680,7 @@ export class LocalWorkflowExecutor {
               },
             });
             if (!agent.tools.includes(call.name)) {
-              await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', status: 'failed', error: `Agent requested undeclared tool "${call.name}".` });
+              await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', idempotencyKey: `${call.callId}:failed`, status: 'failed', error: `Agent requested undeclared tool "${call.name}".` });
               await this.events.emit(runId, 'agent.tool.rejected', `Agent requested undeclared tool ${call.name}.`, {
                 nodeId: node.id,
                 severityText: 'ERROR',
@@ -688,7 +690,7 @@ export class LocalWorkflowExecutor {
             }
             const executor = this.toolExecutors.get(call.name);
             if (executor === undefined) {
-              await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', status: 'failed', error: `No executor registered for declared tool "${call.name}".` });
+              await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', idempotencyKey: `${call.callId}:failed`, status: 'failed', error: `No executor registered for declared tool "${call.name}".` });
               throw new Error(`No executor registered for declared tool "${call.name}".`);
             }
             let parsedArguments: unknown;
@@ -697,9 +699,9 @@ export class LocalWorkflowExecutor {
             } catch {
               throw new Error(`Tool "${call.name}" returned invalid JSON arguments.`);
             }
-            await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', status: 'started', input: { name: call.name, callId: call.callId, argumentsHash } });
+            await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', idempotencyKey: `${call.callId}:started`, status: 'started', input: { name: call.name, callId: call.callId, argumentsHash } });
             const toolResult = await executor({ runId, nodeId: node.id, agentId: agent.id, callId: call.callId, name: call.name, arguments: parsedArguments, signal });
-            await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', status: 'succeeded', output: { name: call.name, callId: call.callId, resultHash: createHash('sha256').update(JSON.stringify(toolResult) ?? 'undefined').digest('hex') } });
+            await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', idempotencyKey: `${call.callId}:succeeded`, status: 'succeeded', output: { name: call.name, callId: call.callId, resultHash: createHash('sha256').update(JSON.stringify(toolResult) ?? 'undefined').digest('hex') } });
             await this.events.emit(runId, 'agent.tool.completed', `Agent tool ${call.name} completed.`, {
               nodeId: node.id,
               signal: 'trace',
@@ -941,7 +943,7 @@ export class LocalWorkflowExecutor {
       'Workflow is waiting for human approval.',
       { nodeId },
     );
-    await this.events.recordEvidence({ runId, unitId: nodeId, operation: 'approval', status: 'waiting', metadata: approvalId === undefined ? undefined : { 'approval.id': approvalId } });
+    await this.events.recordEvidence({ runId, unitId: nodeId, operation: 'approval', status: 'waiting', idempotencyKey: approvalId, metadata: approvalId === undefined ? undefined : { 'approval.id': approvalId } });
   }
 
   private async completeRun(runId: string): Promise<void> {

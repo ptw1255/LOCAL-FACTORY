@@ -79,6 +79,7 @@ export class EventService {
     runId: string;
     unitId: string;
     operation: string;
+    idempotencyKey?: string;
     status: OperationEvidenceStatus;
     attempt?: number;
     input?: unknown;
@@ -93,10 +94,13 @@ export class EventService {
     const evidence: OperationEvidence = {
       ...(scope.tenantId === undefined ? {} : { tenantId: scope.tenantId }),
       ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
-      id: randomUUID(),
+      id: input.idempotencyKey === undefined
+        ? randomUUID()
+        : deterministicEvidenceId(input.runId, input.unitId, input.operation, input.status, input.idempotencyKey),
       runId: input.runId,
       unitId: input.unitId,
       operation: input.operation,
+      ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
       attempt: input.attempt ?? 1,
       status: input.status,
       occurredAt: new Date().toISOString(),
@@ -129,4 +133,9 @@ export class EventService {
   public close(): Promise<void> {
     return this.exporter?.close?.() ?? Promise.resolve();
   }
+}
+
+function deterministicEvidenceId(runId: string, unitId: string, operation: string, status: OperationEvidenceStatus, idempotencyKey: string): string {
+  const digest = createHash('sha256').update(JSON.stringify({ runId, unitId, operation, status, idempotencyKey })).digest('hex');
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 }

@@ -207,6 +207,7 @@ export interface OperationEvidence {
   runId: string;
   unitId: string;
   operation: string;
+  idempotencyKey?: string;
   attempt: number;
   status: OperationEvidenceStatus;
   occurredAt: string;
