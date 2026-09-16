@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { parseProjectYaml } from './yaml.js';
 import { workUnitSchema } from '../domain/schema.js';
-import type { ProjectRecord, WorkflowDefinition } from '../domain/types.js';
+import type { ProjectRecord, SourceDiagnostic, WorkflowDefinition } from '../domain/types.js';
 
 export const resourceEnvelopeSchema = z.object({
   apiVersion: z.literal('factory.agentic/v1'),
@@ -79,6 +79,16 @@ export interface CompiledResourceFiles {
   resources: Array<z.infer<typeof resourceEnvelopeSchema>>;
 }
 
+export class ResourceCompilationError extends Error {
+  public readonly diagnostics: SourceDiagnostic[];
+
+  public constructor(message: string, diagnostics: SourceDiagnostic[]) {
+    super(message);
+    this.name = 'ResourceCompilationError';
+    this.diagnostics = diagnostics;
+  }
+}
+
 const forbiddenMetadata = new Set(['createdAt', 'updatedAt', 'status', 'deployment', 'runState']);
 
 const resourcePathPatterns: Record<z.infer<typeof resourceEnvelopeSchema>['kind'], RegExp> = {
@@ -125,6 +135,30 @@ function lineForListId(source: string, id: string, fallback: number): number {
   return line < 0 ? fallback : line + 1;
 }
 
+function diagnosticForError(error: unknown, fallbackPath: string): SourceDiagnostic {
+  const message = error instanceof Error ? error.message : 'resource compilation failed';
+  const match = /^(.*?):(\d+)(?::(\d+))?:\s*(.*)$/.exec(message);
+  if (match !== null) {
+    return {
+      severity: 'error',
+      path: match[1] || fallbackPath,
+      line: Number(match[2]) || 1,
+      column: Number(match[3]) || 1,
+      code: 'resource.compile',
+      message: match[4] || message,
+    };
+  }
+  return { severity: 'error', path: fallbackPath, line: 1, column: 1, code: 'resource.compile', message };
+}
+
+function resourcePathForError(resources: ResourceFile[], message: string): string {
+  const explicitPath = /^(.*?):\d+(?::\d+)?:/.exec(message)?.[1];
+  if (explicitPath !== undefined && resources.some((resource) => resource.path === explicitPath)) return explicitPath;
+  return resources.find((resource) => resource.path === 'factory.yaml' || resource.path === 'factory.yml')?.path
+    ?? resources[0]?.path
+    ?? 'factory.yaml';
+}
+
 export function parseResourceFile(resource: ResourceFile): z.infer<typeof resourceEnvelopeSchema> {
   const document = parseDocument(resource.source);
   if (document.errors.length > 0) {
@@ -153,7 +187,34 @@ export function parseResourceFile(resource: ResourceFile): z.infer<typeof resour
 
 /** Compiles one project entrypoint plus typed Agent/Workflow resource files. */
 export function compileResourceFiles(resources: ResourceFile[], scope: { tenantId: string; projectId?: string; environment?: string }): CompiledResourceFiles {
-  const envelopes = resources.map(parseResourceFile);
+  try {
+    return compileResourceFilesInternal(resources, scope);
+  } catch (error) {
+    if (error instanceof ResourceCompilationError) throw error;
+    const diagnostics = (error as { diagnostics?: unknown }).diagnostics;
+    if (Array.isArray(diagnostics)) throw new ResourceCompilationError(error instanceof Error ? error.message : 'resource compilation failed', diagnostics as SourceDiagnostic[]);
+    const message = error instanceof Error ? error.message : 'resource compilation failed';
+    throw new ResourceCompilationError(message, [diagnosticForError(error, resourcePathForError(resources, message))]);
+  }
+}
+
+function compileResourceFilesInternal(resources: ResourceFile[], scope: { tenantId: string; projectId?: string; environment?: string }): CompiledResourceFiles {
+  const parseFailures: Array<{ resource: ResourceFile; error: unknown }> = [];
+  const envelopes: Array<z.infer<typeof resourceEnvelopeSchema>> = [];
+  for (const resource of resources) {
+    try {
+      envelopes.push(parseResourceFile(resource));
+    } catch (error) {
+      parseFailures.push({ resource, error });
+    }
+  }
+  if (parseFailures.length > 0) {
+    const diagnostics = parseFailures.map(({ resource, error }) => diagnosticForError(error, resource.path));
+    throw new ResourceCompilationError(
+      `${diagnostics.length} resource file${diagnostics.length === 1 ? '' : 's'} failed validation.`,
+      diagnostics,
+    );
+  }
   envelopes.forEach((resource, index) => {
     const source = resources[index];
     if (source !== undefined) assertResourcePath(source, resource.kind);
@@ -336,7 +397,7 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
     // compiler is still the compatibility path for legacy project documents.
     const sourcePath = resources.find((resource) => resource.path.includes('.workflow.') || resource.path.endsWith('workflow.yaml'))?.path
       ?? resources.find((resource) => resource.path.includes('.agent.') || resource.path.endsWith('agent.yaml'))?.path
-      ?? resources.find((resource) => parseResourceFile(resource).kind === 'Project')?.path
+      ?? resources.find((resource) => resource.path === 'factory.yaml' || resource.path === 'factory.yml')?.path
       ?? 'project.yaml';
     throw new Error(`${sourcePath}: ${message}`);
   }

@@ -22,6 +22,12 @@ function isProtectedEnvironment(environment: string): boolean {
   return normalized === 'production' || normalized === 'prod' || normalized === 'preprod' || normalized === 'staging';
 }
 
+function nextTimestamp(previous?: string): string {
+  const now = Date.now();
+  const previousMs = previous === undefined ? Number.NaN : Date.parse(previous);
+  return new Date(Number.isFinite(previousMs) && now <= previousMs ? previousMs + 1 : now).toISOString();
+}
+
 const localRuntimeAdapter: DeploymentRuntimeAdapter = {
   observe: (deployment) => ({
     observedState: deployment.desiredState === 'running' ? 'live' : 'stopped',
@@ -46,7 +52,7 @@ export class DeploymentReconciler {
       if (artifact === undefined || !artifact.workflows.some((workflow) => workflow.id === input.workflowId)) throw new Error('A deployment must reference an artifact containing the selected workflow.');
       const existing = state.deployments.find((candidate) => candidate.workflowId === input.workflowId && candidate.environment === input.environment && candidate.tenantId === input.scope.tenantId && candidate.projectId === input.scope.projectId);
       if (existing !== undefined) throw new Error('A deployment already exists for this workflow and environment.');
-      const now = new Date().toISOString();
+      const now = nextTimestamp();
       const deployment: DeploymentRecord = {
         id: `deployment-${randomUUID()}`,
         tenantId: input.scope.tenantId,
@@ -85,7 +91,9 @@ export class DeploymentReconciler {
       const fromArtifactId = deployment.artifactId;
       const targetArtifactId = options.artifactId ?? deployment.artifactId;
       const actor = options.actor?.trim() || 'local-operator';
-      const now = new Date().toISOString();
+      // Updated-at is an optimistic concurrency token; ensure two transitions
+      // in the same millisecond still produce distinct versions.
+      const now = nextTimestamp(deployment.updatedAt);
       this.acquireLease(deployment, now);
       try {
         if (action === 'deploy' || action === 'rollback') {

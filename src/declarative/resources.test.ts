@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileResourceFiles, parseResourceFile } from './resources.js';
+import { compileResourceFiles, parseResourceFile, ResourceCompilationError } from './resources.js';
 
 describe('typed resource files', () => {
   it('compiles Project, Agent, and Workflow envelopes', () => {
@@ -80,5 +80,22 @@ describe('typed resource files', () => {
 
   it('includes file, line, and field path for envelope errors', () => {
     expect(() => parseResourceFile({ path: 'workflows/bad.workflow.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: bad\n  version: 1\nspec:\n  steps: []' })).toThrow(/workflows\/bad\.workflow\.yaml:7: spec\.steps/);
+  });
+
+  it('aggregates source diagnostics for multiple invalid resource files', () => {
+    let error: unknown;
+    try {
+      compileResourceFiles([
+        { path: 'factory.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata: [' },
+        { path: 'agents/bad.agent.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: bad\n  version: 1\nspec:\n  apiKey: plaintext' },
+      ], { tenantId: 'tenant-local' });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(ResourceCompilationError);
+    expect((error as ResourceCompilationError).diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'factory.yaml', code: 'resource.compile' }),
+      expect.objectContaining({ path: 'agents/bad.agent.yaml', code: 'resource.compile' }),
+    ]));
   });
 });
