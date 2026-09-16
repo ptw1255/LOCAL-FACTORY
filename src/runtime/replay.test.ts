@@ -6,10 +6,11 @@ import { describe, expect, it } from 'vitest';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
+import type { RunRecord } from '../domain/types.js';
 import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
 import { LocalWorkflowExecutor } from './executor.js';
-import { ReplayNotDeterministicError, WorkflowReplayService } from './replay.js';
+import { compareRuns, ReplayNotDeterministicError, WorkflowReplayService } from './replay.js';
 
 async function waitFor(store: JsonStore, runId: string): Promise<void> {
   const deadline = Date.now() + 3_000;
@@ -22,6 +23,16 @@ async function waitFor(store: JsonStore, runId: string): Promise<void> {
 }
 
 describe('WorkflowReplayService', () => {
+  it('reports deterministic path-level semantic differences without retaining payloads', () => {
+    const base = { unitOutputs: { normalize: { status: 'ok', items: [{ id: 1, value: 'stable' }] } }, completedNodeIds: ['trigger', 'normalize'] } as unknown as RunRecord;
+    const changed = { unitOutputs: { normalize: { status: 'ok', items: [{ id: 1, value: 'changed' }, { id: 2, value: 'new' }] } }, completedNodeIds: ['trigger', 'normalize'] } as unknown as RunRecord;
+    expect(compareRuns(base, changed)).toEqual([
+      'unitOutputs.normalize.items.length differs: expected 1, received 2.',
+      'unitOutputs.normalize.items[0].value differs.',
+      'unitOutputs.normalize.items[1] is missing from source.',
+    ]);
+  });
+
   it('replays the pinned deterministic definition and compares outputs', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-replay-'));
     const store = new JsonStore(path.join(directory, 'state.json'));

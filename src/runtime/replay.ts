@@ -85,14 +85,47 @@ export class WorkflowReplayService {
   }
 }
 
-function compareRuns(source: RunRecord, replay: RunRecord): string[] {
+export function compareRuns(source: RunRecord, replay: RunRecord): string[] {
   const differences: string[] = [];
   if (JSON.stringify(source.completedNodeIds) !== JSON.stringify(replay.completedNodeIds)) differences.push('completedNodeIds differ.');
   const nodeIds = new Set([...Object.keys(source.unitOutputs), ...Object.keys(replay.unitOutputs)]);
   for (const nodeId of nodeIds) {
-    if (stableSerialize(source.unitOutputs[nodeId]) !== stableSerialize(replay.unitOutputs[nodeId])) differences.push(`unitOutputs.${nodeId} differs.`);
+    compareValues(source.unitOutputs[nodeId], replay.unitOutputs[nodeId], `unitOutputs.${nodeId}`, differences);
   }
   return differences;
+}
+
+/** Compare output structure without retaining either output payload in a report. */
+function compareValues(source: unknown, replay: unknown, path: string, differences: string[]): void {
+  if (stableSerialize(source) === stableSerialize(replay)) return;
+  if (source === undefined) {
+    differences.push(`${path} is missing from source.`);
+    return;
+  }
+  if (replay === undefined) {
+    differences.push(`${path} is missing from replay.`);
+    return;
+  }
+  if (Array.isArray(source) || Array.isArray(replay)) {
+    if (!Array.isArray(source) || !Array.isArray(replay)) {
+      differences.push(`${path} type differs.`);
+      return;
+    }
+    if (source.length !== replay.length) differences.push(`${path}.length differs: expected ${source.length}, received ${replay.length}.`);
+    const length = Math.max(source.length, replay.length);
+    for (let index = 0; index < length; index += 1) compareValues(source[index], replay[index], `${path}[${index}]`, differences);
+    return;
+  }
+  if (source !== null && replay !== null && typeof source === 'object' && typeof replay === 'object') {
+    const keys = new Set([...Object.keys(source as Record<string, unknown>), ...Object.keys(replay as Record<string, unknown>)]);
+    for (const key of [...keys].sort()) compareValues((source as Record<string, unknown>)[key], (replay as Record<string, unknown>)[key], `${path}.${key}`, differences);
+    return;
+  }
+  if (typeof source !== typeof replay) {
+    differences.push(`${path} type differs: expected ${typeof source}, received ${typeof replay}.`);
+    return;
+  }
+  differences.push(`${path} differs.`);
 }
 
 function stableSerialize(value: unknown): string {
