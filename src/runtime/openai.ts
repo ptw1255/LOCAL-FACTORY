@@ -51,6 +51,7 @@ export class HttpOpenAIClient implements OpenAIClient {
       body: JSON.stringify({
         model,
         store: false,
+        stream: input.agent.model.streaming === true,
         input: [
           { role: 'developer', content: input.agent.instructions },
           { role: 'user', content: input.goal },
@@ -62,6 +63,7 @@ export class HttpOpenAIClient implements OpenAIClient {
       const detail = (await response.text()).slice(0, 500);
       throw new Error(`OpenAI Responses request failed with status ${response.status}${detail === '' ? '.' : `: ${detail}`}`);
     }
+    if (input.agent.model.streaming === true) return this.parseStream(response, model);
     const body = await response.json() as {
       model?: unknown;
       output?: Array<{ type?: unknown; text?: unknown; content?: Array<{ type?: unknown; text?: unknown }>; call_id?: unknown; name?: unknown; arguments?: unknown }>;
@@ -82,6 +84,39 @@ export class HttpOpenAIClient implements OpenAIClient {
       ...(response.headers.get('x-request-id') === null ? {} : { requestId: response.headers.get('x-request-id')! }),
       ...(toolCalls.length === 0 ? {} : { toolCalls }),
     };
+  }
+
+  private async parseStream(response: Response, fallbackModel: string): Promise<OpenAIModelResult> {
+    if (response.body === null) throw new Error('OpenAI streaming response did not include a body.');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let content = '';
+    let model = fallbackModel;
+    let promptTokens: number | undefined;
+    let completionTokens: number | undefined;
+    const consume = (chunk: string): void => {
+      buffer += chunk;
+      const records = buffer.split(/\r?\n\r?\n/);
+      buffer = records.pop() ?? '';
+      for (const record of records) {
+        const data = record.split(/\r?\n/).find((line) => line.startsWith('data:'))?.slice(5).trim();
+        if (data === undefined || data === '[DONE]') continue;
+        let event: { type?: unknown; delta?: unknown; response?: { model?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown } } };
+        try { event = JSON.parse(data) as typeof event; } catch { continue; }
+        if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') content += event.delta;
+        if (typeof event.response?.model === 'string') model = event.response.model;
+        if (typeof event.response?.usage?.input_tokens === 'number') promptTokens = event.response.usage.input_tokens;
+        if (typeof event.response?.usage?.output_tokens === 'number') completionTokens = event.response.usage.output_tokens;
+      }
+    };
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      consume(decoder.decode(next.value, { stream: true }));
+    }
+    consume(decoder.decode());
+    return { content, model, ...(promptTokens === undefined ? {} : { promptTokens }), ...(completionTokens === undefined ? {} : { completionTokens }), ...(response.headers.get('x-request-id') === null ? {} : { requestId: response.headers.get('x-request-id')! }) };
   }
 
   private async resolveApiKey(agent: AgentDefinition): Promise<string> {

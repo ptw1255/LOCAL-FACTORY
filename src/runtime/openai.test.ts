@@ -30,4 +30,28 @@ describe('HttpOpenAIClient', () => {
     const result = await new HttpOpenAIClient({ apiKey: 'key', fetcher }).chat({ agent: { ...agent, model: { provider: 'openai', model: 'gpt-5' } }, goal: 'Use a tool', signal: new AbortController().signal });
     expect(result.toolCalls).toEqual([{ callId: 'call_1', name: 'repo.check', arguments: '{"command":"npm test"}' }]);
   });
+
+  it('normalizes streamed Responses output and usage metadata', async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"type":"response.output_text.delta","delta":"hel'));
+        controller.enqueue(encoder.encode('lo"}\n\n'));
+        controller.enqueue(encoder.encode('data: {"type":"response.completed","response":{"model":"gpt-5-mini","usage":{"input_tokens":3,"output_tokens":2}}}\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream', 'x-request-id': 'req-stream' },
+    }));
+    const result = await new HttpOpenAIClient({ apiKey: 'key', fetcher }).chat({
+      agent: { ...agent, model: { provider: 'openai', model: 'gpt-5', streaming: true } },
+      goal: 'Stream it',
+      signal: new AbortController().signal,
+    });
+    expect(result).toEqual({ content: 'hello', model: 'gpt-5-mini', promptTokens: 3, completionTokens: 2, requestId: 'req-stream' });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ stream: true });
+  });
 });
