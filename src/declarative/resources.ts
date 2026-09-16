@@ -169,8 +169,9 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
   const projectResource = projectResources[0];
   if (projectResource === undefined) throw new Error('Resource workspace must contain one Project resource.');
   const projectSpec = projectResource.spec;
+  const selectedEnvironmentName = scope.environment?.trim() || 'local';
   const selectedEnvironment = envelopes.find((resource) => resource.kind === 'Environment' && (
-    resource.metadata.id === scope.environment || resource.spec.name === scope.environment
+    resource.metadata.id === selectedEnvironmentName || resource.spec.name === selectedEnvironmentName
   ));
   const projectDefaults = projectSpec.defaults !== null && typeof projectSpec.defaults === 'object' ? projectSpec.defaults as Record<string, unknown> : {};
   const environmentOverrides = selectedEnvironment?.spec.overrides !== null && typeof selectedEnvironment?.spec.overrides === 'object'
