@@ -110,6 +110,21 @@ describe('LocalWorkflowExecutor', () => {
     expect(failedEvidence.some((entry) => entry.unitId === 'evaluate' && entry.status === 'failed' && entry.error?.includes('Evaluator threshold failed'))).toBe(true);
   });
 
+  it('enforces compiled policy rules before dispatching a work unit', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-policy-deny';
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'output', type: 'output', label: 'Blocked output', position: { x: 180, y: 0 }, config: { value: 'should-not-run', policyId: 'safe-only', policyRules: [{ effect: 'deny', action: 'output' }] }, unit: defaultWorkUnit('output') },
+    ];
+    workflow.edges = [{ id: 'trigger-output', source: 'trigger', target: 'output' }];
+    const run = await executor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.unitOutputs.output).toBeUndefined();
+    expect((await events.list(run.id)).some((event) => event.type === 'policy.denied' && event.nodeId === 'output')).toBe(true);
+  });
+
   it('waits for and resumes from a human approval', async () => {
     const workflow = structuredClone(seedWorkflow);
     const output = workflow.nodes.find((node) => node.id === 'output');
