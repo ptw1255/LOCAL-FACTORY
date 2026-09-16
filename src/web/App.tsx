@@ -502,6 +502,7 @@ function canvasToWorkflow(
 function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => void; projectId: string }) {
   const [catalog, setCatalog] = useState<NodeCatalogItem[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
+  const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [workflow, setWorkflow] = useState<WorkflowDefinition | null>(null);
   const [nodes, setNodes] = useState<CanvasNode[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -540,14 +541,16 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     setLoading(true);
     setError(null);
     try {
-      const [catalogResponse, workflowResponse, yamlResponse] = await Promise.all([
+      const [catalogResponse, workflowResponse, yamlResponse, artifactResponse] = await Promise.all([
         api.catalog(),
         api.workflows(),
         api.declarativeYaml(projectId),
+        api.artifacts(projectId),
       ]);
       setCatalog(catalogResponse.items);
       setWorkflows(workflowResponse.items);
       setYamlSource(yamlResponse);
+      setArtifacts(artifactResponse.items);
       setYamlDirty(false);
       const first = workflowResponse.items[0] ?? null;
       setWorkflow(first);
@@ -859,11 +862,13 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         if (saved === null) return;
       }
       if (runMode === 'dry-run') {
-        const preflight = await api.dryRun(workflow.id, { environment: runEnvironment, ...(input === undefined ? {} : { input }) });
-        setNotice({ tone: 'success', text: `Dry run passed for ${preflight.workflowId} v${preflight.workflowVersion}; no execution was started.` });
+        const artifact = artifacts.filter((candidate) => candidate.environment === runEnvironment && candidate.workflows.some((candidateWorkflow) => candidateWorkflow.id === workflow.id)).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+        const preflight = await api.dryRun(workflow.id, { environment: runEnvironment, ...(artifact === undefined ? {} : { artifactId: artifact.id }), ...(input === undefined ? {} : { input }) });
+        setNotice({ tone: 'success', text: `Dry run passed for ${preflight.workflowId} v${preflight.workflowVersion}${preflight.artifactId === undefined ? '' : ` · artifact ${preflight.artifactId.slice(0, 18)}`}; no execution was started.` });
         return;
       }
-      const run = await api.startRun(workflow.id, { environment: runEnvironment, ...(input === undefined ? {} : { input }) });
+      const artifact = artifacts.filter((candidate) => candidate.environment === runEnvironment && candidate.workflows.some((candidateWorkflow) => candidateWorkflow.id === workflow.id)).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+      const run = await api.startRun(workflow.id, { environment: runEnvironment, ...(artifact === undefined ? {} : { artifactId: artifact.id }), ...(input === undefined ? {} : { input }) });
       window.localStorage.setItem(`factory.onboarding.${projectId}.run`, 'true');
       setHasRun(true);
       sessionStorage.setItem('selectedRunId', run.id);
@@ -973,6 +978,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
           <form aria-label="Workflow run input" className="run-input-dialog" onSubmit={(event) => void submitRunInput(event)}>
             <div className="run-input-heading"><div><span className="eyebrow">Run preflight</span><h2>Provide workflow input</h2></div><button aria-label="Close run input" className="icon-button" onClick={() => setRunInputOpen(false)} type="button"><Icon name="close" size={14} /></button></div>
             <p>Input is validated against the workflow contract before any work unit executes.</p>
+            {(() => { const artifact = artifacts.filter((candidate) => candidate.environment === runEnvironment && candidate.workflows.some((candidateWorkflow) => candidateWorkflow.id === workflow.id)).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]; return <p className="run-input-artifact">{artifact === undefined ? `No compiled ${runEnvironment} artifact is available; this run will use the saved workflow.` : `Pinned artifact: ${artifact.id}`}</p>; })()}
             <pre className="run-input-schema">{JSON.stringify(workflow.inputSchema, null, 2)}</pre>
             <label className="form-field"><span>Input JSON</span><textarea aria-describedby={runInputError === null ? undefined : 'run-input-error'} className={runInputError === null ? '' : 'invalid'} onChange={(event) => setRunInputDraft(event.target.value)} rows={9} spellCheck={false} value={runInputDraft} /></label>
             {runInputError === null ? null : <div className="field-error" id="run-input-error" role="alert">{runInputError}</div>}
