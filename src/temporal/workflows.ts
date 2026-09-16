@@ -30,6 +30,7 @@ export async function executeWorkflow(
   input: TemporalWorkflowInput,
 ): Promise<TemporalWorkflowResult> {
   const completed = new Set<string>();
+  const outputs = new Map<string, unknown>();
   const trigger = input.definition.nodes.find(
     (node) => node.type === input.definition.trigger.type,
   );
@@ -82,8 +83,15 @@ export async function executeWorkflow(
       nodeType: node.type,
       label: node.label,
       config: activityConfig,
+      traceId: input.runId,
+      sequence: completed.size + 1,
+      inputs: input.definition.edges
+        .filter((edge) => edge.target === node.id && outputs.has(edge.source))
+        .map((edge) => outputs.get(edge.source)),
+      unit: node.unit,
     });
     completed.add(node.id);
+    outputs.set(node.id, activityResult.result);
     for (const edge of input.definition.edges.filter(
       (candidate) =>
         candidate.source === node.id &&
