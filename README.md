@@ -363,7 +363,11 @@ TEMPORAL_ADDRESS=localhost:7233 npm run worker
 The generic Temporal workflow pins a full definition, executes nondeterministic work
 in activities, uses a signal for approvals, and applies activity retry policy. Docker
 Compose provides PostgreSQL and a local Vault development server for an end-to-end
-control-plane setup.
+control-plane setup. When the worker has `DATABASE_URL` (or `DATA_FILE`) configured,
+each activity writes retry-safe lifecycle evidence and correlated trace events to the
+same platform store used by local execution. The workflow result also returns the
+compact lifecycle summary; raw inputs and outputs remain outside telemetry and are
+represented by hashes.
 
 ## Safety model
 

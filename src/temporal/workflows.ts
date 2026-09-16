@@ -7,6 +7,7 @@ import {
 
 import type { WorkflowDefinition } from '../domain/types.js';
 import type * as activities from './activities.js';
+import type { TemporalActivityLifecycle } from './observability.js';
 
 const { executeNodeActivity } = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 minutes',
@@ -24,6 +25,7 @@ export interface TemporalWorkflowInput {
 
 export interface TemporalWorkflowResult {
   completedNodeIds: string[];
+  lifecycle: TemporalActivityLifecycle[];
 }
 
 export async function executeWorkflow(
@@ -31,6 +33,7 @@ export async function executeWorkflow(
 ): Promise<TemporalWorkflowResult> {
   const completed = new Set<string>();
   const outputs = new Map<string, unknown>();
+  const lifecycle: TemporalActivityLifecycle[] = [];
   const trigger = input.definition.nodes.find(
     (node) => node.type === input.definition.trigger.type,
   );
@@ -79,6 +82,8 @@ export async function executeWorkflow(
 
     const activityResult = await executeNodeActivity({
       runId: input.runId,
+      ...(input.definition.tenantId === undefined ? {} : { tenantId: input.definition.tenantId }),
+      ...(input.definition.projectId === undefined ? {} : { projectId: input.definition.projectId }),
       nodeId: node.id,
       nodeType: node.type,
       label: node.label,
@@ -92,6 +97,7 @@ export async function executeWorkflow(
     });
     completed.add(node.id);
     outputs.set(node.id, activityResult.result);
+    lifecycle.push(activityResult.lifecycle);
     for (const edge of input.definition.edges.filter(
       (candidate) =>
         candidate.source === node.id &&
@@ -103,5 +109,5 @@ export async function executeWorkflow(
     }
   }
 
-  return { completedNodeIds: [...completed] };
+  return { completedNodeIds: [...completed], lifecycle };
 }
