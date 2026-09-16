@@ -56,6 +56,25 @@ describe('typed resource files', () => {
     expect(() => compileResourceFiles([project, workflow, canvas], { tenantId: 'tenant-local' })).toThrow(/missing Workflow\/missing/);
   });
 
+  it('resolves schema references and rejects dependency cycles', () => {
+    const project = { path: 'factory.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: demo\n  version: 1\nspec: {}' };
+    const schema = { path: 'schemas/request.schema.json', source: 'apiVersion: factory.agentic/v1\nkind: Schema\nmetadata:\n  id: request\n  version: 1\nspec:\n  type: object\n  required: [goal]' };
+    const agent = { path: 'agents/reviewer.agent.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: reviewer\n  version: 1\n  name: Reviewer\nspec:\n  inputSchema: $ref:request\n  purpose: Review\n  instructions: Review\n  skills: []\n  tools: []\n  model: { routingAlias: default-safe }' };
+    const workflow = { path: 'workflows/review.workflow.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: review\n  version: 1\n  name: Review\nspec:\n  inputSchema:\n    $ref: Schema/request\n  steps:\n    - id: first\n      type: output\n      dependsOn: [second]\n    - id: second\n      type: output\n      dependsOn: [first]' };
+    expect(() => compileResourceFiles([project, schema, agent, workflow], { tenantId: 'tenant-local' })).toThrow(/reference cycle/);
+    const acyclic = { ...workflow, source: workflow.source.replace('      dependsOn: [first]', '      dependsOn: []') };
+    const result = compileResourceFiles([project, schema, agent, acyclic], { tenantId: 'tenant-local' });
+    expect(result.workflows[0]?.inputSchema).toEqual({ type: 'object', required: ['goal'] });
+    expect(result.workflows[0]?.agents[0]?.inputSchema).toEqual({ type: 'object', required: ['goal'] });
+  });
+
+  it('enforces the conventional path for each resource kind', () => {
+    expect(() => compileResourceFiles([
+      { path: 'factory.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: demo\n  version: 1\nspec: {}' },
+      { path: 'review.workflow.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: review\n  version: 1\n  name: Review\nspec:\n  steps:\n    - id: done\n      type: output' },
+    ], { tenantId: 'tenant-local' })).toThrow(/conventional file path/);
+  });
+
   it('includes file, line, and field path for envelope errors', () => {
     expect(() => parseResourceFile({ path: 'workflows/bad.workflow.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: bad\n  version: 1\nspec:\n  steps: []' })).toThrow(/workflows\/bad\.workflow\.yaml:7: spec\.steps/);
   });
