@@ -27,7 +27,10 @@ export type IconName =
   | 'refresh'
   | 'menu'
   | 'warning'
-  | 'code';
+  | 'code'
+  | 'edit'
+  | 'trash'
+  | 'chevronDown';
 
 const paths: Record<IconName, ReactElement> = {
   spark: <path d="m12 2 1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5L12 2Zm7 13 .7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15Z" />,
@@ -57,6 +60,9 @@ const paths: Record<IconName, ReactElement> = {
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   warning: <path d="M12 3 2 21h20L12 3Zm0 6v5m0 3h.01" />,
   code: <path d="m8 9-3 3 3 3m8-6 3 3-3 3m-2-9-4 12" />,
+  edit: <path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Zm10-12 3 3" />,
+  trash: <path d="M5 7h14m-9 4v5m4-5v5M9 7V4h6v3m-9 0 1 14h10l1-14" />,
+  chevronDown: <path d="m6 9 6 6 6-6" />,
 };
 
 export function Icon({

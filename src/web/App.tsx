@@ -1040,8 +1040,10 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         mode={studioMode}
         onModeChange={setStudioMode}
         dirty={yamlDirty}
+        onDirtyChange={setYamlDirty}
         onCanvas={() => setStudioMode('canvas')}
         onSourceChange={(value) => { setYamlSource(value); setYamlDirty(true); }}
+        onSourceLoaded={(value) => { setYamlSource(value); setYamlDirty(false); }}
         onSourceImported={(nextWorkflows, source) => {
           setWorkflows(nextWorkflows);
           const next = nextWorkflows.find((item) => item.id === workflow.id) ?? nextWorkflows[0] ?? null;
@@ -1072,7 +1074,9 @@ function OperationalTree({
   onCanvas,
   projectId,
   dirty,
+  onDirtyChange,
   onSourceChange,
+  onSourceLoaded,
   onSourceImported,
 }: {
   workflow: WorkflowDefinition;
@@ -1082,7 +1086,9 @@ function OperationalTree({
   onCanvas: () => void;
   projectId: string;
   dirty: boolean;
+  onDirtyChange: (dirty: boolean) => void;
   onSourceChange: (source: string) => void;
+  onSourceLoaded: (source: string) => void;
   onSourceImported: (workflows: WorkflowDefinition[], source: string) => void;
 }) {
   const agentById = new Map(workflow.agents.map((agent) => [agent.id, agent]));
@@ -1091,6 +1097,7 @@ function OperationalTree({
   const [files, setFiles] = useState<ProjectFileRecord[]>([]);
   const [selectedPath, setSelectedPath] = useState('project.yaml');
   const [fileSearch, setFileSearch] = useState('');
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     void api.projectFiles(projectId).then((response) => {
@@ -1099,17 +1106,62 @@ function OperationalTree({
         setSelectedPath(response.items[0]?.path ?? 'project.yaml');
       }
     }).catch(() => setFiles([]));
-  }, [projectId, selectedPath]);
+  }, [projectId]);
 
   async function selectFile(file: ProjectFileRecord) {
+    if (dirty && selectedPath !== file.path && !window.confirm('Discard unsaved changes in the current file?')) return;
     setSelectedPath(file.path);
     try {
       const loaded = await api.projectFile(projectId, file.path);
-      if (loaded.content !== undefined) onSourceChange(loaded.content);
+      if (loaded.content !== undefined) onSourceLoaded(loaded.content);
     } catch (loadError) {
       setError(errorText(loadError));
     }
   }
+
+  async function refreshFiles(): Promise<void> {
+    try { setFiles((await api.projectFiles(projectId)).items); } catch (loadError) { setError(errorText(loadError)); }
+  }
+
+  async function createFile(): Promise<void> {
+    const filePath = window.prompt('New file path', 'workflows/new.workflow.yaml')?.trim();
+    if (filePath === undefined || filePath === '') return;
+    try {
+      const created = await api.saveProjectFile(projectId, filePath, filePath.endsWith('.json') ? '{}\n' : 'apiVersion: factory.agentic/v1\n');
+      await refreshFiles();
+      setSelectedPath(created.path);
+      if (created.content !== undefined) onSourceLoaded(created.content);
+    } catch (createError) { setError(errorText(createError)); }
+  }
+
+  async function renameFile(): Promise<void> {
+    const file = files.find((candidate) => candidate.path === selectedPath);
+    if (file === undefined) return;
+    if (dirty && !window.confirm('Rename the file with unsaved changes?')) return;
+    const nextPath = window.prompt('Rename file', file.path)?.trim();
+    if (nextPath === undefined || nextPath === '' || nextPath === file.path) return;
+    try { await api.renameProjectFile(projectId, file.path, nextPath); await refreshFiles(); setSelectedPath(nextPath); }
+    catch (renameError) { setError(errorText(renameError)); }
+  }
+
+  async function deleteFile(): Promise<void> {
+    const file = files.find((candidate) => candidate.path === selectedPath);
+    if (file === undefined || !window.confirm(`Delete ${file.path}? This cannot be undone.`)) return;
+    if (dirty && !window.confirm('The selected file has unsaved changes. Delete it anyway?')) return;
+    try {
+      await api.deleteProjectFile(projectId, file.path);
+      await refreshFiles();
+      const remaining = files.filter((candidate) => candidate.path !== file.path);
+      const next = remaining[0]?.path ?? 'project.yaml';
+      setSelectedPath(next);
+      onDirtyChange(false);
+    } catch (deleteError) { setError(errorText(deleteError)); }
+  }
+
+  const visibleFiles = (files.length > 0 ? files : [{ path: 'project.yaml', sha256: '', projectId, tenantId: '', updatedAt: '' }])
+    .filter((file) => file.path.toLowerCase().includes(fileSearch.toLowerCase()))
+    .filter((file) => !file.path.split('/').slice(0, -1).some((folder, index, folders) => collapsedFolders.has(folders.slice(0, index + 1).join('/'))));
+  const folders = [...new Set(visibleFiles.flatMap((file) => file.path.split('/').slice(0, -1).map((_part, index, parts) => parts.slice(0, index + 1).join('/'))))];
 
   async function applyYaml() {
     setBusy(true);
@@ -1127,12 +1179,12 @@ function OperationalTree({
   return (
     <div className="ide-layout">
       <aside className="ide-explorer">
-        <div className="ide-explorer-title"><span className="eyebrow">Explorer</span><Icon name="search" size={14} /></div>
+        <div className="ide-explorer-title"><span className="eyebrow">Explorer</span><span className="ide-explorer-actions"><button aria-label="New file" className="icon-button" onClick={() => void createFile()} title="New file" type="button"><Icon name="plus" size={13} /></button><button aria-label="Rename selected file" className="icon-button" disabled={!files.some((file) => file.path === selectedPath)} onClick={() => void renameFile()} title="Rename selected file" type="button"><Icon name="edit" size={13} /></button><button aria-label="Delete selected file" className="icon-button" disabled={!files.some((file) => file.path === selectedPath)} onClick={() => void deleteFile()} title="Delete selected file" type="button"><Icon name="trash" size={13} /></button></span></div>
         <label className="ide-view-selector"><span>View</span><select aria-label="Workspace view" onChange={(event) => onModeChange(event.target.value as 'files' | 'tree' | 'canvas')} value={mode}><option value="files">Files</option><option value="tree">Tree</option><option value="canvas">Canvas</option></select></label>
         <label className="ide-file-search"><span className="sr-only">Filter files</span><input onChange={(event) => setFileSearch(event.target.value)} placeholder="Filter files" type="search" value={fileSearch} /></label>
         <div className="ide-project"><Icon name="factory" size={15} /><strong>{workflow.projectId ?? 'project'}</strong></div>
-        <div className="ide-folder"><Icon name="chevron" size={12} /> workflows</div>
-        {(files.length > 0 ? files : [{ path: 'project.yaml', sha256: '', projectId, tenantId: '', updatedAt: '' }]).filter((file) => file.path.toLowerCase().includes(fileSearch.toLowerCase())).map((file) => <button className={`ide-file ${selectedPath === file.path ? 'active' : ''}`} key={file.path} onClick={() => void selectFile(file)} type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={14} /> {file.path}</button>)}
+        {folders.map((folder) => <button className="ide-folder" key={folder} onClick={() => setCollapsedFolders((current) => { const next = new Set(current); if (next.has(folder)) next.delete(folder); else next.add(folder); return next; })} type="button"><Icon name={collapsedFolders.has(folder) ? 'chevron' : 'chevronDown'} size={12} /> {folder}</button>)}
+        {visibleFiles.map((file) => <button className={`ide-file ${selectedPath === file.path ? 'active' : ''}`} key={file.path} onClick={() => void selectFile(file)} type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={14} /> <span>{file.path}</span>{selectedPath === file.path && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>)}
         {files.length === 0 ? workflow.agents.map((agent) => <div className="ide-file muted" key={agent.id}><Icon name="agent" size={14} /> agents/{agent.id}.agent.yaml</div>) : null}
         <div className="ide-folder"><Icon name="chevron" size={12} /> runtime</div>
         <div className="ide-file muted"><Icon name="runs" size={14} /> runs</div>
