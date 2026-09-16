@@ -153,7 +153,7 @@ export class LocalWorkflowExecutor {
         throw new Error('Only waiting runs can be approved.');
       }
       const waitingNode = target.workflowDefinition.nodes.find((node) =>
-        this.requiresApproval(node) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
+        this.requiresApproval(node, target.workflowDefinition) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
       if (waitingNode === undefined) {
         throw new Error('No approval node is waiting.');
       }
@@ -201,7 +201,7 @@ export class LocalWorkflowExecutor {
       const target = state.runs.find((candidate) => candidate.id === runId);
       if (target === undefined) throw new Error('Run not found.');
       if (target.status !== 'waiting') throw new Error('Only waiting runs can be denied.');
-      const waitingNode = target.workflowDefinition.nodes.find((node) => this.requiresApproval(node) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
+      const waitingNode = target.workflowDefinition.nodes.find((node) => this.requiresApproval(node, target.workflowDefinition) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
       if (waitingNode === undefined) throw new Error('No approval node is waiting.');
       const approval = state.approvals.find((candidate) => candidate.runId === runId && candidate.nodeId === waitingNode.id && candidate.decision === 'pending');
       if (approval === undefined) throw new Error('Approval record is missing or no longer pending.');
@@ -225,7 +225,7 @@ export class LocalWorkflowExecutor {
       const target = state.runs.find((candidate) => candidate.id === runId);
       if (target === undefined) throw new Error('Run not found.');
       if (target.status !== 'waiting') throw new Error('Only waiting runs can expire an approval.');
-      const waitingNode = target.workflowDefinition.nodes.find((node) => this.requiresApproval(node) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
+      const waitingNode = target.workflowDefinition.nodes.find((node) => this.requiresApproval(node, target.workflowDefinition) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
       if (waitingNode === undefined) throw new Error('No approval node is waiting.');
       const approval = state.approvals.find((candidate) => candidate.runId === runId && candidate.nodeId === waitingNode.id && candidate.decision === 'pending');
       if (approval === undefined) throw new Error('Approval record is missing or no longer pending.');
@@ -249,7 +249,7 @@ export class LocalWorkflowExecutor {
       const target = state.runs.find((candidate) => candidate.id === runId);
       if (target === undefined) throw new Error('Run not found.');
       if (target.status !== 'waiting') throw new Error('Only waiting runs can supersede an approval.');
-      const waitingNode = target.workflowDefinition.nodes.find((node) => this.requiresApproval(node) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
+      const waitingNode = target.workflowDefinition.nodes.find((node) => this.requiresApproval(node, target.workflowDefinition) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
       if (waitingNode === undefined) throw new Error('No approval node is waiting.');
       const approval = state.approvals.find((candidate) => candidate.runId === runId && candidate.nodeId === waitingNode.id && candidate.decision === 'pending');
       if (approval === undefined) throw new Error('Approval record is missing or no longer pending.');
@@ -339,11 +339,11 @@ export class LocalWorkflowExecutor {
           return;
         }
 
-        if (this.requiresApproval(nextNode) && !context.run.approvedNodeIds.includes(nextNode.id)) {
+        if (this.requiresApproval(nextNode, context.workflow) && !context.run.approvedNodeIds.includes(nextNode.id)) {
           await this.waitForApproval(runId, nextNode.id);
           return;
         }
-        if (this.requiresApproval(nextNode) && context.run.approvedNodeHashes[nextNode.id] !== this.approvalFingerprint(context.run, nextNode)) {
+        if (this.requiresApproval(nextNode, context.workflow) && context.run.approvedNodeHashes[nextNode.id] !== this.approvalFingerprint(context.run, nextNode)) {
           await this.store.mutate((state) => {
             const run = state.runs.find((candidate) => candidate.id === runId);
             if (run === undefined) return;
@@ -1057,8 +1057,15 @@ export class LocalWorkflowExecutor {
     return Object.keys(metadata).length === 0 ? undefined : metadata;
   }
 
-  private requiresApproval(node: WorkflowNode): boolean {
-    return node.type === 'approval' || node.config.requiresApproval === true;
+  private requiresApproval(node: WorkflowNode, workflow?: WorkflowDefinition): boolean {
+    if (node.type === 'approval' || node.config.requiresApproval === true) return true;
+    if (node.type !== 'agentLoop' || workflow === undefined) return false;
+    const agentId = typeof node.config.agentId === 'string' ? node.config.agentId : undefined;
+    const agent = agentId === undefined ? undefined : workflow.agents.find((candidate) => candidate.id === agentId);
+    if (agent === undefined) return false;
+    // A tool-capable agent may cause side effects even when the model has not
+    // requested one yet; gate the whole invocation so policy cannot be bypassed.
+    return agent.approval.beforeSideEffects && agent.tools.length > 0 || agent.approval.beforeTools.length > 0;
   }
 
   private approvalFingerprint(run: RunRecord, node: WorkflowNode): string {

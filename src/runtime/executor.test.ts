@@ -414,6 +414,31 @@ describe('LocalWorkflowExecutor', () => {
     expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'ollama', 'llm.model_name': 'llama3.2' }));
   });
 
+  it('gates tool-capable agents on the declared before-tools approval policy', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    if (agent === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider: 'openai', model: 'gpt-5' };
+    agent.tools = ['repo.check'];
+    agent.approval = { beforeSideEffects: false, beforeTools: ['repo.check'] };
+    let calls = 0;
+    const openai = { chat: async () => {
+      calls += 1;
+      return { content: 'approved result', model: 'gpt-5' };
+    } };
+    const gatedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, openai);
+    const run = await gatedExecutor.start(workflow);
+    await waitFor(async () =>
+      (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'waiting',
+    );
+    expect(calls).toBe(0);
+    await gatedExecutor.approve(run.id);
+    await waitFor(async () =>
+      (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded',
+    );
+    expect(calls).toBeGreaterThan(0);
+  });
+
   it('executes only declared and registered agent tools with correlated lifecycle evidence', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];
