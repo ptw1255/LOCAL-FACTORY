@@ -21,6 +21,11 @@ services:
       # Browser-facing Phoenix URL; keep the collector endpoint internal to Docker.
       PHOENIX_UI_URL: ${PHOENIX_UI_URL:-http://localhost:6006}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      # Optional durable execution plane. Default remains the local executor.
+      EXECUTION_ENGINE: ${EXECUTION_ENGINE:-local}
+      TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-temporal:7233}
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+      TEMPORAL_TASK_QUEUE_PREFIX: ${TEMPORAL_TASK_QUEUE_PREFIX:-agentic-workflows}
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,6 +93,41 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  temporal:
+    image: temporalio/auto-setup:1.22.4
+    profiles: ["temporal"]
+    environment:
+      DB: postgresql
+      DB_PORT: 5432
+      POSTGRES_USER: factory
+      POSTGRES_PWD: factory
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development.yaml
+    ports:
+      - "7233:7233"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  temporal-worker:
+    build: .
+    profiles: ["temporal"]
+    command: ["node", "dist-server/temporal/worker.js"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://factory:factory@postgres:5432/factory
+      TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-temporal:7233}
+      TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+      TEMPORAL_TASK_QUEUE_PREFIX: ${TEMPORAL_TASK_QUEUE_PREFIX:-agentic-workflows}
+      TEMPORAL_WORKFLOW_VERSION: ${TEMPORAL_WORKFLOW_VERSION:-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
