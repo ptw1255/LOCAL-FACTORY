@@ -82,6 +82,7 @@ export const api = {
   artifacts: (projectId: string) => request<ItemsResponse<ArtifactRecord>>(`/api/projects/${encodeURIComponent(projectId)}/artifacts`),
   saveProjectFile: (projectId: string, filePath: string, content: string) => request<ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files`, { method: 'PUT', body: JSON.stringify({ path: filePath, content }) }),
   renameProjectFile: (projectId: string, filePath: string, newPath: string) => request<{ renamed: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/files`, { method: 'PATCH', body: JSON.stringify({ path: filePath, newPath }) }),
+  deleteProjectFile: (projectId: string, filePath: string) => request<{ deleted: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/files`, { method: 'DELETE', body: JSON.stringify({ path: filePath }) }),
   catalog: () => request<ItemsResponse<NodeCatalogItem>>('/api/catalog/nodes'),
   workflows: () => request<ItemsResponse<WorkflowDefinition>>('/api/workflows'),
   workflow: (id: string) =>

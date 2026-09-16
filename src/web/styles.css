@@ -304,7 +304,8 @@ h1, h2, h3, p { margin-top: 0; }
 .ide-bottom-content { color: #7689a3; font-size: 11px; padding: 3px 0 10px; }
 .ide-project { align-items: center; color: #b8c8df; display: flex; font-size: 10px; gap: 7px; padding: 7px; }
 .ide-project svg { color: var(--accent); }
-.ide-folder { align-items: center; color: #8091aa; display: flex; font-size: 9px; gap: 3px; letter-spacing: .08em; margin-top: 16px; padding: 0 5px 5px; text-transform: uppercase; }
+.ide-folder { align-items: center; background: transparent; border: 0; color: #8091aa; cursor: pointer; display: flex; font: inherit; font-size: 9px; gap: 3px; letter-spacing: .08em; margin-top: 16px; padding: 0 5px 5px; text-align: left; text-transform: uppercase; width: 100%; }
+.ide-folder:hover { color: #d9e5f5; }
 .ide-file { align-items: center; background: transparent; border: 1px solid transparent; border-radius: 5px; color: #9eacc0; display: flex; font-size: 10px; gap: 7px; padding: 8px 8px 8px 14px; text-align: left; width: 100%; }
 .ide-file.active { background: #1a2b43; border-color: #2b466c; color: #d9e5f5; }
 .ide-file.muted { color: #64738a; }
