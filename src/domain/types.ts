@@ -35,6 +35,14 @@ export interface ProjectFileRecord {
   updatedAt: string;
 }
 
+/** An explicitly-created empty directory in a project workspace. */
+export interface ProjectDirectoryRecord {
+  tenantId: string;
+  projectId: string;
+  path: string;
+  createdAt: string;
+}
+
 export interface DeletedProjectFileRecord extends ProjectFileRecord {
   trashId: string;
   deletedAt: string;
@@ -469,6 +477,7 @@ export interface PlatformState {
   connections: ConnectionRecord[];
   proposals: AgentProposal[];
   files: ProjectFileRecord[];
+  directories: ProjectDirectoryRecord[];
   deletedFiles: DeletedProjectFileRecord[];
   artifacts: ArtifactRecord[];
   evidence: OperationEvidence[];

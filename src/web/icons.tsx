@@ -30,6 +30,7 @@ export type IconName =
   | 'code'
   | 'edit'
   | 'trash'
+  | 'folder'
   | 'chevronDown';
 
 const paths: Record<IconName, ReactElement> = {
@@ -62,6 +63,7 @@ const paths: Record<IconName, ReactElement> = {
   code: <path d="m8 9-3 3 3 3m8-6 3 3-3 3m-2-9-4 12" />,
   edit: <path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Zm10-12 3 3" />,
   trash: <path d="M5 7h14m-9 4v5m4-5v5M9 7V4h6v3m-9 0 1 14h10l1-14" />,
+  folder: <path d="M3 6h7l2 2h9v11H3V6Zm0 4h18" />,
   chevronDown: <path d="m6 9 6 6 6-6" />,
 };
 

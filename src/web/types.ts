@@ -35,6 +35,13 @@ export interface ProjectFileRecord {
   updatedAt: string;
 }
 
+export interface ProjectDirectoryRecord {
+  tenantId: string;
+  projectId: string;
+  path: string;
+  createdAt: string;
+}
+
 export interface ArtifactRecord {
   tenantId: string;
   projectId: string;
