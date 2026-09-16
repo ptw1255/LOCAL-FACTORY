@@ -67,9 +67,16 @@ const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconNam
 };
 
 function readView(): ViewId {
-  const value = window.location.hash.replace('#/', '');
+  const value = window.location.hash.replace('#/', '').split('?', 1)[0] ?? '';
   if (value === 'runs') return 'observe';
   return value in viewLabels ? (value as ViewId) : 'studio';
+}
+
+function readObserveRunId(): string | null {
+  const hashQuery = window.location.hash.split('?', 2)[1];
+  if (hashQuery === undefined) return null;
+  const runId = new URLSearchParams(hashQuery).get('runId')?.trim();
+  return runId === undefined || runId === '' ? null : runId;
 }
 
 function readStudioMode(projectId: string): 'files' | 'tree' | 'canvas' {
@@ -254,7 +261,12 @@ export function App() {
   const [scopeError, setScopeError] = useState<string | null>(null);
 
   useEffect(() => {
-    const onHashChange = () => setViewState(readView());
+    const onHashChange = () => {
+      const deepLinkedRunId = readObserveRunId();
+      if (deepLinkedRunId !== null) sessionStorage.setItem('selectedRunId', deepLinkedRunId);
+      setViewState(readView());
+    };
+    onHashChange();
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
