@@ -167,6 +167,17 @@ describe('Temporal node activities', () => {
     })).rejects.toThrow('Evaluator threshold failed');
   });
 
+  it('rejects non-HTTP(S) URLs before making a Temporal request', async () => {
+    await expect(executeNodeActivity({
+      runId: 'run-http-policy',
+      nodeId: 'request',
+      nodeType: 'httpRequest',
+      label: 'Request',
+      config: { url: 'file:///etc/passwd' },
+      unit: defaultWorkUnit('httpRequest'),
+    })).rejects.toThrow('only http and https URLs');
+  });
+
   it('enforces WorkUnit timeouts for Temporal activities', async () => {
     await expect(executeNodeActivity({
       runId: 'run-temporal',

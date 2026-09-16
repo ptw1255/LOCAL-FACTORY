@@ -183,7 +183,11 @@ async function executeNodeImplementation(
     case 'httpRequest': {
       const url = input.config.url;
       if (typeof url !== 'string' || url.trim() === '') return { simulated: true, status: 200 };
-      const response = await fetch(url, {
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('HTTP nodes support only http and https URLs.');
+      }
+      const response = await fetch(parsed, {
         method: typeof input.config.method === 'string' ? input.config.method : 'GET',
         signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
       });
