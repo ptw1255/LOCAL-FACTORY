@@ -15,6 +15,7 @@ describe('typed resource files', () => {
   it('rejects runtime state and secret values', () => {
     expect(() => parseResourceFile({ path: 'agent.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: a\n  version: 1\n  status: live\nspec: {}' })).toThrow(/runtime state/);
     expect(() => parseResourceFile({ path: 'agent.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: a\n  version: 1\nspec:\n  apiKey: secret-value' })).toThrow(/secret reference/);
+    expect(() => parseResourceFile({ path: 'agent.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: a\n  version: 1\nspec:\n  model:\n    secretRef: vault://local/agent/a' })).not.toThrow();
   });
 
   it('anchors unknown work-unit diagnostics to the authored workflow file', () => {
