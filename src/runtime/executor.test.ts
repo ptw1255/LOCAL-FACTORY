@@ -9,6 +9,7 @@ import { defaultWorkUnit } from '../domain/catalog.js';
 import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
 import { LocalWorkflowExecutor } from './executor.js';
+import { OpenAIProviderError } from './openai.js';
 import type { GitHubRepositoryClient } from '../repository/github.js';
 
 async function waitFor(
@@ -381,6 +382,35 @@ describe('LocalWorkflowExecutor', () => {
     expect(receivedTraceId).toBe(run.traceId);
     const recorded = await events.list(run.id);
     expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'openai', 'llm.request_id': 'req-1' }));
+  });
+
+  it('uses a bounded fallback route when the primary provider is unavailable', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    if (agent === undefined) throw new Error('Seed agent is missing.');
+    agent.model = {
+      routing: { strategy: 'fallback', maxAttempts: 2 },
+      routes: [
+        { provider: 'openai', model: 'gpt-5' },
+        { provider: 'ollama', model: 'llama3.2' },
+      ],
+    };
+    const openai = { chat: async () => {
+      throw new OpenAIProviderError('server', 'primary unavailable');
+    } };
+    const ollama = {
+      ensureModel: async () => undefined,
+      chat: async () => ({ content: 'local fallback', model: 'llama3.2', promptTokens: 2, completionTokens: 3 }),
+    };
+    const routedExecutor = new LocalWorkflowExecutor(store, events, ollama, undefined, undefined, undefined, openai);
+    const run = await routedExecutor.start(workflow);
+    await waitFor(async () =>
+      (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded',
+    );
+    const recorded = await events.list(run.id);
+    expect(recorded.some((event) => event.type === 'llm.route.failed' && event.attributes?.['llm.route.provider'] === 'openai')).toBe(true);
+    expect(recorded.some((event) => event.type === 'llm.route.selected' && event.attributes?.['llm.route.provider'] === 'ollama')).toBe(true);
+    expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'ollama', 'llm.model_name': 'llama3.2' }));
   });
 
   it('executes only declared and registered agent tools with correlated lifecycle evidence', async () => {

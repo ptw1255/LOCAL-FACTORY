@@ -72,6 +72,31 @@ for preloaded model volumes. The runtime records an `llm.completed` trace for ea
 Ollama call and preserves the agent's declared input/output capture and network
 policies.
 
+### Bounded model routing
+
+An agent can declare a bounded list of provider routes. `fallback` tries each route in
+order and records route failures/selections in the same run trace; `single` uses only
+the first route. Each route may override the provider, model, endpoint, or Vault
+secret reference while inheriting the rest of the agent policy:
+
+```yaml
+model:
+  routing:
+    strategy: fallback
+    maxAttempts: 2
+  routes:
+    - provider: openai
+      model: gpt-5-mini
+      secretRef: connections/openai
+    - provider: ollama
+      model: llama3.2
+      endpoint: http://host.docker.internal:11434
+```
+
+Routing is bounded to eight declared attempts and does not expose API keys in YAML,
+PostgreSQL, or telemetry. The built-in routes are OpenAI and Ollama; additional
+provider adapters can implement the same provider-neutral contract.
+
 ### OpenAI Responses API
 
 Hosted agent boxes use the provider-neutral runtime with a server-side Responses API
