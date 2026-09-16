@@ -136,7 +136,7 @@ describe('LocalWorkflowExecutor', () => {
     if (prepare === undefined) throw new Error('Seed prepare node is missing.');
     prepare.type = 'repositoryMutation';
     prepare.label = 'Prepare repository workspace';
-    prepare.config = { operations: [{ operation: 'create', path: '.factory-run-marker', content: 'created' }] };
+    prepare.config = { capabilities: ['repository.write'], operations: [{ operation: 'create', path: '.factory-run-marker', content: 'created' }] };
     prepare.unit = defaultWorkUnit('repositoryMutation');
 
     const repository = await (await import('../repository/workspace.js')).RepositoryWorkspace.open(process.cwd());
@@ -148,7 +148,23 @@ describe('LocalWorkflowExecutor', () => {
 
     const recorded = await events.list(run.id);
     expect(recorded.some((event) => event.type === 'unit.completed' && event.nodeId === 'prepare')).toBe(true);
+    const mutationEvidence = (await events.listEvidence(run.id)).find((evidence) => evidence.unitId === 'prepare' && evidence.status === 'succeeded');
+    expect(mutationEvidence?.metadata).toEqual(expect.objectContaining({ 'operation.id': expect.any(String), 'patch.artifact_id': expect.any(String) }));
     await expect(repository.read('.factory-run-marker')).rejects.toThrow();
+  });
+
+  it('fails closed when repository mutation capability is not declared', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const prepare = workflow.nodes.find((node) => node.id === 'prepare');
+    if (prepare === undefined) throw new Error('Seed prepare node is missing.');
+    prepare.type = 'repositoryMutation';
+    prepare.config = { operations: [{ operation: 'create', path: '.factory-denied', content: 'blocked' }] };
+    prepare.unit = defaultWorkUnit('repositoryMutation');
+    const repository = await (await import('../repository/workspace.js')).RepositoryWorkspace.open(process.cwd());
+    const isolatedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, repository);
+    const run = await isolatedExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.error).toContain('repository.write');
   });
 
   it('blocks on required repository checks but allows advisory failures', async () => {
