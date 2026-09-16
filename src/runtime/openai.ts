@@ -4,6 +4,7 @@ import type { SecretBroker } from '../connections/secret-broker.js';
 export interface OpenAIModelResult {
   content: string;
   model: string;
+  latencyMs?: number;
   promptTokens?: number;
   completionTokens?: number;
   estimatedCostUsd?: number;
@@ -11,6 +12,13 @@ export interface OpenAIModelResult {
   requestId?: string;
   toolCalls?: Array<{ callId: string; name: string; arguments: string }>;
 }
+
+export type OpenAICapability = 'text' | 'structured_output' | 'streaming' | 'tools' | 'usage' | 'request_ids';
+
+/** Capabilities guaranteed by the native Responses adapter. */
+export const OPENAI_CAPABILITIES: readonly OpenAICapability[] = [
+  'text', 'structured_output', 'streaming', 'tools', 'usage', 'request_ids',
+];
 
 export type OpenAIProviderErrorCode =
   | 'authentication'
@@ -38,6 +46,8 @@ export class OpenAIProviderError extends Error {
 }
 
 export interface OpenAIClient {
+  readonly provider?: 'openai';
+  readonly capabilities?: readonly OpenAICapability[];
   chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string }): Promise<OpenAIModelResult>;
 }
 
@@ -50,6 +60,8 @@ export interface OpenAIClientOptions {
 
 /** Minimal server-side Responses API adapter; credentials never enter workflow state. */
 export class HttpOpenAIClient implements OpenAIClient {
+  public readonly provider = 'openai' as const;
+  public readonly capabilities = OPENAI_CAPABILITIES;
   private readonly baseUrl: string;
   private readonly apiKey?: string;
   private readonly secretBroker?: SecretBroker;
@@ -63,6 +75,7 @@ export class HttpOpenAIClient implements OpenAIClient {
   }
 
   public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string }): Promise<OpenAIModelResult> {
+    const startedAt = Date.now();
     const model = input.agent.model.model;
     if (model === undefined) throw new Error(`OpenAI agent "${input.agent.id}" must declare model.model.`);
     const apiKey = await this.resolveApiKey(input.agent);
@@ -106,8 +119,10 @@ export class HttpOpenAIClient implements OpenAIClient {
           ? 'authentication'
           : response.status === 429
             ? 'rate_limited'
+            : response.status === 408
+              ? 'timeout'
             : response.status >= 500 ? 'server' : 'request';
-        const detail = (await response.clone().text()).slice(0, 500);
+        const detail = (await response.clone().text()).replaceAll(apiKey, '[REDACTED]').slice(0, 500);
         lastTransient = new OpenAIProviderError(code, `OpenAI Responses request failed with status ${response.status}${detail === '' ? '.' : `: ${detail}`}`, { status: response.status });
       }
       const transient = lastTransient ?? new OpenAIProviderError('connection', 'OpenAI request could not connect to the provider.');
@@ -118,7 +133,10 @@ export class HttpOpenAIClient implements OpenAIClient {
       response = undefined;
     }
     if (response === undefined) throw lastTransient ?? new OpenAIProviderError('connection', 'OpenAI request could not connect to the provider.');
-    if (input.agent.model.streaming === true) return this.parseStream(response, model, input.agent.model.pricing);
+    if (input.agent.model.streaming === true) {
+      const result = await this.parseStream(response, model, input.agent.model.pricing);
+      return { ...result, latencyMs: Date.now() - startedAt };
+    }
     let body: {
       model?: unknown;
       output?: Array<{ type?: unknown; text?: unknown; content?: Array<{ type?: unknown; text?: unknown }>; call_id?: unknown; name?: unknown; arguments?: unknown }>;
@@ -133,6 +151,9 @@ export class HttpOpenAIClient implements OpenAIClient {
     if (body.output?.some((item) => item.type === 'refusal')) {
       throw new OpenAIProviderError('refusal', 'OpenAI declined the requested response.', { retryable: false });
     }
+    if (body.status === 'incomplete') {
+      throw new OpenAIProviderError('incomplete', 'OpenAI response ended before completion.', { retryable: true });
+    }
     const text = (body.output ?? []).flatMap((item) => {
       if (item.type === 'message') return (item.content ?? []).flatMap((part) => part.type === 'output_text' && typeof part.text === 'string' ? [part.text] : []);
       return item.type === 'output_text' && typeof item.text === 'string' ? [item.text] : [];
@@ -143,6 +164,7 @@ export class HttpOpenAIClient implements OpenAIClient {
     return {
       content: text,
       model: typeof body.model === 'string' ? body.model : model,
+      latencyMs: Date.now() - startedAt,
       ...(typeof body.usage?.input_tokens === 'number' ? { promptTokens: body.usage.input_tokens } : {}),
       ...(typeof body.usage?.output_tokens === 'number' ? { completionTokens: body.usage.output_tokens } : {}),
       ...(typeof body.status === 'string' ? { finishReason: body.status } : {}),

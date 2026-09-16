@@ -19,7 +19,9 @@ describe('HttpOpenAIClient', () => {
     }), { status: 200, headers: { 'x-request-id': 'req_1' } }));
     const secretBroker = { put: vi.fn(), get: vi.fn().mockResolvedValue('secret-key') };
     const result = await new HttpOpenAIClient({ baseUrl: 'https://api.openai.test/v1', fetcher, secretBroker }).chat({ agent: { ...agent, model: { ...agent.model, pricing: { promptPer1kUsd: 1, completionPer1kUsd: 2 } } }, goal: 'Do it', traceId: 'trace-1', signal: new AbortController().signal });
-    expect(result).toEqual({ content: 'done', model: 'gpt-5', promptTokens: 4, completionTokens: 2, estimatedCostUsd: 0.008, finishReason: 'completed', requestId: 'req_1' });
+    expect(result).toEqual(expect.objectContaining({ content: 'done', model: 'gpt-5', promptTokens: 4, completionTokens: 2, estimatedCostUsd: 0.008, finishReason: 'completed', requestId: 'req_1' }));
+    expect(result.latencyMs).toEqual(expect.any(Number));
+    expect(new HttpOpenAIClient({ apiKey: 'key' }).capabilities).toEqual(expect.arrayContaining(['streaming', 'tools', 'request_ids']));
     expect(secretBroker.get).toHaveBeenCalledWith('connections/openai');
     expect(String(fetcher.mock.calls[0]?.[1]?.headers)).not.toContain('secret-key');
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ model: 'gpt-5', store: false });
@@ -51,7 +53,8 @@ describe('HttpOpenAIClient', () => {
       goal: 'Stream it',
       signal: new AbortController().signal,
     });
-    expect(result).toEqual({ content: 'hello', model: 'gpt-5-mini', promptTokens: 3, completionTokens: 2, requestId: 'req-stream' });
+    expect(result).toEqual(expect.objectContaining({ content: 'hello', model: 'gpt-5-mini', promptTokens: 3, completionTokens: 2, requestId: 'req-stream' }));
+    expect(result.latencyMs).toEqual(expect.any(Number));
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ stream: true });
   });
 
@@ -97,6 +100,16 @@ describe('HttpOpenAIClient', () => {
       expect(error).toMatchObject({ code, status });
       expect(String(error)).not.toContain('secret-key');
     }
+    const leaking = vi.fn<typeof fetch>().mockResolvedValue(new Response('secret-key was rejected', { status: 400 }));
+    const redacted = await new HttpOpenAIClient({ apiKey: 'secret-key', fetcher: leaking }).chat({ agent: configuredAgent, goal: 'redact', signal: new AbortController().signal }).catch((caught: unknown) => caught);
+    expect(String(redacted)).not.toContain('secret-key');
+  });
+
+  it('classifies incomplete JSON responses and HTTP timeouts', async () => {
+    const incompleteFetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ status: 'incomplete', output: [] }), { status: 200 }));
+    await expect(new HttpOpenAIClient({ apiKey: 'key', fetcher: incompleteFetcher }).chat({ agent: { ...agent, model: { provider: 'openai', model: 'gpt-5' } }, goal: 'incomplete', signal: new AbortController().signal })).rejects.toMatchObject({ code: 'incomplete', retryable: true });
+    const timeoutFetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('deadline', { status: 408 }));
+    await expect(new HttpOpenAIClient({ apiKey: 'key', fetcher: timeoutFetcher }).chat({ agent: { ...agent, model: { provider: 'openai', model: 'gpt-5' } }, goal: 'timeout', signal: new AbortController().signal })).rejects.toMatchObject({ code: 'timeout', status: 408 });
   });
 
   it('retries transient provider failures within a bounded budget', async () => {
