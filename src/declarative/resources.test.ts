@@ -48,6 +48,7 @@ describe('typed resource files', () => {
     expect(result.resources.map((resource) => resource.kind)).toEqual(expect.arrayContaining(['Policy', 'Connection', 'Environment', 'Schema', 'Canvas']));
     expect(result.workflows[0]?.description).toBe('Local review');
     expect(result.workflows[0]?.nodes[1]?.config).toEqual(expect.objectContaining({ policyId: 'default', connectionId: 'github' }));
+    expect(compileResourceFiles(resources, { tenantId: 'tenant-local', projectId: 'project-local' }).workflows[0]?.description).toBe('Local review');
     expect(() => parseResourceFile({ path: 'connections/bad.connection.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Connection\nmetadata:\n  id: bad\n  version: 1\nspec:\n  connector: GitHub\n  environment: local\n  apiKey: plaintext' })).toThrow(/secret reference/);
   });
 
