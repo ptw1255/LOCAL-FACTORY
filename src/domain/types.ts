@@ -5,6 +5,7 @@ export type RunStatus =
   | 'waiting'
   | 'succeeded'
   | 'failed'
+  | 'timed_out'
   | 'cancelled';
 export type ConnectionStatus = 'healthy' | 'degraded' | 'expired';
 export type IssueLevel = 'error' | 'warning';

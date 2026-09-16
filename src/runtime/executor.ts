@@ -218,7 +218,7 @@ export class LocalWorkflowExecutor {
       if (target === undefined) {
         throw new Error('Run not found.');
       }
-      if (['succeeded', 'failed', 'cancelled'].includes(target.status)) {
+      if (['succeeded', 'failed', 'timed_out', 'cancelled'].includes(target.status)) {
         throw new Error('Completed runs cannot be cancelled.');
       }
       target.status = 'cancelled';
@@ -377,10 +377,9 @@ export class LocalWorkflowExecutor {
       if (controller.signal.aborted) {
         return;
       }
-      await this.failRun(
-        runId,
-        error instanceof Error ? error.message : 'Unknown execution failure.',
-      );
+      const message = error instanceof Error ? error.message : 'Unknown execution failure.';
+      const timedOut = error instanceof Error && 'code' in error && error.code === 'WORK_UNIT_TIMED_OUT';
+      await this.failRun(runId, message, timedOut ? 'timed_out' : 'failed');
     } finally {
       if (this.activeRuns.get(runId) === controller) {
         this.activeRuns.delete(runId);
@@ -946,14 +945,14 @@ export class LocalWorkflowExecutor {
     }
   }
 
-  private async failRun(runId: string, message: string): Promise<void> {
+  private async failRun(runId: string, message: string, status: 'failed' | 'timed_out' = 'failed'): Promise<void> {
     const completedAt = new Date();
     const failed = await this.store.mutate((state) => {
       const run = state.runs.find((candidate) => candidate.id === runId);
       if (run === undefined || run.status === 'cancelled') {
         return false;
       }
-      run.status = 'failed';
+      run.status = status;
       run.error = message;
       run.completedAt = completedAt.toISOString();
       run.durationMs =
@@ -961,7 +960,7 @@ export class LocalWorkflowExecutor {
       return true;
     });
     if (failed) {
-      await this.events.emit(runId, 'run.failed', message);
+      await this.events.emit(runId, status === 'timed_out' ? 'run.timed_out' : 'run.failed', message);
     }
   }
 }

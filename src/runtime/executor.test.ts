@@ -321,6 +321,18 @@ describe('LocalWorkflowExecutor', () => {
     expect(recorded.some((event) => event.type === 'run.failed')).toBe(false);
   });
 
+  it('records a WorkUnit timeout as a distinct terminal run state', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const prepare = workflow.nodes.find((node) => node.id === 'prepare');
+    if (prepare === undefined) throw new Error('Seed prepare node is missing.');
+    prepare.type = 'wait';
+    prepare.config = { durationMs: 1_000 };
+    prepare.unit = { ...defaultWorkUnit('wait'), timeoutMs: 10 };
+    const run = await executor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'timed_out');
+    expect((await events.list(run.id)).some((event) => event.type === 'run.timed_out')).toBe(true);
+  });
+
   it('recovers persisted queued and running executions', async () => {
     const runId = 'recoverable-run';
     await store.mutate((state) => {
