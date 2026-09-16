@@ -31,6 +31,7 @@ export function defaultWorkUnit(type: string): WorkUnitDefinition {
     outputSchema: 'any',
     timeoutMs: 60_000,
     retryAttempts: 1,
+    idempotencyKey: `${type}:v1`,
   };
 }
 
