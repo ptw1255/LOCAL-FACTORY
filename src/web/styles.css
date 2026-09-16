@@ -314,6 +314,7 @@ h1, h2, h3, p { margin-top: 0; }
 .deployment-history li { display: grid; font-size: 11px; gap: 3px; grid-template-columns: auto 1fr auto; }
 .deployment-history li span, .deployment-history li time, .deployment-history li small { color: var(--subtle); }
 .deployment-history li small { grid-column: 1 / -1; }
+.deployment-history-link { font-size: 9px; grid-column: 1 / -1; justify-self: start; }
 .panel-count { background: #8d4b4b; border-radius: 9px; color: #fff; font-size: 9px; padding: 2px 6px; }
 .panel-count.clean { background: #245541; }
 .ide-bottom-content { color: #7689a3; font-size: 11px; padding: 3px 0 10px; }

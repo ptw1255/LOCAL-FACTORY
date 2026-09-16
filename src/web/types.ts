@@ -226,6 +226,8 @@ export interface DeploymentTransition {
   fromArtifactId?: string;
   toArtifactId?: string;
   idempotencyKey?: string;
+  runId?: string;
+  correlationId?: string;
   outcome: 'succeeded' | 'failed';
   reason?: string;
 }
