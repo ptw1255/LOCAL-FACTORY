@@ -74,7 +74,10 @@ const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconNam
 
 function readView(): ViewId {
   const value = window.location.hash.replace('#/', '').split('?', 1)[0] ?? '';
-  if (value === 'runs') return 'observe';
+  // Preserve saved links from the pre-Observe Runtime route and the newer
+  // Workspace naming while keeping one canonical in-app view.
+  if (value === 'runs' || value === 'runtime') return 'observe';
+  if (value === 'workspace') return 'studio';
   return value in viewLabels ? (value as ViewId) : 'studio';
 }
 
