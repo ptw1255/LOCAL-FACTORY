@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build",
     "check:bundle": "node scripts/check-bundle-size.mjs",
+    "check:image": "node scripts/check-docker-image-size.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "demo": "tsx scripts/demo.ts",
     "factory": "tsx scripts/factory.ts",
