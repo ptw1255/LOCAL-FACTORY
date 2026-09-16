@@ -192,4 +192,51 @@ describe('coding workflow API', () => {
       expect((evidence.json() as { items: Array<{ unitId: string; status: string }> }).items.some((entry) => entry.unitId === 'commit' && entry.status === 'succeeded')).toBe(true);
     } finally { await app.close(); }
   });
+
+  it('blocks path escape and unauthorized repository pushes with inspectable evidence', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-e2e-negative-'));
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: repoRoot });
+    await execFileAsync('git', ['config', 'user.email', 'factory@example.test'], { cwd: repoRoot });
+    await execFileAsync('git', ['config', 'user.name', 'Factory Test'], { cwd: repoRoot });
+    await writeFile(path.join(repoRoot, 'README.md'), 'source');
+    await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repoRoot });
+    const repositoryWorkspace = await RepositoryWorkspace.open(repoRoot);
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-e2e-negative-state-'));
+    const store = new JsonStore(path.join(dataRoot, 'state.json'));
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-negative-e2e';
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'escape', type: 'repositoryMutation', label: 'Reject path escape', position: { x: 180, y: 0 }, config: { capabilities: ['repository.write'], operations: [{ operation: 'create', path: '../outside.txt', content: 'blocked' }] }, unit: defaultWorkUnit('repositoryMutation') },
+      { id: 'push', type: 'repositoryPush', label: 'Reject unauthorized push', position: { x: 360, y: 0 }, config: { remote: 'evil', allowedRemotes: ['origin'] }, unit: defaultWorkUnit('repositoryPush') },
+    ];
+    workflow.edges = workflow.nodes.slice(0, -1).map((node, index) => ({ id: `edge-${node.id}-${workflow.nodes[index + 1]?.id}`, source: node.id, target: workflow.nodes[index + 1]?.id ?? node.id }));
+    await store.mutate((state) => { state.workflows.push(workflow); state.workflowVersions.push(structuredClone(workflow)); });
+    const app = await createApp({ store, repositoryWorkspace, serveStatic: false });
+    try {
+      const started = await app.inject({ method: 'POST', url: `/api/workflows/${workflow.id}/runs`, payload: {} });
+      const runId = (started.json() as { id: string }).id;
+      const failed = await waitFor(app, runId, 'failed');
+      expect(String(failed.error)).toMatch(/outside workspace|path/i);
+      const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
+      const entries = (evidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items;
+      expect(entries.some((entry) => entry.unitId === 'escape' && entry.status === 'failed')).toBe(true);
+      const pushWorkflow = structuredClone(workflow);
+      pushWorkflow.id = 'workflow-unauthorized-push-e2e';
+      pushWorkflow.nodes = [
+        { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+        { id: 'push', type: 'repositoryPush', label: 'Reject unauthorized push', position: { x: 180, y: 0 }, config: { remote: 'evil', allowedRemotes: ['origin'] }, unit: defaultWorkUnit('repositoryPush') },
+      ];
+      pushWorkflow.edges = [{ id: 'edge-trigger-push', source: 'trigger', target: 'push' }];
+      await store.mutate((state) => { state.workflows.push(pushWorkflow); state.workflowVersions.push(structuredClone(pushWorkflow)); });
+      const pushStarted = await app.inject({ method: 'POST', url: `/api/workflows/${pushWorkflow.id}/runs`, payload: {} });
+      const pushRunId = (pushStarted.json() as { id: string }).id;
+      await waitFor(app, pushRunId, 'failed');
+      const pushEvidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${pushRunId}` });
+      const pushEntries = (pushEvidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items;
+      expect(pushEntries.some((entry) => entry.unitId === 'push' && entry.status === 'failed' && entry.metadata?.['repository.policy'] === 'allowedRemotes')).toBe(true);
+    } finally { await app.close(); }
+  });
 });
