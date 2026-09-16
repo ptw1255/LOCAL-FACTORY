@@ -41,6 +41,7 @@ import { GeminiClient } from '../runtime/gemini.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 import { GitHubRepositoryClient } from '../repository/github.js';
 import { DeploymentReconciler, type DeploymentRuntimeAdapter } from '../deployment/reconciler.js';
+import { toDeploymentEnvelope } from '../deployment/envelope.js';
 import type { OpenAIClient } from '../runtime/openai.js';
 import { JsonStore } from '../storage/json-store.js';
 import { PostgresStore } from '../storage/postgres-store.js';
@@ -770,7 +771,9 @@ export async function createApp(
   });
 
   app.get('/api/deployments', async (request) => {
-    return { items: await deployments.list(scopeFromRequest(request)) };
+    const items = await deployments.list(scopeFromRequest(request));
+    const format = (request.query as { format?: unknown }).format;
+    return { items: format === 'envelope' ? items.map(toDeploymentEnvelope) : items };
   });
 
   app.post<{ Body: unknown }>('/api/deployments', async (request, reply) => {
