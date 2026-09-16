@@ -10,6 +10,7 @@ describe('typed resource files', () => {
     ], { tenantId: 'tenant-local' });
     expect(result.project.id).toBe('demo');
     expect(result.workflows[0]?.agents[0]?.id).toBe('reviewer');
+    expect(result.workflows[0]?.nodes[1]).toEqual(expect.objectContaining({ sourcePath: 'workflows/review.workflow.yaml', sourceLine: 10 }));
   });
 
   it('rejects runtime state and secret values', () => {

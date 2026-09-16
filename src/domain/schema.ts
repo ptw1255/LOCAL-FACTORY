@@ -88,6 +88,8 @@ export const workflowNodeSchema = z.object({
     y: z.number().finite(),
   }),
   config: configSchema,
+  sourcePath: z.string().min(1).optional(),
+  sourceLine: z.number().int().positive().optional(),
   unit: workUnitSchema.optional(),
 });
 

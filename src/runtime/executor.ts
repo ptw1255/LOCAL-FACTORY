@@ -420,6 +420,7 @@ export class LocalWorkflowExecutor {
             'work.unit.version': nextNode.unit?.version ?? 0,
             'work.unit.input_schema': nextNode.unit?.inputSchema ?? 'unknown',
             'work.unit.output_schema': nextNode.unit?.outputSchema ?? 'unknown',
+            ...this.sourceMetadata(nextNode),
           },
         });
         try {
@@ -435,7 +436,7 @@ export class LocalWorkflowExecutor {
             nodeId: nextNode.id,
             signal: 'trace',
             spanKind: nextNode.unit?.kind === 'agent' ? 'agent' : 'chain',
-            attributes: { 'work.unit.output_schema': nextNode.unit?.outputSchema ?? 'unknown' },
+            attributes: { 'work.unit.output_schema': nextNode.unit?.outputSchema ?? 'unknown', ...this.sourceMetadata(nextNode) },
           });
           const persistedResult = await this.events.offloadPayload(runId, result, `unit:${nextNode.type}`);
           const completed = await this.completeNode(context.run.id, context.workflow, nextNode, result, persistedResult);
@@ -451,6 +452,7 @@ export class LocalWorkflowExecutor {
             attributes: {
               'work.unit.duration_ms': Date.now() - unitStartedAt,
               'work.unit.status': 'completed',
+              ...this.sourceMetadata(nextNode),
             },
           });
           await this.events.emit(runId, 'unit.duration', `${nextNode.label} duration recorded.`, {
@@ -460,6 +462,7 @@ export class LocalWorkflowExecutor {
               'metric.name': 'unit.duration_ms',
               'metric.value': Date.now() - unitStartedAt,
               'work.unit.kind': nextNode.unit?.kind ?? 'unknown',
+              ...this.sourceMetadata(nextNode),
             },
           });
         } catch (error) {
@@ -486,6 +489,7 @@ export class LocalWorkflowExecutor {
             attributes: {
               'work.unit.duration_ms': Date.now() - unitStartedAt,
               'work.unit.status': 'failed',
+              ...this.sourceMetadata(nextNode),
             },
             data: { error: error instanceof Error ? error.message : 'Unknown unit failure.' },
           });
@@ -547,6 +551,7 @@ export class LocalWorkflowExecutor {
       attributes: {
         'workflow.node.type': node.type,
         'openinference.span.kind': node.type === 'agentLoop' ? 'AGENT' : 'CHAIN',
+        ...this.sourceMetadata(node),
       },
       data: { nodeType: node.type },
     });
@@ -1160,6 +1165,13 @@ export class LocalWorkflowExecutor {
       if (Array.isArray(patchValue.changedPaths)) metadata['patch.changed_path_count'] = patchValue.changedPaths.length;
     }
     return Object.keys(metadata).length === 0 ? undefined : metadata;
+  }
+
+  private sourceMetadata(node: WorkflowNode): Record<string, string | number | boolean> {
+    return {
+      ...(node.sourcePath === undefined ? {} : { 'source.path': node.sourcePath }),
+      ...(node.sourceLine === undefined ? {} : { 'source.line': node.sourceLine }),
+    };
   }
 
   private requiresApproval(node: WorkflowNode, workflow?: WorkflowDefinition): boolean {

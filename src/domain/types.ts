@@ -62,6 +62,9 @@ export interface WorkflowNode {
   label: string;
   position: Position;
   config: Record<string, unknown>;
+  /** File-backed source location populated by the resource compiler. */
+  sourcePath?: string;
+  sourceLine?: number;
   unit?: WorkUnitDefinition;
 }
 

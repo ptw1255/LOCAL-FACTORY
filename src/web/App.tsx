@@ -56,6 +56,7 @@ const TENANT_STORAGE_KEY = 'factory.tenantId';
 const PROJECT_STORAGE_KEY = 'factory.projectId';
 const STUDIO_MODE_STORAGE_PREFIX = 'factory.studioMode.';
 const BOTTOM_PANEL_STORAGE_PREFIX = 'factory.bottomPanel.';
+const STUDIO_FILE_STORAGE_PREFIX = 'factory.studioFile.';
 
 const nodeTypes = { workflow: WorkflowNodeCard };
 const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName }> = {
@@ -83,6 +84,18 @@ function readObserveRunId(): string | null {
 function readStudioMode(projectId: string): 'files' | 'tree' | 'canvas' {
   const value = window.localStorage.getItem(`${STUDIO_MODE_STORAGE_PREFIX}${projectId}`);
   return value === 'tree' || value === 'canvas' ? value : 'files';
+}
+
+function readStudioFile(projectId: string): string {
+  const query = window.location.hash.split('?', 2)[1];
+  const fromHash = query === undefined ? null : new URLSearchParams(query).get('file');
+  return fromHash?.trim() || window.sessionStorage.getItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`) || 'project.yaml';
+}
+
+function readStudioLine(): number | undefined {
+  const query = window.location.hash.split('?', 2)[1];
+  const value = query === undefined ? undefined : Number(new URLSearchParams(query).get('line'));
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 function readBottomPanelState(projectId: string): { open: boolean; tab: 'problems' | 'output' } {
@@ -1203,7 +1216,7 @@ function OperationalTree({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [files, setFiles] = useState<ProjectFileRecord[]>([]);
-  const [selectedPath, setSelectedPath] = useState('project.yaml');
+  const [selectedPath, setSelectedPath] = useState(() => readStudioFile(projectId));
   const [fileSearch, setFileSearch] = useState('');
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
   const [bottomPanelState] = useState(() => readBottomPanelState(projectId));
@@ -1250,15 +1263,18 @@ function OperationalTree({
   async function selectFile(file: ProjectFileRecord) {
     if (dirty && selectedPath !== file.path && !window.confirm('Discard unsaved changes in the current file?')) return;
     setSelectedPath(file.path);
+    window.sessionStorage.setItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`, file.path);
     try {
       const loaded = await api.projectFile(projectId, file.path);
       if (loaded.content !== undefined) {
         onSourceLoaded(loaded.content);
+        const sourceLine = readStudioLine();
         const problem = pendingProblem.current;
         pendingProblem.current = null;
-        if (problem !== null) window.setTimeout(() => {
-          editorRef.current?.revealLineInCenter(problem.line);
-          editorRef.current?.setPosition({ lineNumber: problem.line, column: problem.column });
+        if (problem !== null || sourceLine !== undefined) window.setTimeout(() => {
+          const line = problem?.line ?? sourceLine ?? 1;
+          editorRef.current?.revealLineInCenter(line);
+          editorRef.current?.setPosition({ lineNumber: line, column: problem?.column ?? 1 });
           editorRef.current?.focus();
         }, 0);
       }
@@ -1516,6 +1532,13 @@ function RunsView() {
     ? events
     : events.filter((event) => event.signal === (observeTab === 'logs' ? 'log' : observeTab === 'traces' ? 'trace' : 'metric'));
 
+  function openSource(path: string, line?: number): void {
+    const projectId = selectedRun?.projectId ?? window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? '';
+    if (projectId !== '') window.sessionStorage.setItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`, path);
+    const query = new URLSearchParams({ file: path, ...(line === undefined ? {} : { line: String(line) }) });
+    window.location.hash = `/studio?${query.toString()}`;
+  }
+
   async function runAction(action: 'approve' | 'deny' | 'expire' | 'supersede' | 'cancel') {
     if (selectedRun === null) return;
     setActionLoading(true);
@@ -1653,6 +1676,7 @@ function RunsView() {
                           <div><strong>{event.type.replaceAll('_', ' ')}</strong><time>{formatDate(event.timestamp)}</time></div>
                           <p>{event.message}</p>
                           {event.nodeId === undefined ? null : <span className="node-reference"><Icon name="nodes" size={13} /> {event.nodeId}</span>}
+                          {typeof event.attributes?.['source.path'] === 'string' ? <button className="source-link" onClick={() => openSource(String(event.attributes?.['source.path']), typeof event.attributes?.['source.line'] === 'number' ? event.attributes['source.line'] : undefined)} type="button"><Icon name="code" size={12} /> {String(event.attributes['source.path'])}{typeof event.attributes?.['source.line'] === 'number' ? `:${event.attributes['source.line']}` : ''}</button> : null}
                           {event.data === undefined || Object.keys(event.data).length === 0 ? null : <pre>{JSON.stringify(event.data, null, 2)}</pre>}
                         </div>
                       </li>

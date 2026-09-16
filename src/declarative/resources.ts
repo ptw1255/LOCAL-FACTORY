@@ -74,6 +74,12 @@ function lineForKey(source: string, key: string): number {
   return index < 0 ? 1 : index + 1;
 }
 
+function lineForListId(source: string, id: string, fallback: number): number {
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const line = source.split(/\r?\n/).findIndex((candidate) => new RegExp(`^\\s*-\\s+id:\\s*['\"]?${escaped}['\"]?\\s*$`).test(candidate));
+  return line < 0 ? fallback : line + 1;
+}
+
 export function parseResourceFile(resource: ResourceFile): z.infer<typeof resourceEnvelopeSchema> {
   const document = parseDocument(resource.source);
   if (document.errors.length > 0) {
@@ -138,7 +144,23 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
     workflows,
   };
   try {
-    return parseProjectYaml(JSON.stringify(source), scope);
+    const compiled = parseProjectYaml(JSON.stringify(source), scope);
+    const workflowResources = new Map<string, { path: string; source: string }>();
+    envelopes.forEach((resource, index) => {
+      const sourceResource = resources[index];
+      if (resource.kind === 'Workflow' && sourceResource !== undefined) workflowResources.set(resource.metadata.id, sourceResource);
+    });
+    for (const workflow of compiled.workflows) {
+      const sourceResource = workflowResources.get(workflow.id);
+      if (sourceResource === undefined) continue;
+      const sourcePath = sourceResource.path;
+      const fallbackLine = lineForKey(sourceResource.source, 'steps');
+      for (const node of workflow.nodes) {
+        node.sourcePath = sourcePath;
+        node.sourceLine = lineForListId(sourceResource.source, node.id, fallbackLine);
+      }
+    }
+    return compiled;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'resource compilation failed';
     // Preserve the authored file as the diagnostic anchor while the aggregate

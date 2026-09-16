@@ -57,6 +57,8 @@ export interface WorkflowNode {
   label: string;
   position: Position;
   config: Record<string, unknown>;
+  sourcePath?: string;
+  sourceLine?: number;
   unit?: WorkUnitDefinition;
 }
 

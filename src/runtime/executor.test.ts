@@ -75,11 +75,13 @@ describe('LocalWorkflowExecutor', () => {
       required: ['request'],
       properties: { request: { type: 'string', minLength: 3 } },
     };
+    workflow.nodes = workflow.nodes.map((node) => ({ ...node, sourcePath: 'workflows/input.workflow.yaml', sourceLine: 12 }));
     const run = await executor.start(workflow, { input: { request: 'Fix login' }, environment: 'staging', deploymentId: 'deployment-input' });
     expect(run).toEqual(expect.objectContaining({ environment: 'staging', deploymentId: 'deployment-input', input: { request: 'Fix login' }, inputHash: expect.any(String) }));
     await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
     const completed = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id));
     expect(completed?.unitOutputs.trigger).toEqual({ request: 'Fix login' });
+    expect((await events.list(run.id)).find((event) => event.type === 'unit.started')?.attributes).toEqual(expect.objectContaining({ 'source.path': 'workflows/input.workflow.yaml', 'source.line': 12 }));
     await expect(executor.start(workflow, { input: { request: 'x' } })).rejects.toThrow('Workflow input is invalid');
   });
 
