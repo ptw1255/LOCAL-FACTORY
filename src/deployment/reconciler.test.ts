@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed.js';
+import type { OperationEvidence, RunRecord } from '../domain/types.js';
 import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
 import { DeploymentReconciler, type DeploymentRuntimeAdapter } from './reconciler.js';
@@ -203,6 +204,59 @@ describe('DeploymentReconciler', () => {
     expect(rolledBack.artifactId).toBe(artifacts[0]!.id);
     expect(rolledBack.healthyArtifactIds).toEqual(expect.arrayContaining([artifacts[0]!.id, artifacts[1]!.id]));
     await expect(reconciler.action(deployment.id, scope, 'rollback', { artifactId: artifacts[2]!.id })).rejects.toThrow('prior healthy artifact');
+  });
+
+  it('gates production promotion on a succeeded run with patch and CI evidence', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-production-gate', tenantId: scope.tenantId, projectId: scope.projectId, environment: 'production', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const run: RunRecord = {
+      tenantId: scope.tenantId,
+      projectId: scope.projectId,
+      id: 'run-production-gate',
+      workflowId: seedWorkflow.id,
+      workflowName: seedWorkflow.name,
+      workflowVersion: seedWorkflow.version,
+      artifactId: artifact.id,
+      traceId: 'a'.repeat(32),
+      status: 'succeeded',
+      startedAt: new Date().toISOString(),
+      costUsd: 0,
+      humanTouchpoints: 1,
+      workflowDefinition: structuredClone(seedWorkflow),
+      completedNodeIds: [],
+      activatedNodeIds: [],
+      approvedNodeIds: [],
+      approvedNodeHashes: {},
+      pendingApprovalHashes: {},
+      unitOutputs: {},
+      ciCheckpoints: {},
+    };
+    await store.mutate((state) => { state.runs.push(run); });
+    const evidence = (operation: string, metadata?: Record<string, string | number | boolean>): OperationEvidence => ({
+      id: `evidence-${operation}`,
+      tenantId: scope.tenantId,
+      projectId: scope.projectId,
+      runId: run.id,
+      unitId: operation,
+      operation,
+      attempt: 1,
+      status: 'succeeded',
+      occurredAt: new Date().toISOString(),
+      ...(metadata === undefined ? {} : { metadata }),
+    });
+    await store.appendEvidence(evidence('repositoryPatch'));
+    await store.appendEvidence(evidence('repositoryCi', { 'ci.status': 'success' }));
+
+    const reconciler = new DeploymentReconciler(store);
+    const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'production', artifactId: artifact.id, trigger: 'manual' });
+    await expect(reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifact.id })).rejects.toThrow('require a successful coding-workflow run');
+    const promoted = await reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifact.id, runId: run.id });
+    expect(promoted).toMatchObject({ observedState: 'live', health: 'healthy', lastVerifiedRunId: run.id });
   });
 
   it('correlates deployment transitions with durable evidence and telemetry', async () => {
