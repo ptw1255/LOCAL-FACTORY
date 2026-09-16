@@ -61,4 +61,30 @@ describe('OtlpHttpExporter', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('exposes export failures as health state without rejecting the workflow call', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('collector unavailable'));
+    vi.stubGlobal('fetch', fetchMock);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const exporter = new OtlpHttpExporter('http://collector:4318', {}, { signals: ['trace'] });
+
+    await expect(exporter.export(baseEvent)).resolves.toBeUndefined();
+    expect(exporter.health()).toMatchObject({ status: 'degraded', failureCount: 1, lastErrorAt: expect.any(String) });
+    expect(warning).toHaveBeenCalled();
+    warning.mockRestore();
+  });
+
+  it('recovers health after a later successful export', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('collector unavailable'))
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const exporter = new OtlpHttpExporter('http://collector:4318', {}, { signals: ['trace'] });
+
+    await exporter.export(baseEvent);
+    await exporter.export(baseEvent);
+    expect(exporter.health()).toMatchObject({ status: 'degraded', failureCount: 1, lastSuccessAt: expect.any(String) });
+    vi.restoreAllMocks();
+  });
 });

@@ -216,6 +216,7 @@ export async function createApp(
       retentionHours,
       evidenceRetentionHours: evidenceRetentionHours ?? null,
       otlpExportEnabled: exporter !== undefined,
+      exporterHealth: events.exporterHealth() ?? null,
       phoenixConfigured: exporter !== undefined && phoenixUiUrl !== undefined,
       phoenixUiUrl: phoenixUiUrl ?? null,
     },

@@ -6,6 +6,14 @@ export interface TelemetryExporter {
   export(event: RunEvent): Promise<void>;
   prune?(traceIds: string[]): Promise<void>;
   close?(): Promise<void>;
+  health?(): TelemetryExporterHealth;
+}
+
+export interface TelemetryExporterHealth {
+  status: 'healthy' | 'degraded';
+  failureCount: number;
+  lastErrorAt?: string;
+  lastSuccessAt?: string;
 }
 
 interface OtlpAttribute {
@@ -109,6 +117,9 @@ export class OtlpHttpExporter implements TelemetryExporter {
   private readonly headers: Record<string, string>;
   private readonly deleteTraces: boolean;
   private readonly signals: Set<RunEvent['signal']>;
+  private failureCount = 0;
+  private lastErrorAt?: string;
+  private lastSuccessAt?: string;
 
   public constructor(
     endpoint: string,
@@ -139,10 +150,22 @@ export class OtlpHttpExporter implements TelemetryExporter {
       if (!response.ok) {
         throw new Error(`OTLP export failed with HTTP ${response.status}.`);
       }
+      this.lastSuccessAt = new Date().toISOString();
     } catch (error) {
+      this.failureCount += 1;
+      this.lastErrorAt = new Date().toISOString();
       // Telemetry must never stop a workflow run. Callers may observe this via their logger.
       console.warn('[telemetry] OTLP export failed', error);
     }
+  }
+
+  public health(): TelemetryExporterHealth {
+    return {
+      status: this.failureCount === 0 ? 'healthy' : 'degraded',
+      failureCount: this.failureCount,
+      ...(this.lastErrorAt === undefined ? {} : { lastErrorAt: this.lastErrorAt }),
+      ...(this.lastSuccessAt === undefined ? {} : { lastSuccessAt: this.lastSuccessAt }),
+    };
   }
 
   public async prune(traceIds: string[]): Promise<void> {
@@ -174,5 +197,22 @@ export class CompositeTelemetryExporter implements TelemetryExporter {
 
   public async close(): Promise<void> {
     await Promise.all(this.exporters.map((exporter) => exporter.close?.()));
+  }
+
+  public health(): TelemetryExporterHealth {
+    const health = this.exporters.map((exporter) => exporter.health?.()).filter((value): value is TelemetryExporterHealth => value !== undefined);
+    const latest = (key: 'lastErrorAt' | 'lastSuccessAt'): string | undefined => health
+      .map((value) => value[key])
+      .filter((value): value is string => value !== undefined)
+      .sort()
+      .at(-1);
+    const lastErrorAt = latest('lastErrorAt');
+    const lastSuccessAt = latest('lastSuccessAt');
+    return {
+      status: health.some((value) => value.status === 'degraded') ? 'degraded' : 'healthy',
+      failureCount: health.reduce((total, value) => total + value.failureCount, 0),
+      ...(lastErrorAt === undefined ? {} : { lastErrorAt }),
+      ...(lastSuccessAt === undefined ? {} : { lastSuccessAt }),
+    };
   }
 }
