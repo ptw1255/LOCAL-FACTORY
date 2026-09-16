@@ -109,6 +109,28 @@ describe('LocalWorkflowExecutor', () => {
     );
     expect(completed?.humanTouchpoints).toBe(1);
     expect(completed?.completedNodeIds).toContain('approval');
+    const approval = await store.read((state) => state.approvals.find((candidate) => candidate.runId === run.id && candidate.nodeId === 'approval'));
+    expect(approval).toEqual(expect.objectContaining({ decision: 'approved', bindingHash: expect.stringMatching(/^[a-f0-9]{64}$/) }));
+  });
+
+  it('records denial as a terminal approval decision', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const output = workflow.nodes.find((node) => node.id === 'output');
+    if (output === undefined) throw new Error('Seed output node is missing.');
+    workflow.nodes.splice(workflow.nodes.indexOf(output), 0, {
+      id: 'approval-deny', type: 'approval', label: 'Deny output', position: { x: 1_020, y: 180 }, config: {}, unit: defaultWorkUnit('approval'),
+    });
+    const incoming = workflow.edges.find((edge) => edge.target === 'output');
+    if (incoming === undefined) throw new Error('Seed output edge is missing.');
+    incoming.target = 'approval-deny';
+    workflow.edges.push({ id: 'approval-deny-output', source: 'approval-deny', target: 'output' });
+    const run = await executor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'waiting');
+    await executor.deny(run.id, { actor: 'test-operator', reason: 'Not ready.' });
+    const denied = await store.read((state) => ({ run: state.runs.find((candidate) => candidate.id === run.id), approval: state.approvals.find((candidate) => candidate.runId === run.id) }));
+    expect(denied.run?.status).toBe('failed');
+    expect(denied.run?.error).toBe('Not ready.');
+    expect(denied.approval).toEqual(expect.objectContaining({ decision: 'denied', actor: 'test-operator', reason: 'Not ready.' }));
   });
 
   it('runs deterministic code units before downstream work', async () => {
