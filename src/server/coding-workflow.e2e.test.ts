@@ -110,7 +110,8 @@ describe('coding workflow API', () => {
     await execFileAsync('git', ['config', 'user.email', 'factory@example.test'], { cwd: repoRoot });
     await execFileAsync('git', ['config', 'user.name', 'Factory Test'], { cwd: repoRoot });
     await writeFile(path.join(repoRoot, 'README.md'), 'source');
-    await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot });
+    await writeFile(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'coding-fixture', scripts: { test: `node -e "process.stdout.write('fixture-test-ok')"` } }));
+    await execFileAsync('git', ['add', 'README.md', 'package.json'], { cwd: repoRoot });
     await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repoRoot });
     const baseRevision = await new Promise<string>((resolve, reject) => execFile('git', ['rev-parse', 'HEAD'], { cwd: repoRoot }, (error, stdout) => error === null ? resolve(stdout.trim()) : reject(error)));
     const repositoryWorkspace = await RepositoryWorkspace.open(repoRoot);
@@ -128,11 +129,12 @@ describe('coding workflow API', () => {
     workflow.nodes = [
       { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
       { id: 'mutate', type: 'repositoryMutation', label: 'Edit', position: { x: 180, y: 0 }, config: { capabilities: ['repository.write'], requiresApproval: true, operations: [{ operation: 'replace', path: 'README.md', content: 'generated' }] }, unit: defaultWorkUnit('repositoryMutation') },
-      { id: 'branch', type: 'repositoryBranch', label: 'Branch', position: { x: 360, y: 0 }, config: { requiresApproval: true, branch: 'factory/change', baseRevision }, unit: defaultWorkUnit('repositoryBranch') },
-      { id: 'commit', type: 'repositoryCommit', label: 'Commit', position: { x: 540, y: 0 }, config: { requiresApproval: true, message: 'Apply generated change', paths: ['README.md'] }, unit: defaultWorkUnit('repositoryCommit') },
-      { id: 'pr', type: 'repositoryPullRequest', label: 'Open PR', position: { x: 720, y: 0 }, config: { requiresApproval: true, title: 'Generated change', body: 'What: update README\\nWhy: verify factory delivery', head: 'factory/change', base: 'main' }, unit: defaultWorkUnit('repositoryPullRequest') },
-      { id: 'ci', type: 'repositoryCi', label: 'Verify CI', position: { x: 900, y: 0 }, config: { ref: baseRevision, required: ['test'], timeoutMs: 500, intervalMs: 10 }, unit: defaultWorkUnit('repositoryCi') },
-      { id: 'output', type: 'output', label: 'Complete', position: { x: 1080, y: 0 }, config: { value: 'delivered' }, unit: defaultWorkUnit('output') },
+      { id: 'check', type: 'repositoryCheck', label: 'Run tests', position: { x: 360, y: 0 }, config: { command: 'npm test' }, unit: defaultWorkUnit('repositoryCheck') },
+      { id: 'branch', type: 'repositoryBranch', label: 'Branch', position: { x: 540, y: 0 }, config: { requiresApproval: true, branch: 'factory/change', baseRevision }, unit: defaultWorkUnit('repositoryBranch') },
+      { id: 'commit', type: 'repositoryCommit', label: 'Commit', position: { x: 720, y: 0 }, config: { requiresApproval: true, message: 'Apply generated change', paths: ['README.md'] }, unit: defaultWorkUnit('repositoryCommit') },
+      { id: 'pr', type: 'repositoryPullRequest', label: 'Open PR', position: { x: 900, y: 0 }, config: { requiresApproval: true, title: 'Generated change', body: 'What: update README\\nWhy: verify factory delivery', head: 'factory/change', base: 'main' }, unit: defaultWorkUnit('repositoryPullRequest') },
+      { id: 'ci', type: 'repositoryCi', label: 'Verify CI', position: { x: 1080, y: 0 }, config: { ref: baseRevision, required: ['test'], timeoutMs: 500, intervalMs: 10 }, unit: defaultWorkUnit('repositoryCi') },
+      { id: 'output', type: 'output', label: 'Complete', position: { x: 1260, y: 0 }, config: { value: 'delivered' }, unit: defaultWorkUnit('output') },
     ];
     workflow.edges = workflow.nodes.slice(0, -1).map((node, index) => ({ id: `edge-${node.id}-${workflow.nodes[index + 1]?.id}`, source: node.id, target: workflow.nodes[index + 1]?.id ?? node.id }));
     await store.mutate((state) => { state.workflows.push(workflow); state.workflowVersions.push(structuredClone(workflow)); });
@@ -155,6 +157,7 @@ describe('coding workflow API', () => {
       expect(githubFetcher).toHaveBeenCalledTimes(4);
       const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
       const operations = (evidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items;
+      expect(operations.some((entry) => entry.unitId === 'check' && entry.status === 'succeeded' && entry.metadata?.['check.exit_code'] === 0)).toBe(true);
       expect(operations.some((entry) => entry.unitId === 'branch' && entry.status === 'succeeded' && typeof entry.metadata?.['repository.branch'] === 'string' && typeof entry.metadata?.['repository.revision'] === 'string')).toBe(true);
       expect(operations.some((entry) => entry.unitId === 'commit' && entry.status === 'succeeded' && typeof entry.metadata?.['repository.revision'] === 'string')).toBe(true);
       expect(operations.some((entry) => entry.unitId === 'commit' && entry.status === 'succeeded')).toBe(true);
