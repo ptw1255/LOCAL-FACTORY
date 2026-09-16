@@ -1246,7 +1246,7 @@ function RunsView() {
     ? events
     : events.filter((event) => event.signal === (observeTab === 'logs' ? 'log' : observeTab === 'traces' ? 'trace' : 'metric'));
 
-  async function runAction(action: 'approve' | 'deny' | 'cancel') {
+  async function runAction(action: 'approve' | 'deny' | 'expire' | 'cancel') {
     if (selectedRun === null) return;
     setActionLoading(true);
     setActionError(null);
@@ -1256,7 +1256,9 @@ function RunsView() {
           ? await api.approveRun(selectedRun.id)
           : action === 'deny'
             ? await api.denyRun(selectedRun.id)
-            : await api.cancelRun(selectedRun.id);
+            : action === 'expire'
+              ? await api.expireRun(selectedRun.id)
+              : await api.cancelRun(selectedRun.id);
       setSelectedRun(updated);
       await loadRuns(true);
     } catch (actionFailure) {
@@ -1328,6 +1330,8 @@ function RunsView() {
                         <Icon name="check" /> {actionLoading ? 'Updating…' : 'Approve'}
                       </button><button className="button secondary" disabled={actionLoading} onClick={() => void runAction('deny')} type="button">
                         <Icon name="close" /> {actionLoading ? 'Updating…' : 'Deny'}
+                      </button><button className="button ghost" disabled={actionLoading} onClick={() => { if (window.confirm('Expire this approval?')) void runAction('expire'); }} type="button">
+                        {actionLoading ? 'Updating…' : 'Expire'}
                       </button></>
                     ) : null}
                     {['queued', 'running', 'waiting'].includes(selectedRun.status) ? (

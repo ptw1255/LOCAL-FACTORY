@@ -216,6 +216,30 @@ export class LocalWorkflowExecutor {
     return run;
   }
 
+  public async expire(runId: string, options: { actor?: string; reason?: string } = {}): Promise<RunRecord> {
+    const run = await this.store.mutate((state) => {
+      const target = state.runs.find((candidate) => candidate.id === runId);
+      if (target === undefined) throw new Error('Run not found.');
+      if (target.status !== 'waiting') throw new Error('Only waiting runs can expire an approval.');
+      const waitingNode = target.workflowDefinition.nodes.find((node) => this.requiresApproval(node) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
+      if (waitingNode === undefined) throw new Error('No approval node is waiting.');
+      const approval = state.approvals.find((candidate) => candidate.runId === runId && candidate.nodeId === waitingNode.id && candidate.decision === 'pending');
+      if (approval === undefined) throw new Error('Approval record is missing or no longer pending.');
+      const now = new Date().toISOString();
+      approval.decision = 'expired';
+      approval.actor = options.actor?.trim() || 'local-operator';
+      approval.reason = options.reason?.trim() || 'Approval expired by operator.';
+      approval.decidedAt = now;
+      target.status = 'failed';
+      target.error = approval.reason;
+      target.completedAt = now;
+      delete target.pendingApprovalHashes[waitingNode.id];
+      return target;
+    });
+    await this.events.emit(runId, 'approval.expired', 'Workflow approval expired.', { severityText: 'WARN' });
+    return run;
+  }
+
   public async cancel(runId: string): Promise<RunRecord> {
     const completedAt = new Date();
     let cancelledApproval = false;
