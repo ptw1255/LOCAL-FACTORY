@@ -909,6 +909,7 @@ export class LocalWorkflowExecutor {
     }
     if (typeof value.number === 'number') metadata['pull_request.number'] = value.number;
     if (typeof value.url === 'string') metadata['provider.url'] = value.url;
+    if (typeof value.requestId === 'string') metadata['provider.request_id'] = value.requestId;
     if (typeof value.state === 'string') metadata['pull_request.state'] = value.state;
     if (typeof value.ref === 'string') metadata['ci.ref'] = value.ref;
     if (typeof value.status === 'string') metadata['ci.status'] = value.status;
