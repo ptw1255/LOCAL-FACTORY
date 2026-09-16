@@ -8,4 +8,22 @@ describe('GitHubRepositoryClient', () => {
     expect(result).toMatchObject({ number: 7, head: 'feature', base: 'main' });
     expect(String(fetcher.mock.calls[0]?.[1]?.body)).not.toContain('secret-token');
   });
+
+  it('polls check runs into a normalized terminal result', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'queued', conclusion: null }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'completed', conclusion: 'success', html_url: 'https://github.com/example/repo/actions/runs/1' }] }), { status: 200 }));
+    const client = new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher });
+    const result = await client.waitForChecks({ ref: 'abc123', required: ['test'], intervalMs: 10, timeoutMs: 200 });
+    expect(result.status).toBe('success');
+    expect(result.checks[0]).toMatchObject({ name: 'test', conclusion: 'success' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses an open pull request during an idempotent retry', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify([{ number: 7, html_url: 'https://github.com/example/repo/pull/7', head: { ref: 'feature' }, base: { ref: 'main' }, state: 'open' }]), { status: 200 }));
+    const result = await new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher }).createOrGetPullRequest({ title: 'What', body: 'Why', head: 'feature', base: 'main' });
+    expect(result.number).toBe(7);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });

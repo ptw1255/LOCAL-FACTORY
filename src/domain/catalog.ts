@@ -16,6 +16,11 @@ const unitKinds: Record<string, WorkUnitKind> = {
   repositoryCheck: 'connector',
   repositoryPatch: 'connector',
   repositoryMutation: 'connector',
+  repositoryBranch: 'connector',
+  repositoryCommit: 'connector',
+  repositoryPush: 'connector',
+  repositoryPullRequest: 'connector',
+  repositoryCi: 'connector',
 };
 
 export function defaultWorkUnit(type: string): WorkUnitDefinition {
@@ -134,6 +139,41 @@ export const nodeCatalog: NodeCatalogItem[] = [
     category: 'Repository',
     description: 'Apply explicitly declared file operations inside the bounded run workspace.',
     defaultConfig: { operations: [] },
+  },
+  {
+    type: 'repositoryBranch',
+    label: 'Create repository branch',
+    category: 'Repository',
+    description: 'Create a branch from the exact approved base revision.',
+    defaultConfig: { branch: 'factory/change', baseRevision: '' },
+  },
+  {
+    type: 'repositoryCommit',
+    label: 'Commit repository patch',
+    category: 'Repository',
+    description: 'Commit selected changed paths in the isolated workspace.',
+    defaultConfig: { message: 'Apply workflow change', paths: [] },
+  },
+  {
+    type: 'repositoryPush',
+    label: 'Push repository branch',
+    category: 'Repository',
+    description: 'Push a branch to an allow-listed remote.',
+    defaultConfig: { remote: 'origin', branch: '' },
+  },
+  {
+    type: 'repositoryPullRequest',
+    label: 'Open pull request',
+    category: 'Repository',
+    description: 'Open an auditable review request from the pushed branch.',
+    defaultConfig: { title: '', body: '', head: '', base: 'main', requiresApproval: true },
+  },
+  {
+    type: 'repositoryCi',
+    label: 'Observe repository CI',
+    category: 'Repository',
+    description: 'Poll required GitHub checks and route the terminal result.',
+    defaultConfig: { ref: '', required: [], timeoutMs: 120000, intervalMs: 2000 },
   },
 ];
 

@@ -172,6 +172,8 @@ export interface RunRecord {
   completedNodeIds: string[];
   activatedNodeIds: string[];
   approvedNodeIds: string[];
+  approvedNodeHashes: Record<string, string>;
+  pendingApprovalHashes: Record<string, string>;
   unitOutputs: Record<string, unknown>;
 }
 
@@ -192,6 +194,25 @@ export interface RunEvent {
   severityText?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
   attributes?: Record<string, string | number | boolean>;
   data?: Record<string, unknown>;
+}
+
+export type OperationEvidenceStatus = 'started' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
+
+/** Durable, redacted record of a unit operation; retained independently of telemetry. */
+export interface OperationEvidence {
+  id: string;
+  tenantId?: string;
+  projectId?: string;
+  runId: string;
+  unitId: string;
+  operation: string;
+  attempt: number;
+  status: OperationEvidenceStatus;
+  occurredAt: string;
+  inputHash?: string;
+  outputHash?: string;
+  error?: string;
+  metadata?: Record<string, string | number | boolean>;
 }
 
 export interface ConnectionRecord {
@@ -257,4 +278,5 @@ export interface PlatformState {
   proposals: AgentProposal[];
   files: ProjectFileRecord[];
   artifacts: ArtifactRecord[];
+  evidence: OperationEvidence[];
 }

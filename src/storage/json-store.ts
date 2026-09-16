@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { createSeedState } from '../domain/seed.js';
-import type { PlatformState, RunEvent } from '../domain/types.js';
+import type { OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
 import { normalizePlatformState, type PlatformStore, type StateMutation } from './store.js';
 
 export class JsonStore implements PlatformStore {
@@ -40,6 +40,18 @@ export class JsonStore implements PlatformStore {
     await this.mutate((state) => {
       state.events.push(event);
     });
+  }
+
+  public async appendEvidence(evidence: OperationEvidence): Promise<void> {
+    await this.mutate((state) => {
+      if (!state.evidence.some((candidate) => candidate.id === evidence.id)) state.evidence.push(evidence);
+    });
+  }
+
+  public listEvidence(runId?: string): Promise<OperationEvidence[]> {
+    return this.read((state) => state.evidence
+      .filter((entry) => runId === undefined || entry.runId === runId)
+      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)));
   }
 
   public async pruneEvents(before: string): Promise<number> {

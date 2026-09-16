@@ -56,6 +56,22 @@ export interface WorkUnitDefinition {
   idempotencyKey?: string;
 }
 
+export interface OperationEvidence {
+  id: string;
+  tenantId?: string;
+  projectId?: string;
+  runId: string;
+  unitId: string;
+  operation: string;
+  attempt: number;
+  status: 'started' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
+  occurredAt: string;
+  inputHash?: string;
+  outputHash?: string;
+  error?: string;
+  metadata?: Record<string, string | number | boolean>;
+}
+
 export interface AgentDefinition {
   id: string;
   version: number;

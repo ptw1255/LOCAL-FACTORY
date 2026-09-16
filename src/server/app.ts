@@ -118,10 +118,10 @@ export async function createApp(
   const repositoryWorkspace = process.env.REPOSITORY_WORKSPACE === undefined
     ? undefined
     : await RepositoryWorkspace.open(process.env.REPOSITORY_WORKSPACE);
-  const executor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace);
   const githubRepository = process.env.GITHUB_TOKEN !== undefined && process.env.GITHUB_REPOSITORY_OWNER !== undefined && process.env.GITHUB_REPOSITORY_NAME !== undefined
     ? new GitHubRepositoryClient({ token: process.env.GITHUB_TOKEN, owner: process.env.GITHUB_REPOSITORY_OWNER, repo: process.env.GITHUB_REPOSITORY_NAME })
     : undefined;
+  const executor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace, githubRepository);
   const ollamaAgents = await store.read((state) => state.workflows.flatMap((workflow) => workflow.agents));
   if (ollamaAgents.some((agent) => agent.model.provider?.toLowerCase() === 'ollama' && agent.model.provisioning?.mode === 'pull-on-start')) {
     void ollama.provision(ollamaAgents).catch((error: unknown) => app.log.warn({ error }, 'Ollama model provisioning did not complete; execution will retry on demand.'));
@@ -614,6 +614,13 @@ export async function createApp(
   app.get<{ Querystring: { runId?: string } }>('/api/events', async (request) => {
     const scope = scopeFromRequest(request);
     return { items: (await events.list(request.query.runId)).filter((event) => inScope(event, scope)) };
+  });
+
+  app.get<{ Querystring: { runId?: string } }>('/api/evidence', async (request) => {
+    const scope = scopeFromRequest(request);
+    return {
+      items: (await events.listEvidence(request.query.runId)).filter((entry) => inScope(entry, scope)),
+    };
   });
 
   app.get<{

@@ -220,10 +220,12 @@ describe('LocalWorkflowExecutor', () => {
         costUsd: 0,
         humanTouchpoints: 0,
         workflowDefinition: structuredClone(seedWorkflow),
-        completedNodeIds: [],
-        activatedNodeIds: ['trigger'],
-        approvedNodeIds: [],
-        unitOutputs: {},
+    completedNodeIds: [],
+    activatedNodeIds: ['trigger'],
+    approvedNodeIds: [],
+    approvedNodeHashes: {},
+    pendingApprovalHashes: {},
+    unitOutputs: {},
       });
     });
 

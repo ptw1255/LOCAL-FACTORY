@@ -17,6 +17,7 @@ export type RepositoryMutation =
   | { operation: 'delete'; path: string; expectedSha256?: string }
   | { operation: 'rename'; path: string; newPath: string; expectedSha256?: string };
 export interface MutationResult { operation: RepositoryMutation['operation']; path: string; newPath?: string; sha256?: string }
+export interface GitRevisionResult { branch: string; revision: string }
 
 function truncate(value: string): string { return value.length > MAX_OUTPUT ? `${value.slice(0, MAX_OUTPUT)}\n… output truncated` : value; }
 
@@ -62,7 +63,7 @@ export class RepositoryWorkspace {
   }
 
   public async diff(): Promise<string> {
-    const result = await execFileAsync('git', ['-C', this.root, 'diff', '--no-ext-diff', '--'], { maxBuffer: MAX_OUTPUT * 2 });
+    const result = await execFileAsync('git', ['-C', this.root, 'diff', '--no-ext-diff', '--'], { maxBuffer: MAX_OUTPUT * 16 });
     return truncate(`${result.stdout}${result.stderr}`);
   }
 
@@ -151,6 +152,44 @@ export class RepositoryWorkspace {
     }
   }
 
+  public async createBranch(branch: string, baseRevision: string): Promise<GitRevisionResult> {
+    this.assertWritableRepository();
+    this.assertBranchName(branch);
+    const current = await this.revision();
+    if (current !== baseRevision) throw new Error(`Repository base revision changed from ${baseRevision} to ${current}.`);
+    await this.git(['switch', '-c', branch]);
+    return { branch, revision: await this.revision() };
+  }
+
+  public async commit(message: string, paths: string[] = []): Promise<GitRevisionResult> {
+    this.assertWritableRepository();
+    if (message.trim() === '') throw new Error('A commit message is required.');
+    const selected = paths.length === 0 ? await this.changedPaths() : paths.map((value) => this.normalizeRelative(value));
+    if (selected.length === 0) throw new Error('No changed paths are available to commit.');
+    for (const relativePath of selected) await this.assertNoSymlinkEscape(relativePath);
+    await this.git(['add', '--', ...selected]);
+    const staged = await execFileAsync('git', ['-C', this.root, 'diff', '--cached', '--quiet']).then(() => false).catch(() => true);
+    if (!staged) throw new Error('No changes are staged for commit.');
+    await this.git(['commit', '--no-verify', '-m', message.trim()]);
+    const branch = (await execFileAsync('git', ['-C', this.root, 'branch', '--show-current'])).stdout.trim();
+    return { branch, revision: await this.revision() };
+  }
+
+  public async push(branch: string, remote = 'origin'): Promise<GitRevisionResult> {
+    this.assertWritableRepository();
+    this.assertBranchName(branch);
+    if (!/^[A-Za-z0-9._-]+$/.test(remote) || remote.startsWith('-')) throw new Error('Git remote is not allowed.');
+    await this.git(['push', '--set-upstream', remote, branch]);
+    return { branch, revision: await this.revision() };
+  }
+
+  public async currentBranch(): Promise<string> {
+    const result = await execFileAsync('git', ['-C', this.root, 'branch', '--show-current']);
+    const branch = result.stdout.trim();
+    if (branch === '') throw new Error('Repository is in a detached HEAD state.');
+    return branch;
+  }
+
   private parseMutation(value: unknown, index: number): RepositoryMutation {
     if (value === null || typeof value !== 'object') throw new Error(`Repository mutation ${index + 1} must be an object.`);
     const candidate = value as Record<string, unknown>;
@@ -199,6 +238,18 @@ export class RepositoryWorkspace {
     let actual: string | undefined;
     try { actual = createHash('sha256').update(await readFile(this.safePath(relativePath))).digest('hex'); } catch { actual = undefined; }
     if (actual !== expected) throw new Error(`Repository file "${relativePath}" does not match the expected content hash.`);
+  }
+
+  private assertWritableRepository(): void {
+    if (!this.writable) throw new Error('Repository workspace is read-only; Git side effects require an isolated run workspace.');
+  }
+
+  private assertBranchName(branch: string): void {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,180}$/.test(branch) || branch.includes('..') || branch.endsWith('/') || branch.endsWith('.')) throw new Error('Git branch name is not allowed.');
+  }
+
+  private async git(args: string[]): Promise<void> {
+    await execFileAsync('git', ['-C', this.root, ...args], { maxBuffer: MAX_OUTPUT * 2 });
   }
 
   private safePath(relativePath: string): string {

@@ -4,6 +4,7 @@ import type {
   FactoryMetrics,
   NodeCatalogItem,
   RunEvent,
+  OperationEvidence,
   RunRecord,
   ProjectRecord,
   ProjectFileRecord,
@@ -113,6 +114,8 @@ export const api = {
     }),
   events: (runId: string) =>
     request<ItemsResponse<RunEvent>>(`/api/events?runId=${encodeURIComponent(runId)}`),
+  evidence: (runId: string) =>
+    request<ItemsResponse<OperationEvidence>>(`/api/evidence?runId=${encodeURIComponent(runId)}`),
   telemetry: (runId: string, signal?: 'log' | 'trace' | 'metric') =>
     request<ItemsResponse<RunEvent> & { resource: Record<string, string> }>(
       `/api/telemetry?runId=${encodeURIComponent(runId)}${signal === undefined ? '' : `&signal=${signal}`}`,
