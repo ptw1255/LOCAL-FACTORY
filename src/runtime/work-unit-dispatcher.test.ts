@@ -74,6 +74,16 @@ describe('WorkUnitDispatcher', () => {
     await expect(dispatcher.dispatch({ ...node.unit!, version: 2 }, context())).rejects.toThrow('deterministic@2');
   });
 
+  it('requires idempotency keys for side-effecting units and carries them in the envelope', async () => {
+    const dispatcher = new WorkUnitDispatcher();
+    const connector = { ...node.unit!, kind: 'connector' as const, idempotencyKey: undefined };
+    await expect(dispatcher.dispatch(connector, context())).rejects.toThrow('idempotency key');
+    const calls: unknown[] = [];
+    dispatcher.register('connector', 1, ({ envelope }) => { calls.push(envelope); return 'output'; });
+    await expect(dispatcher.dispatch({ ...connector, idempotencyKey: 'connector:unit-1' }, context())).resolves.toBe('output');
+    expect(calls[0]).toEqual(expect.objectContaining({ idempotencyKey: 'connector:unit-1' }));
+  });
+
   it('resolves named schemas and rejects unknown references', async () => {
     const dispatcher = new WorkUnitDispatcher({
       'review-input': (payload) => typeof payload === 'object' && payload !== null && 'request' in payload,

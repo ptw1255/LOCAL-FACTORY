@@ -84,6 +84,7 @@ export interface WorkUnitEnvelope<T = unknown> {
   unitId: string;
   sequence: number;
   attempt: number;
+  idempotencyKey?: string;
   schema: string;
   payload: T;
   contentHash: string;

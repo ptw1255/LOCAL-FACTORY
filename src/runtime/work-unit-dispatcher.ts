@@ -36,6 +36,7 @@ const supportedKinds: WorkUnitKind[] = [
   'consumer',
   'evaluator',
 ];
+const sideEffectingKinds = new Set<WorkUnitKind>(['connector', 'consumer']);
 
 function key(kind: string, version: number): string {
   return `${kind}@${version}`;
@@ -115,6 +116,9 @@ export class WorkUnitDispatcher {
     if (!this.adapters.has(key(unit.kind, unit.version))) {
       throw new Error(`No WorkUnit adapter registered for ${unit.kind}@${unit.version}.`);
     }
+    if (sideEffectingKinds.has(unit.kind) && (unit.idempotencyKey === undefined || unit.idempotencyKey.trim() === '')) {
+      throw new Error(`Side-effecting WorkUnit "${context.node.id}" must declare an idempotency key.`);
+    }
     const inputPayload = context.inputs.length === 1 ? context.inputs[0] : context.inputs;
     validatePayload(unit.inputSchema, inputPayload, 'input', this.schemas);
 
@@ -139,9 +143,10 @@ export class WorkUnitDispatcher {
         runId: context.runId,
         traceId: context.traceId,
         unitId: context.node.id,
-        sequence: context.sequence,
-        attempt,
-        schema: unit.inputSchema,
+          sequence: context.sequence,
+          attempt,
+          ...(unit.idempotencyKey === undefined ? {} : { idempotencyKey: unit.idempotencyKey }),
+          schema: unit.inputSchema,
         payload: inputPayload,
         contentHash: hashPayload(inputPayload),
       };
