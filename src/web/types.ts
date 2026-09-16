@@ -315,6 +315,15 @@ export interface DeploymentRecord {
   history: DeploymentTransition[];
 }
 
+/** Public lean deployment contract used by operational consumers. */
+export interface DeploymentEnvelope {
+  apiVersion: 'factory.agentic/v1';
+  kind: 'Deployment';
+  metadata: { id: string; projectId: string };
+  spec: { workflowId: string; environment: string; artifactId: string; desiredState: 'live' | 'stopped' };
+  status: { observedState: 'stopped' | 'starting' | 'live' | 'degraded' | 'stopping' | 'failed'; updatedAt: string; error: string | null };
+}
+
 export interface AgentProposal {
   id: string;
   summary: string;

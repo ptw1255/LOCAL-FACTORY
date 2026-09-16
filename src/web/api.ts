@@ -8,6 +8,7 @@ import type {
   OperationEvidence,
   ApprovalRecord,
   DeploymentRecord,
+  DeploymentEnvelope,
   RunRecord,
   ProjectRecord,
   ProjectFileRecord,
@@ -183,6 +184,7 @@ export const api = {
     }),
   factoryMetrics: () => request<FactoryMetrics>('/api/factory/metrics'),
   deployments: () => request<ItemsResponse<DeploymentRecord>>('/api/deployments'),
+  deploymentEnvelopes: () => request<ItemsResponse<DeploymentEnvelope>>('/api/deployments?format=envelope'),
   deploymentAction: (id: string, action: DeploymentRecord['history'][number]['action'], options: { artifactId?: string; expectedUpdatedAt?: string; idempotencyKey?: string } = {}) =>
     request<DeploymentRecord>(`/api/deployments/${encodeURIComponent(id)}/action`, { method: 'POST', body: JSON.stringify({ action, ...options }) }),
   reconcileDeployment: (id: string) =>
