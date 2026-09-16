@@ -260,6 +260,27 @@ describe('platform API', () => {
     expect((await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'large.txt', content: 'x'.repeat(1_000_001) } })).statusCode).toBe(422);
   });
 
+  it('emits scoped, redacted file-change events with cursor reads', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const created = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'events.yaml', content: 'version: 1' } });
+    expect(created.statusCode).toBe(200);
+    const first = await app.inject({ method: 'GET', url: '/api/projects/project-local/files/events', headers });
+    expect(first.statusCode).toBe(200);
+    const firstItems = first.json<{ items: Array<{ type: string; timestamp: string; data?: unknown; projectId?: string; attributes?: Record<string, unknown> }> }>().items;
+    const createdEvent = firstItems.find((event) => event.attributes?.['workspace.file.operation'] === 'created');
+    expect(createdEvent).toEqual(expect.objectContaining({ type: 'workspace.file.changed', projectId: 'project-local' }));
+    expect(createdEvent?.attributes).toEqual(expect.objectContaining({ 'workspace.file.path': 'events.yaml', 'workspace.file.sha256': expect.any(String) }));
+    expect(createdEvent).not.toHaveProperty('data');
+
+    const updated = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'events.yaml', content: 'version: 2' } });
+    expect(updated.statusCode).toBe(200);
+    const afterFirst = await app.inject({ method: 'GET', url: `/api/projects/project-local/files/events?since=${encodeURIComponent(createdEvent?.timestamp ?? '')}`, headers });
+    expect(afterFirst.json<{ items: Array<{ attributes?: Record<string, unknown> }> }>().items).toEqual([expect.objectContaining({ attributes: expect.objectContaining({ 'workspace.file.operation': 'updated' }) })]);
+
+    const crossProject = await app.inject({ method: 'GET', url: '/api/projects/project-local/files/events', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'other-project' } });
+    expect(crossProject.statusCode).toBe(404);
+  });
+
   it('exposes deployments through the lean envelope projection', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/deployments?format=envelope', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' } });
     expect(response.statusCode).toBe(200);
