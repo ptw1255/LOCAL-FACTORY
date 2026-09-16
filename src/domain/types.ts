@@ -76,6 +76,18 @@ export interface WorkUnitDefinition {
   idempotencyKey?: string;
 }
 
+/** Runtime envelope exchanged between the dispatcher and a WorkUnit adapter. */
+export interface WorkUnitEnvelope<T = unknown> {
+  runId: string;
+  traceId: string;
+  unitId: string;
+  sequence: number;
+  attempt: number;
+  schema: string;
+  payload: T;
+  contentHash: string;
+}
+
 /** A versioned, policy-bound agent "box" owned by its workflow definition. */
 export interface AgentDefinition {
   id: string;

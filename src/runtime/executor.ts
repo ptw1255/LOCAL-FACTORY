@@ -10,6 +10,7 @@ import { validateWorkflow } from '../domain/validator.js';
 import type { EventService } from '../observability/event-service.js';
 import type { PlatformStore } from '../storage/store.js';
 import { HttpOllamaClient, type OllamaClient } from './ollama.js';
+import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
 
 const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
@@ -43,6 +44,7 @@ export class LocalWorkflowExecutor {
     private readonly store: PlatformStore,
     private readonly events: EventService,
     private readonly ollama: OllamaClient = new HttpOllamaClient(),
+    private readonly dispatcher: WorkUnitDispatcher = new WorkUnitDispatcher(),
   ) {}
 
   public async recover(): Promise<number> {
@@ -225,7 +227,14 @@ export class LocalWorkflowExecutor {
           const inputs = context.workflow.edges
             .filter((edge) => edge.target === nextNode.id && currentRun.unitOutputs[edge.source] !== undefined)
             .map((edge) => currentRun.unitOutputs[edge.source]);
-          const result = await this.executeNode(runId, nextNode, controller.signal, inputs);
+          const result = await this.executeNode(
+            runId,
+            currentRun.traceId,
+            nextNode,
+            controller.signal,
+            inputs,
+            currentRun.completedNodeIds.length + 1,
+          );
           await this.events.emit(runId, 'unit.output.produced', `${nextNode.label} produced output.`, {
             nodeId: nextNode.id,
             signal: 'trace',
@@ -306,9 +315,11 @@ export class LocalWorkflowExecutor {
 
   private async executeNode(
     runId: string,
+    traceId: string,
     node: WorkflowNode,
     signal: AbortSignal,
     inputs: unknown[] = [],
+    sequence = 1,
   ): Promise<unknown> {
     signal.throwIfAborted();
     await this.events.emit(runId, 'node.started', `${node.label} started.`, {
@@ -322,6 +333,23 @@ export class LocalWorkflowExecutor {
       data: { nodeType: node.type },
     });
 
+    return this.dispatcher.dispatch(node.unit, {
+      runId,
+      traceId,
+      sequence,
+      node,
+      inputs,
+      signal,
+      execute: () => this.executeNodeImplementation(runId, node, signal, inputs),
+    });
+  }
+
+  private async executeNodeImplementation(
+    runId: string,
+    node: WorkflowNode,
+    signal: AbortSignal,
+    inputs: unknown[],
+  ): Promise<unknown> {
     let result: unknown = true;
     switch (node.type) {
       case 'condition':
