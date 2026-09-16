@@ -191,6 +191,11 @@ Use `GET /api/repository` to inspect the workspace and `POST /api/repository/che
 with `{ "command": "npm test" }` to receive exit code, duration, timeout state, and
 truncated output evidence.
 
+Check processes receive a minimal toolchain environment (PATH, temporary-directory,
+locale, and CI hints); factory credentials and connection configuration are not
+inherited. OS/container network isolation remains a deployment responsibility, so
+run untrusted checks in a worker or container with an explicit network policy.
+
 If GitHub integration is configured with `GITHUB_TOKEN`,
 `GITHUB_REPOSITORY_OWNER`, and `GITHUB_REPOSITORY_NAME`, the bounded
 `POST /api/repository/pull-request` endpoint can open a reviewable PR from an

@@ -8,6 +8,19 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 20_000;
 const ALLOWED_CHECKS = new Set(['npm test', 'npm run typecheck', 'npm run build']);
+const SAFE_CHECK_ENVIRONMENT = new Set([
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'CI',
+  'FORCE_COLOR',
+]);
 
 export interface RepositoryEntry { path: string; kind: 'file' | 'directory'; size?: number }
 export interface CheckResult { command: string; exitCode: number; durationMs: number; output: string; timedOut: boolean; cancelled?: boolean }
@@ -135,7 +148,7 @@ export class RepositoryWorkspace {
     if (!ALLOWED_CHECKS.has(command)) throw new Error(`Unsupported repository check "${command}".`);
     const started = Date.now();
     try {
-      const result = await execFileAsync(command.split(' ')[0]!, command.split(' ').slice(1), { cwd: this.root, timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2, ...(signal === undefined ? {} : { signal }) });
+      const result = await execFileAsync(command.split(' ')[0]!, command.split(' ').slice(1), { cwd: this.root, env: isolatedCheckEnvironment(), timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2, ...(signal === undefined ? {} : { signal }) });
       return { command, exitCode: 0, durationMs: Date.now() - started, output: truncate(`${result.stdout}${result.stderr}`), timedOut: false };
     } catch (error) {
       const failure = error as { code?: number | string; killed?: boolean; stdout?: string; stderr?: string; message?: string };
@@ -337,4 +350,14 @@ function isSensitiveRunFile(name: string): boolean {
   if (normalized === '.env' || (normalized.startsWith('.env.') && !['.env.example', '.env.template'].includes(normalized))) return true;
   if (/^(id_(rsa|dsa|ecdsa|ed25519)|credentials|service-account)/.test(normalized)) return true;
   return ['.pem', '.key', '.p12', '.pfx', '.jks'].some((extension) => normalized.endsWith(extension));
+}
+
+function isolatedCheckEnvironment(): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && (SAFE_CHECK_ENVIRONMENT.has(key) || key.startsWith('LC_'))) {
+      environment[key] = value;
+    }
+  }
+  return environment;
 }
