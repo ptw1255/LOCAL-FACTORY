@@ -171,6 +171,8 @@ describe('platform API', () => {
       headers: { 'x-tenant-id': 'tenant-local' },
     });
     expect(exported.statusCode).toBe(200);
+    expect(exported.headers.deprecation).toBe('true');
+    expect(exported.headers.link).toContain('/api/projects/project-local/files');
     expect(exported.headers['content-type']).toContain('text/yaml');
     expect(exported.body).toContain('apiVersion: factory.agentic/v1');
 
@@ -188,6 +190,8 @@ describe('platform API', () => {
       payload: { source: exported.body },
     });
     expect(imported.statusCode).toBe(200);
+    expect(imported.headers.deprecation).toBe('true');
+    expect(imported.headers.link).toContain(`/api/projects/${projectId}/files`);
     expect(imported.json<{ project: { id: string }; workflows: Array<{ projectId: string }> }>()).toMatchObject({
       project: { id: projectId },
       workflows: [expect.objectContaining({ projectId })],
