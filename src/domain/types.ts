@@ -97,7 +97,7 @@ export interface AgentDefinition {
   instructions: string;
   skills: string[];
   tools: string[];
-  model: { provider?: string; model?: string; routingAlias?: string; endpoint?: string; secretRef?: string; provisioning?: { mode: 'never' | 'pull-on-start' | 'baked'; digest?: string; timeoutMs?: number } };
+  model: { provider?: string; model?: string; routingAlias?: string; endpoint?: string; secretRef?: string; streaming?: boolean; provisioning?: { mode: 'never' | 'pull-on-start' | 'baked'; digest?: string; timeoutMs?: number } };
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
   boundaries: {

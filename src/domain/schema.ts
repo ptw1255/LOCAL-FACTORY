@@ -26,6 +26,7 @@ export const agentDefinitionSchema = z.object({
     routingAlias: z.string().min(1).optional(),
     endpoint: z.string().url().optional(),
     secretRef: z.string().min(1).optional(),
+    streaming: z.boolean().optional(),
     provisioning: z.object({
       mode: z.enum(['never', 'pull-on-start', 'baked']).default('never'),
       digest: z.string().min(1).optional(),
