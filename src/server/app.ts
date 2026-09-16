@@ -683,7 +683,7 @@ export async function createApp(
       const environment = typeof body?.environment === 'string' && body.environment.trim() !== '' ? body.environment : 'local';
       const files = (await workspaceListing({ tenantId: scope.tenantId, projectId: request.params.projectId })).files;
       try {
-        const compiled = compileResourceFiles(files.map((file) => ({ path: file.path, source: file.content })), { tenantId: scope.tenantId, projectId: request.params.projectId });
+        const compiled = compileResourceFiles(files.map((file) => ({ path: file.path, source: file.content })), { tenantId: scope.tenantId, projectId: request.params.projectId, environment });
         const sources = files.map((file) => ({ path: file.path, sha256: file.sha256 }));
         const compilerVersion = '0.1.0';
         const artifact: ArtifactRecord = { tenantId: scope.tenantId, projectId: request.params.projectId, id: computeArtifactId({ environment, compilerVersion, sources, workflows: compiled.workflows }), environment, compilerVersion, sources, workflows: compiled.workflows, createdAt: new Date().toISOString() };
