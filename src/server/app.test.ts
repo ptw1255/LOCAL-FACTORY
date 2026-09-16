@@ -266,6 +266,27 @@ describe('platform API', () => {
     expect(response.json()).toEqual({ items: [] });
   });
 
+  it('supports dry-run preflight without creating a runtime run', async () => {
+    const before = (await store.read((state) => state.runs.length));
+    const response = await app.inject({ method: 'POST', url: '/api/workflows/workflow-agent-intake/runs', payload: { dryRun: true } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expect.objectContaining({ dryRun: true, workflowId: 'workflow-agent-intake', valid: true, issues: [] }));
+    expect(await store.read((state) => state.runs.length)).toBe(before);
+  });
+
+  it('blocks execution when workflow preflight validation fails', async () => {
+    await store.mutate((state) => {
+      const workflow = state.workflows.find((candidate) => candidate.id === 'workflow-agent-intake');
+      if (workflow === undefined) throw new Error('Seed workflow missing.');
+      workflow.nodes = [];
+      workflow.edges = [];
+    });
+    const response = await app.inject({ method: 'POST', url: '/api/workflows/workflow-agent-intake/runs', payload: {} });
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual(expect.objectContaining({ message: expect.stringMatching(/validation/i), issues: expect.any(Array) }));
+    expect(await store.read((state) => state.runs.length)).toBe(0);
+  });
+
   it('moves deleted files to scoped trash and restores them', async () => {
     const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
     await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'restore-me.yaml', content: 'apiVersion: factory.agentic/v1' } });

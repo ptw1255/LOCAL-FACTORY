@@ -117,11 +117,12 @@ export const api = {
       method: 'POST',
       body: '{}',
     }),
-  startRun: (id: string) =>
+  startRun: (id: string, options: { dryRun?: boolean; artifactId?: string } = {}) =>
     request<RunRecord>(`/api/workflows/${encodeURIComponent(id)}/runs`, {
       method: 'POST',
-      body: '{}',
+      body: JSON.stringify(options),
     }),
+  dryRun: (id: string, artifactId?: string) => request<{ dryRun: true; workflowId: string; workflowVersion: number; artifactId?: string; valid: true; issues: [] }>(`/api/workflows/${encodeURIComponent(id)}/runs`, { method: 'POST', body: JSON.stringify({ dryRun: true, ...(artifactId === undefined ? {} : { artifactId }) }) }),
   runs: () => request<ItemsResponse<RunRecord>>('/api/runs'),
   run: (id: string) => request<RunRecord>(`/api/runs/${encodeURIComponent(id)}`),
   replay: (id: string, timeoutMs?: number) => request<ReplayReportRecord>(`/api/runs/${encodeURIComponent(id)}/replay`, { method: 'POST', body: JSON.stringify(timeoutMs === undefined ? {} : { timeoutMs }) }),

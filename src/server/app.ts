@@ -713,7 +713,7 @@ export async function createApp(
     '/api/workflows/:id/runs',
     async (request, reply) => {
       const scope = scopeFromRequest(request);
-      const body = request.body as { artifactId?: unknown };
+      const body = (request.body ?? {}) as { artifactId?: unknown; dryRun?: unknown };
       const selected = await store.read((state) => {
         const artifactId = typeof body?.artifactId === 'string' ? body.artifactId : undefined;
         const artifact = artifactId === undefined ? undefined : state.artifacts.find((candidate) => candidate.id === artifactId && inScope(candidate, scope));
@@ -724,6 +724,11 @@ export async function createApp(
       const workflow = selected.workflow;
       if (workflow === undefined) {
         return reply.status(404).send({ message: 'Workflow not found.' });
+      }
+      const validation = validateWorkflow(workflow);
+      if (!validation.valid) return reply.status(422).send({ message: 'Workflow must pass validation before it can run.', issues: validation.issues });
+      if (body.dryRun === true) {
+        return { dryRun: true, workflowId: workflow.id, workflowVersion: workflow.version, artifactId: selected.artifactId, valid: true, issues: [] };
       }
       try {
       return await runExecutor.start(workflow, selected.artifactId === undefined ? {} : { artifactId: selected.artifactId });

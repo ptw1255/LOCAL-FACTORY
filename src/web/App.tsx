@@ -469,6 +469,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<'save' | 'validate' | 'run' | null>(null);
+  const [runMode, setRunMode] = useState<'run' | 'dry-run'>('run');
   const [notice, setNotice] = useState<{ tone: 'success' | 'warning' | 'error'; text: string } | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [configDraft, setConfigDraft] = useState('{}');
@@ -803,6 +804,11 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         const saved = await saveWorkflow();
         if (saved === null) return;
       }
+      if (runMode === 'dry-run') {
+        const preflight = await api.dryRun(workflow.id);
+        setNotice({ tone: 'success', text: `Dry run passed for ${preflight.workflowId} v${preflight.workflowVersion}; no execution was started.` });
+        return;
+      }
       const run = await api.startRun(workflow.id);
       window.localStorage.setItem(`factory.onboarding.${projectId}.run`, 'true');
       setHasRun(true);
@@ -850,8 +856,12 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
           <button className="button secondary" disabled={busyAction !== null} onClick={() => void validateWorkflow()} type="button">
             <Icon name="check" /> {busyAction === 'validate' ? 'Validating…' : 'Validate'}
           </button>
+          <select aria-label="Run mode" className="run-mode-select" disabled={busyAction !== null} onChange={(event) => setRunMode(event.target.value as 'run' | 'dry-run')} value={runMode}>
+            <option value="run">Run</option>
+            <option value="dry-run">Dry run</option>
+          </select>
           <button className="button primary" disabled={busyAction !== null} onClick={() => void runWorkflow()} type="button">
-            <Icon name="play" /> {busyAction === 'run' ? 'Starting…' : 'Run workflow'}
+            <Icon name="play" /> {busyAction === 'run' ? 'Starting…' : runMode === 'dry-run' ? 'Dry run' : 'Run workflow'}
           </button>
         </div>
       </div>
