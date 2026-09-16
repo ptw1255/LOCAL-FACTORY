@@ -3,7 +3,7 @@ import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { RepositoryWorkspace } from './workspace.js';
+import { RepositoryConflictError, RepositoryPolicyError, RepositoryWorkspace } from './workspace.js';
 
 const execFileAsync = (file: string, args: string[], options: { cwd?: string } = {}) => new Promise<void>((resolve, reject) => {
   execFile(file, args, options, (error) => error === null ? resolve() : reject(error));
@@ -105,5 +105,21 @@ describe('RepositoryWorkspace', () => {
     expect(committed.revision).toMatch(/^[0-9a-f]{40}$/);
     expect(await run.currentBranch()).toBe('factory/change');
     await expect(run.createBranch('factory/change', committed.revision)).rejects.toThrow();
+    await expect(run.push('main')).rejects.toBeInstanceOf(RepositoryConflictError);
+    await expect(run.push('factory/change', 'upstream')).rejects.toBeInstanceOf(RepositoryPolicyError);
+  });
+
+  it('types a stale branch base conflict with expected and actual revisions', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-git-conflict-'));
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: root });
+    await execFileAsync('git', ['config', 'user.email', 'factory@example.test'], { cwd: root });
+    await execFileAsync('git', ['config', 'user.name', 'Factory Test'], { cwd: root });
+    await writeFile(path.join(root, 'README.md'), 'before');
+    await execFileAsync('git', ['add', 'README.md'], { cwd: root });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: root });
+    const run = await (await RepositoryWorkspace.open(root)).cloneForRun('run-conflict');
+    const error = await run.createBranch('factory/change', '0'.repeat(40)).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RepositoryConflictError);
+    expect(error).toMatchObject({ code: 'REPOSITORY_CONFLICT', expected: '0'.repeat(40), actual: expect.stringMatching(/^[a-f0-9]{40}$/) });
   });
 });
