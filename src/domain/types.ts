@@ -176,6 +176,18 @@ export interface RunRecord {
   approvedNodeHashes: Record<string, string>;
   pendingApprovalHashes: Record<string, string>;
   unitOutputs: Record<string, unknown>;
+  /** Durable checkpoint for a repository CI observer that may outlive a process. */
+  ciCheckpoints: Record<string, CiCheckpoint>;
+}
+
+export interface CiCheckpoint {
+  ref: string;
+  required: string[];
+  timeoutMs: number;
+  intervalMs: number;
+  startedAt: string;
+  polls: number;
+  lastStatus: 'pending' | 'success' | 'failure' | 'timed_out';
 }
 
 export interface RunEvent {

@@ -181,6 +181,7 @@ export interface RunRecord {
   humanTouchpoints: number;
   error?: string;
   unitOutputs?: Record<string, unknown>;
+  ciCheckpoints?: Record<string, { ref: string; required: string[]; timeoutMs: number; intervalMs: number; startedAt: string; polls: number; lastStatus: 'pending' | 'success' | 'failure' | 'timed_out' }>;
 }
 
 export interface RunEvent {

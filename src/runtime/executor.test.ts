@@ -2,13 +2,14 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed.js';
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
 import { LocalWorkflowExecutor } from './executor.js';
+import type { GitHubRepositoryClient } from '../repository/github.js';
 
 async function waitFor(
   predicate: () => Promise<boolean>,
@@ -393,6 +394,7 @@ describe('LocalWorkflowExecutor', () => {
     approvedNodeHashes: {},
     pendingApprovalHashes: {},
     unitOutputs: {},
+    ciCheckpoints: {},
       });
     });
 
@@ -407,5 +409,36 @@ describe('LocalWorkflowExecutor', () => {
     expect(
       (await events.list(runId)).some((event) => event.type === 'run.recovered'),
     ).toBe(true);
+  });
+
+  it('persists a CI checkpoint and resumes the observer after runtime restart', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'ci', type: 'repositoryCi', label: 'Observe CI', position: { x: 180, y: 0 }, config: { ref: 'commit-1', required: ['test'], timeoutMs: 1_000, intervalMs: 10 }, unit: defaultWorkUnit('repositoryCi') },
+      { id: 'output', type: 'output', label: 'Complete', position: { x: 360, y: 0 }, config: { value: 'done' }, unit: defaultWorkUnit('output') },
+    ];
+    workflow.edges = [
+      { id: 'trigger-ci', source: 'trigger', target: 'ci' },
+      { id: 'ci-output', source: 'ci', target: 'output' },
+    ];
+    const firstGithub = {
+      waitForChecks: vi.fn(() => new Promise<never>(() => undefined)),
+    } as unknown as GitHubRepositoryClient;
+    const firstExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, firstGithub);
+    const run = await firstExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.ciCheckpoints.ci)) !== undefined);
+    expect((await events.listEvidence(run.id)).some((entry) => entry.unitId === 'ci' && entry.status === 'waiting')).toBe(true);
+
+    const secondGithub = {
+      waitForChecks: vi.fn().mockResolvedValue({ ref: 'commit-1', status: 'success', checks: [{ name: 'test', status: 'completed', conclusion: 'success' }], required: ['test'], failures: [] }),
+    } as unknown as GitHubRepositoryClient;
+    const restartedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, secondGithub);
+    expect(await restartedExecutor.recover()).toBe(1);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.status)) === 'succeeded');
+    expect(secondGithub.waitForChecks).toHaveBeenCalledWith(expect.objectContaining({ ref: 'commit-1', timeoutMs: expect.any(Number) }));
+    expect(await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.ciCheckpoints)).toEqual({});
+    expect((await events.listEvidence(run.id)).filter((entry) => entry.unitId === 'ci' && entry.status === 'waiting')).toHaveLength(1);
   });
 });
