@@ -55,14 +55,21 @@ describe('coding workflow API', () => {
       const runId = (started.json() as { id: string }).id;
       expect((await waitFor(app, runId, 'waiting')).status).toBe('waiting');
       const waitingEvidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
-      expect((waitingEvidence.json() as { items: Array<{ status: string }> }).items.some((entry) => entry.status === 'waiting')).toBe(true);
+      const waitingItems = (waitingEvidence.json() as { items: Array<{ status: string; correlationId?: string; idempotencyKey?: string }> }).items;
+      expect(waitingItems.some((entry) => entry.status === 'waiting' && entry.correlationId !== undefined)).toBe(true);
+      const approvals = await app.inject({ method: 'GET', url: `/api/approvals?runId=${runId}`, headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' } });
+      expect((approvals.json() as { items: Array<{ decision: string; bindingHash: string }> }).items).toEqual([expect.objectContaining({ decision: 'pending', bindingHash: expect.stringMatching(/^[a-f0-9]{64}$/) })]);
       await app.close();
       const restartedApp = await createApp({ store, repositoryWorkspace, serveStatic: false });
       const approved = await restartedApp.inject({ method: 'POST', url: `/api/runs/${runId}/approve`, headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' }, payload: {} });
       expect(approved.statusCode).toBe(200);
       expect((await waitFor(restartedApp, runId, 'succeeded')).status).toBe('succeeded');
       const evidence = await restartedApp.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
-      expect((evidence.json() as { items: Array<{ unitId: string; status: string }> }).items.some((entry) => entry.unitId === 'prepare' && entry.status === 'succeeded')).toBe(true);
+      const evidenceItems = (evidence.json() as { items: Array<{ unitId: string; status: string; idempotencyKey?: string; correlationId?: string }> }).items;
+      expect(evidenceItems.some((entry) => entry.unitId === 'prepare' && entry.status === 'succeeded' && entry.correlationId !== undefined)).toBe(true);
+      const prepareSuccesses = evidenceItems.filter((entry) => entry.unitId === 'prepare' && entry.status === 'succeeded');
+      expect(prepareSuccesses).toHaveLength(1);
+      expect(new Set(prepareSuccesses.map((entry) => entry.idempotencyKey)).size).toBe(1);
       await expect(readFile(path.join(repoRoot, 'generated.txt'), 'utf8')).rejects.toThrow();
       await restartedApp.close();
     } finally {
@@ -119,6 +126,8 @@ describe('coding workflow API', () => {
       expect(githubFetcher).toHaveBeenCalledTimes(4);
       const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
       const operations = (evidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items;
+      expect(operations.some((entry) => entry.unitId === 'branch' && entry.status === 'succeeded' && typeof entry.metadata?.['repository.branch'] === 'string' && typeof entry.metadata?.['repository.revision'] === 'string')).toBe(true);
+      expect(operations.some((entry) => entry.unitId === 'commit' && entry.status === 'succeeded' && typeof entry.metadata?.['repository.revision'] === 'string')).toBe(true);
       expect(operations.some((entry) => entry.unitId === 'commit' && entry.status === 'succeeded')).toBe(true);
       expect(operations.some((entry) => entry.unitId === 'pr' && entry.status === 'succeeded' && entry.metadata?.['pull_request.number'] === 12 && entry.metadata?.['provider.url'] === 'https://github.com/example/repo/pull/12')).toBe(true);
       expect(operations.some((entry) => entry.unitId === 'ci' && entry.status === 'succeeded' && entry.metadata?.['ci.status'] === 'success' && entry.metadata?.['ci.ref'] === baseRevision)).toBe(true);
