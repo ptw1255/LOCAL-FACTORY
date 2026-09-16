@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed.js';
 import { JsonStore } from '../storage/json-store.js';
-import { DeploymentReconciler } from './reconciler.js';
+import { DeploymentReconciler, type DeploymentRuntimeAdapter } from './reconciler.js';
 
 describe('DeploymentReconciler', () => {
   it('creates, transitions, reconciles, and rolls back a logical deployment', async () => {
@@ -83,5 +83,25 @@ describe('DeploymentReconciler', () => {
     const rejected = await reconciler.list({ tenantId: 'tenant-local', projectId: 'project-local' });
     expect(rejected[0]?.history[0]).toEqual(expect.objectContaining({ action: 'rollback', actor: 'test-operator', outcome: 'failed', reason: 'Deployment artifact is not available for this workflow.' }));
     expect(rejected[0]?.artifactId).toBe(artifact.id);
+  });
+
+  it('surfaces degraded health from the runtime adapter during reconciliation', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-health', tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const adapter: DeploymentRuntimeAdapter = {
+      observe: (deployment) => deployment.desiredState === 'running'
+        ? { observedState: 'degraded', health: 'degraded', triggerStatus: 'active', lastError: 'Health probe failed.' }
+        : { observedState: 'stopped', health: 'unknown', triggerStatus: 'inactive' },
+    };
+    const reconciler = new DeploymentReconciler(store, 30_000, adapter);
+    const deployment = await reconciler.create({ scope: { tenantId: 'tenant-local', projectId: 'project-local' }, workflowId: seedWorkflow.id, environment: 'health', artifactId: artifact.id, trigger: 'manual' });
+    const started = await reconciler.action(deployment.id, { tenantId: 'tenant-local', projectId: 'project-local' }, 'start');
+    expect(started).toMatchObject({ observedState: 'degraded', health: 'degraded', triggerStatus: 'active', lastError: 'Health probe failed.' });
+    const reconciled = await reconciler.reconcile(deployment.id, { tenantId: 'tenant-local', projectId: 'project-local' });
+    expect(reconciled).toMatchObject({ observedState: 'degraded', health: 'degraded', lastError: 'Health probe failed.' });
   });
 });

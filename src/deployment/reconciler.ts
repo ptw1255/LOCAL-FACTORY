@@ -5,11 +5,30 @@ import type { PlatformStore } from '../storage/store.js';
 
 export interface DeploymentScope { tenantId: string; projectId: string }
 
+export interface DeploymentObservation {
+  observedState: DeploymentRecord['observedState'];
+  health: DeploymentRecord['health'];
+  triggerStatus: DeploymentRecord['triggerStatus'];
+  lastError?: string;
+}
+
+export interface DeploymentRuntimeAdapter {
+  observe(deployment: DeploymentRecord): Promise<DeploymentObservation> | DeploymentObservation;
+}
+
+const localRuntimeAdapter: DeploymentRuntimeAdapter = {
+  observe: (deployment) => ({
+    observedState: deployment.desiredState === 'running' ? 'live' : 'stopped',
+    health: deployment.desiredState === 'running' ? 'healthy' : 'unknown',
+    triggerStatus: deployment.desiredState === 'running' ? 'active' : 'inactive',
+  }),
+};
+
 /** Logical deployment reconciler for the local runtime adapter. */
 export class DeploymentReconciler {
   private readonly ownerId = `reconciler-${randomUUID()}`;
 
-  public constructor(private readonly store: PlatformStore, private readonly leaseMs = 30_000) {}
+  public constructor(private readonly store: PlatformStore, private readonly leaseMs = 30_000, private readonly adapter: DeploymentRuntimeAdapter = localRuntimeAdapter) {}
 
   public list(scope: DeploymentScope): Promise<DeploymentRecord[]> {
     return this.store.read((state) => state.deployments.filter((deployment) => deployment.tenantId === scope.tenantId && deployment.projectId === scope.projectId));
@@ -45,7 +64,7 @@ export class DeploymentReconciler {
 
   public async action(id: string, scope: DeploymentScope, action: DeploymentAction, options: { artifactId?: string; actor?: string; reason?: string } = {}): Promise<DeploymentRecord> {
     let transitionError: unknown;
-    const result = await this.store.mutate((state) => {
+    const result = await this.store.mutate(async (state) => {
       const deployment = state.deployments.find((candidate) => candidate.id === id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
       if (deployment === undefined) throw new Error('Deployment not found.');
       const fromArtifactId = deployment.artifactId;
@@ -62,11 +81,11 @@ export class DeploymentReconciler {
         if (action === 'stop') { deployment.desiredState = 'stopped'; deployment.observedState = 'stopping'; }
         else { deployment.desiredState = 'running'; deployment.observedState = 'starting'; }
         deployment.lastError = undefined;
-        // The local adapter is synchronous once the artifact is validated. A future
-        // container/cloud adapter can replace this section with an async reconcile loop.
-        deployment.observedState = deployment.desiredState === 'running' ? 'live' : 'stopped';
-        deployment.health = deployment.observedState === 'live' ? 'healthy' : 'unknown';
-        deployment.triggerStatus = deployment.desiredState === 'running' ? 'active' : 'inactive';
+        const observation = await this.adapter.observe(deployment);
+        deployment.observedState = observation.observedState;
+        deployment.health = observation.health;
+        deployment.triggerStatus = observation.triggerStatus;
+        deployment.lastError = observation.lastError;
         deployment.updatedAt = now;
         const transition: DeploymentTransition = {
           id: randomUUID(), action, actor, occurredAt: now,
@@ -94,17 +113,18 @@ export class DeploymentReconciler {
   }
 
   public async reconcile(id: string, scope: DeploymentScope): Promise<DeploymentRecord> {
-    return this.store.mutate((state) => {
+    return this.store.mutate(async (state) => {
       const deployment = state.deployments.find((candidate) => candidate.id === id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
       if (deployment === undefined) throw new Error('Deployment not found.');
       const now = new Date();
       this.acquireLease(deployment, now.toISOString());
       try {
         const previousObserved = deployment.observedState;
-        const targetObserved = deployment.desiredState === 'running' ? 'live' : 'stopped';
+        const observation = await this.adapter.observe(deployment);
+        const targetObserved = observation.observedState;
         if (previousObserved !== targetObserved) {
           deployment.observedState = targetObserved;
-          deployment.health = targetObserved === 'live' ? 'healthy' : 'unknown';
+          deployment.health = observation.health;
           deployment.history.unshift({
             id: randomUUID(),
             action: targetObserved === 'live' ? 'start' : 'stop',
@@ -116,7 +136,9 @@ export class DeploymentReconciler {
             reason: 'Desired state reconciled.',
           });
         }
-        deployment.triggerStatus = deployment.desiredState === 'running' ? 'active' : 'inactive';
+        deployment.health = observation.health;
+        deployment.triggerStatus = observation.triggerStatus;
+        deployment.lastError = observation.lastError;
         deployment.updatedAt = now.toISOString();
       } finally {
         delete deployment.lease;
