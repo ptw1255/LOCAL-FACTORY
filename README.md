@@ -72,6 +72,36 @@ for preloaded model volumes. The runtime records an `llm.completed` trace for ea
 Ollama call and preserves the agent's declared input/output capture and network
 policies.
 
+### OpenAI Responses API
+
+Hosted agent boxes use the provider-neutral runtime with a server-side Responses API
+adapter. Keep the key in Vault and reference only its connection path from YAML:
+
+```yaml
+model:
+  provider: openai
+  model: gpt-5-mini
+  secretRef: connections/openai
+  streaming: true
+```
+
+For local development, start Vault and write the secret before running the server:
+
+```bash
+export VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=dev-root-token
+vault kv put secret/connections/openai value="$OPENAI_API_KEY"
+npm run server
+```
+
+The adapter defaults to `store: false`, bounds retries and request duration, and
+normalizes text, streaming, tool calls, usage, finish state, request IDs, and typed
+provider failures. Prompt/output capture remains opt-in in the agent observability
+policy. An external smoke test is intentionally opt-in and never runs in default CI:
+
+```bash
+OPENAI_SMOKE=1 OPENAI_API_KEY=… npm run test -- --run src/runtime/openai.smoke.test.ts
+```
+
 ### Local repository checks
 
 Set `REPOSITORY_WORKSPACE` to expose the bounded repository API. Only `npm test`,
