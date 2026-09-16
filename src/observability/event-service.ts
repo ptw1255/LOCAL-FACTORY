@@ -82,6 +82,9 @@ export class EventService {
     unitId: string;
     operation: string;
     idempotencyKey?: string;
+    actor?: string;
+    source?: string;
+    correlationId?: string;
     status: OperationEvidenceStatus;
     attempt?: number;
     input?: unknown;
@@ -91,7 +94,7 @@ export class EventService {
   }): Promise<OperationEvidence> {
     const scope = await this.store.read((state) => {
       const run = state.runs.find((candidate) => candidate.id === input.runId);
-      return { tenantId: run?.tenantId, projectId: run?.projectId };
+      return { tenantId: run?.tenantId, projectId: run?.projectId, traceId: run?.traceId };
     });
     const evidence: OperationEvidence = {
       ...(scope.tenantId === undefined ? {} : { tenantId: scope.tenantId }),
@@ -103,6 +106,9 @@ export class EventService {
       unitId: input.unitId,
       operation: input.operation,
       ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+      actor: input.actor?.trim() || 'runtime',
+      source: input.source?.trim() || 'local-executor',
+      ...(input.correlationId === undefined && scope.traceId === undefined ? {} : { correlationId: input.correlationId ?? scope.traceId }),
       attempt: input.attempt ?? 1,
       status: input.status,
       occurredAt: new Date().toISOString(),

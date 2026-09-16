@@ -98,11 +98,12 @@ describe('EventService retention', () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
     const service = new EventService(store);
-    const first = await service.recordEvidence({ runId: 'run-1', unitId: 'commit', operation: 'repositoryCommit', status: 'started', idempotencyKey: 'commit-attempt-1' });
-    const retry = await service.recordEvidence({ runId: 'run-1', unitId: 'commit', operation: 'repositoryCommit', status: 'started', idempotencyKey: 'commit-attempt-1' });
+    const first = await service.recordEvidence({ runId: 'run-1', unitId: 'commit', operation: 'repositoryCommit', status: 'started', idempotencyKey: 'commit-attempt-1', correlationId: 'trace-1' });
+    const retry = await service.recordEvidence({ runId: 'run-1', unitId: 'commit', operation: 'repositoryCommit', status: 'started', idempotencyKey: 'commit-attempt-1', correlationId: 'trace-1' });
     expect(retry.id).toBe(first.id);
     expect(await service.listEvidence('run-1')).toHaveLength(1);
     expect(first.idempotencyKey).toBe('commit-attempt-1');
+    expect(first).toEqual(expect.objectContaining({ actor: 'runtime', source: 'local-executor', correlationId: 'trace-1' }));
   });
 
   it('prunes durable evidence only when its separate policy is configured', async () => {

@@ -109,8 +109,8 @@ export class PostgresStore implements PlatformStore {
     await this.pool.query(
       `INSERT INTO operation_evidence
         (id, tenant_id, project_id, run_id, unit_id, operation, attempt, status, occurred_at,
-        input_hash, output_hash, error, metadata, idempotency_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10, $11, $12, $13::jsonb, $14)
+        input_hash, output_hash, error, metadata, idempotency_key, actor, source, correlation_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10, $11, $12, $13::jsonb, $14, $15, $16, $17)
        ON CONFLICT (id) DO NOTHING`,
       [
         evidence.id,
@@ -127,6 +127,9 @@ export class PostgresStore implements PlatformStore {
         evidence.error ?? null,
         JSON.stringify(evidence.metadata ?? {}),
         evidence.idempotencyKey ?? null,
+        evidence.actor ?? null,
+        evidence.source ?? null,
+        evidence.correlationId ?? null,
       ],
     );
   }
@@ -150,7 +153,7 @@ export class PostgresStore implements PlatformStore {
     if (filter.from !== undefined) { values.push(filter.from); clauses.push(`occurred_at >= $${values.length}::timestamptz`); }
     if (filter.to !== undefined) { values.push(filter.to); clauses.push(`occurred_at <= $${values.length}::timestamptz`); }
     const where = clauses.length === 0 ? '' : ` WHERE ${clauses.join(' AND ')}`;
-    const result = await this.pool.query<OperationEvidence>(`SELECT id, tenant_id AS "tenantId", project_id AS "projectId", run_id AS "runId", unit_id AS "unitId", operation, idempotency_key AS "idempotencyKey", attempt, status, occurred_at AS "occurredAt", input_hash AS "inputHash", output_hash AS "outputHash", error, metadata FROM operation_evidence${where} ORDER BY occurred_at ASC`, values);
+    const result = await this.pool.query<OperationEvidence>(`SELECT id, tenant_id AS "tenantId", project_id AS "projectId", run_id AS "runId", unit_id AS "unitId", operation, idempotency_key AS "idempotencyKey", actor, source, correlation_id AS "correlationId", attempt, status, occurred_at AS "occurredAt", input_hash AS "inputHash", output_hash AS "outputHash", error, metadata FROM operation_evidence${where} ORDER BY occurred_at ASC`, values);
     return result.rows;
   }
 
@@ -236,11 +239,17 @@ export class PostgresStore implements PlatformStore {
         output_hash TEXT,
         error TEXT,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb
-        ,idempotency_key TEXT
+        ,idempotency_key TEXT,
+        actor TEXT,
+        source TEXT,
+        correlation_id TEXT
       )
     `);
     await this.pool.query(`ALTER TABLE operation_evidence DROP CONSTRAINT IF EXISTS operation_evidence_status_check`);
     await this.pool.query('ALTER TABLE operation_evidence ADD COLUMN IF NOT EXISTS idempotency_key TEXT');
+    await this.pool.query('ALTER TABLE operation_evidence ADD COLUMN IF NOT EXISTS actor TEXT');
+    await this.pool.query('ALTER TABLE operation_evidence ADD COLUMN IF NOT EXISTS source TEXT');
+    await this.pool.query('ALTER TABLE operation_evidence ADD COLUMN IF NOT EXISTS correlation_id TEXT');
     await this.pool.query(`ALTER TABLE operation_evidence ADD CONSTRAINT operation_evidence_status_check CHECK (status IN ('started', 'waiting', 'succeeded', 'failed', 'cancelled', 'timed_out'))`);
     await this.pool.query('CREATE INDEX IF NOT EXISTS operation_evidence_run_time_idx ON operation_evidence (run_id, occurred_at)');
     await this.pool.query('CREATE INDEX IF NOT EXISTS operation_evidence_project_time_idx ON operation_evidence (project_id, occurred_at)');

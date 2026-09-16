@@ -75,6 +75,10 @@ export interface OperationEvidence {
   runId: string;
   unitId: string;
   operation: string;
+  idempotencyKey?: string;
+  actor?: string;
+  source?: string;
+  correlationId?: string;
   attempt: number;
   status: 'started' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
   occurredAt: string;
