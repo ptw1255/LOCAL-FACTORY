@@ -51,6 +51,7 @@ import type {
 
 const TENANT_STORAGE_KEY = 'factory.tenantId';
 const PROJECT_STORAGE_KEY = 'factory.projectId';
+const STUDIO_MODE_STORAGE_PREFIX = 'factory.studioMode.';
 
 const nodeTypes = { workflow: WorkflowNodeCard };
 const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName }> = {
@@ -66,6 +67,11 @@ function readView(): ViewId {
   const value = window.location.hash.replace('#/', '');
   if (value === 'runs') return 'observe';
   return value in viewLabels ? (value as ViewId) : 'studio';
+}
+
+function readStudioMode(projectId: string): 'files' | 'tree' | 'canvas' {
+  const value = window.localStorage.getItem(`${STUDIO_MODE_STORAGE_PREFIX}${projectId}`);
+  return value === 'tree' || value === 'canvas' ? value : 'files';
 }
 
 function formatDate(value?: string): string {
@@ -451,7 +457,11 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [hasRun, setHasRun] = useState(() => window.localStorage.getItem(`factory.onboarding.${projectId}.run`) === 'true');
   const [yamlSource, setYamlSource] = useState('');
   const [yamlDirty, setYamlDirty] = useState(false);
-  const [studioMode, setStudioMode] = useState<'files' | 'tree' | 'canvas'>('files');
+  const [studioMode, setStudioMode] = useState<'files' | 'tree' | 'canvas'>(() => readStudioMode(projectId));
+
+  useEffect(() => {
+    window.localStorage.setItem(`${STUDIO_MODE_STORAGE_PREFIX}${projectId}`, studioMode);
+  }, [projectId, studioMode]);
 
   const loadStudio = useCallback(async () => {
     setLoading(true);
