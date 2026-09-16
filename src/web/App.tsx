@@ -1166,6 +1166,7 @@ function OperationalTree({
 }
 
 function RunsView() {
+  type ObserveTab = 'runs' | 'logs' | 'traces' | 'metrics';
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(
     () => sessionStorage.getItem('selectedRunId'),
@@ -1180,6 +1181,7 @@ function RunsView() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [observeTab, setObserveTab] = useState<ObserveTab>('runs');
 
   const loadRuns = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -1235,6 +1237,9 @@ function RunsView() {
   const activeRuns = runs.filter((run) => ['queued', 'running', 'waiting'].includes(run.status)).length;
   const successfulRuns = runs.filter((run) => run.status === 'succeeded').length;
   const totalCost = runs.reduce((sum, run) => sum + run.costUsd, 0);
+  const visibleEvents = observeTab === 'runs'
+    ? events
+    : events.filter((event) => event.signal === (observeTab === 'logs' ? 'log' : observeTab === 'traces' ? 'trace' : 'metric'));
 
   async function runAction(action: 'approve' | 'cancel') {
     if (selectedRun === null) return;
@@ -1324,20 +1329,27 @@ function RunsView() {
                 </header>
                 {actionError !== null ? <div className="run-error" role="alert"><Icon name="warning" /><div><strong>Action failed</strong><span>{actionError}</span></div></div> : null}
                 {selectedRun.error !== undefined ? <div className="run-error" role="alert"><Icon name="warning" /><div><strong>Run failed</strong><span>{selectedRun.error}</span></div></div> : null}
+                <nav aria-label="Observe detail views" className="observe-tabs">
+                  {(['runs', 'logs', 'traces', 'metrics'] as const).map((tab) => (
+                    <button aria-selected={observeTab === tab} className={observeTab === tab ? 'active' : ''} key={tab} onClick={() => setObserveTab(tab)} role="tab" type="button">
+                      {tab[0]!.toUpperCase() + tab.slice(1)}
+                    </button>
+                  ))}
+                </nav>
                 <div className="run-metrics">
                   <div><Icon name="clock" /><span>Duration</span><strong>{formatDuration(selectedRun.durationMs)}</strong></div>
                   <div><Icon name="cost" /><span>Cost</span><strong>${selectedRun.costUsd.toFixed(4)}</strong></div>
                   <div><Icon name="person" /><span>Human touches</span><strong>{selectedRun.humanTouchpoints}</strong></div>
                   <div><Icon name="success" /><span>Completed</span><strong>{formatDate(selectedRun.completedAt)}</strong></div>
                 </div>
-                <div className="timeline-heading"><div><span className="eyebrow">Execution log</span><h3>Event timeline</h3></div><span className="count-pill">{events.length} events</span></div>
-                {events.length === 0 ? (
-                  <EmptyState icon="clock" title="Awaiting events" message="The execution engine has not emitted events for this run yet." />
+                <div className="timeline-heading"><div><span className="eyebrow">{observeTab === 'runs' ? 'Execution log' : `${observeTab[0]!.toUpperCase() + observeTab.slice(1)} signal`}</span><h3>{observeTab === 'runs' ? 'Event timeline' : `${observeTab[0]!.toUpperCase() + observeTab.slice(1)} events`}</h3></div><span className="count-pill">{visibleEvents.length} events</span></div>
+                {visibleEvents.length === 0 ? (
+                  <EmptyState icon="clock" title="No matching events" message="This run has not emitted events for the selected Observe view yet." />
                 ) : (
                   <ol className="timeline">
-                    {events.map((event, index) => (
+                    {visibleEvents.map((event, index) => (
                       <li key={event.id}>
-                        <span className={`timeline-dot ${index === events.length - 1 ? 'latest' : ''}`} />
+                        <span className={`timeline-dot ${index === visibleEvents.length - 1 ? 'latest' : ''}`} />
                         <div className="timeline-card">
                           <div><strong>{event.type.replaceAll('_', ' ')}</strong><time>{formatDate(event.timestamp)}</time></div>
                           <p>{event.message}</p>
@@ -1348,13 +1360,13 @@ function RunsView() {
                     ))}
                   </ol>
                 )}
-                <div className="timeline-heading"><div><span className="eyebrow">Durable evidence</span><h3>Operation history</h3></div><span className="count-pill">{evidence.length} records</span></div>
+                {observeTab === 'runs' ? <><div className="timeline-heading"><div><span className="eyebrow">Durable evidence</span><h3>Operation history</h3></div><span className="count-pill">{evidence.length} records</span></div>
                 {evidence.length === 0 ? <p className="inline-empty">No durable operation evidence recorded.</p> : (
                   <div className="stage-table evidence-table">
                     <div className="stage-row stage-head"><span>Operation</span><span>Status</span><span>Attempt</span><span>Occurred</span></div>
                     {evidence.map((entry) => <div className="stage-row" key={entry.id}><strong>{entry.operation} · {entry.unitId}</strong><StatusBadge status={entry.status} /><span>{entry.attempt}</span><span>{formatDate(entry.occurredAt)}</span></div>)}
                   </div>
-                )}
+                )}</> : null}
               </>
             )}
           </section>
