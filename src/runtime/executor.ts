@@ -923,6 +923,30 @@ export class LocalWorkflowExecutor {
           : [];
         if (toolCalls.length > 0) {
           for (const call of toolCalls) {
+            const priorToolEvidence = await this.store.read((state) => state.evidence.find((evidence) =>
+              evidence.runId === runId
+              && evidence.unitId === node.id
+              && evidence.operation === 'agent.tool'
+              && evidence.idempotencyKey === `${call.callId}:succeeded`,
+            ));
+            if (priorToolEvidence !== undefined) {
+              await this.events.emit(runId, 'agent.tool.recovered', `Agent tool ${call.name} was already completed; skipping duplicate side effect.`, {
+                nodeId: node.id,
+                signal: 'trace',
+                spanKind: 'tool',
+                attributes: { 'openinference.span.kind': 'TOOL', 'tool.name': call.name, 'tool.call_id': call.callId, 'tool.recovered': true },
+              });
+              continue;
+            }
+            const pendingToolEvidence = await this.store.read((state) => state.evidence.find((evidence) =>
+              evidence.runId === runId
+              && evidence.unitId === node.id
+              && evidence.operation === 'agent.tool'
+              && evidence.idempotencyKey === `${call.callId}:started`,
+            ));
+            if (pendingToolEvidence !== undefined) {
+              throw new Error(`Agent tool "${call.name}" has an incomplete checkpoint; refusing to duplicate side effects.`);
+            }
             const argumentsHash = createHash('sha256').update(call.arguments).digest('hex');
             await this.events.emit(runId, 'agent.tool.requested', `Agent requested tool ${call.name}.`, {
               nodeId: node.id,
