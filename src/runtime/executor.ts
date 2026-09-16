@@ -356,9 +356,10 @@ export class LocalWorkflowExecutor {
 
         const currentRun = context.run;
         const unitStartedAt = Date.now();
-        const inputs = context.workflow.edges
+        const persistedInputs = context.workflow.edges
           .filter((edge) => edge.target === nextNode.id && currentRun.unitOutputs[edge.source] !== undefined)
           .map((edge) => currentRun.unitOutputs[edge.source]);
+        const inputs = await Promise.all(persistedInputs.map((input) => this.events.resolvePayload(input)));
         const unitEvidenceKey = nextNode.unit?.idempotencyKey ?? `run:${runId}:unit:${nextNode.id}`;
         await this.events.recordEvidence({
           runId,
@@ -395,7 +396,8 @@ export class LocalWorkflowExecutor {
             spanKind: nextNode.unit?.kind === 'agent' ? 'agent' : 'chain',
             attributes: { 'work.unit.output_schema': nextNode.unit?.outputSchema ?? 'unknown' },
           });
-          const completed = await this.completeNode(context.run.id, context.workflow, nextNode, result);
+          const persistedResult = await this.events.offloadPayload(runId, result, `unit:${nextNode.type}`);
+          const completed = await this.completeNode(context.run.id, context.workflow, nextNode, result, persistedResult);
           if (!completed) {
             await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'cancelled', idempotencyKey: `${unitEvidenceKey}:cancelled`, output: result });
             return;
@@ -1086,6 +1088,7 @@ export class LocalWorkflowExecutor {
     workflow: WorkflowDefinition,
     node: WorkflowNode,
     result: unknown,
+    persistedResult: unknown = result,
   ): Promise<boolean> {
     const completed = await this.store.mutate((state) => {
       const run = state.runs.find((candidate) => candidate.id === runId);
@@ -1098,7 +1101,7 @@ export class LocalWorkflowExecutor {
       if (!run.completedNodeIds.includes(node.id)) {
         run.completedNodeIds.push(node.id);
       }
-      run.unitOutputs[node.id] = result;
+      run.unitOutputs[node.id] = persistedResult;
       delete run.ciCheckpoints[node.id];
       for (const edge of workflow.edges.filter(
         (candidate) =>
@@ -1119,7 +1122,7 @@ export class LocalWorkflowExecutor {
     await this.events.emit(runId, 'node.completed', `${node.label} completed.`, {
       nodeId: node.id,
       ...(agentDefinition?.observability.captureOutputs || agentDefinition === undefined
-        ? { data: { result } }
+        ? { data: { result: persistedResult } }
         : { data: { result: '[redacted]' } }),
     });
     return true;

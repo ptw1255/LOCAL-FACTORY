@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { RunEvent } from '../domain/types.js';
 import { JsonStore } from '../storage/json-store.js';
+import { FileArtifactStore } from '../storage/artifact-store.js';
 import { EventService } from './event-service.js';
 
 function event(id: string, timestamp: string, traceId: string): RunEvent {
@@ -35,6 +36,19 @@ async function waitForNextMillisecond(timestamp: string): Promise<void> {
 }
 
 describe('EventService retention', () => {
+  it('offloads oversized event payloads and resolves them on demand', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const artifacts = new FileArtifactStore(path.join(directory, 'artifacts'));
+    const service = new EventService(store, { artifactStore: artifacts, inlineDataBytes: 1_024 });
+    const payload = { output: 'x'.repeat(2_000) };
+
+    const emitted = await service.emit('run-1', 'unit.completed', 'completed', { data: payload });
+    expect(emitted.data).toEqual(expect.objectContaining({ artifactRef: expect.objectContaining({ id: expect.stringMatching(/^artifact:sha256:/) }) }));
+    expect(JSON.stringify(emitted)).not.toContain(payload.output);
+    await expect(service.resolvePayload(emitted.data)).resolves.toEqual(payload);
+  });
+
   it('adds standard correlation attributes to every emitted signal', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const service = new EventService(new JsonStore(path.join(directory, 'state.json')));

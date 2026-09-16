@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { AgentSpanKind, EvidenceQuery, OperationEvidence, OperationEvidenceStatus, RunEvent } from '../domain/types.js';
+import type { ArtifactStore } from '../storage/artifact-store.js';
 import type { PlatformStore } from '../storage/store.js';
 import type { TelemetryExporter } from './otlp-exporter.js';
 import { telemetryAttributes, telemetryResource } from './semconv.js';
@@ -8,13 +9,17 @@ import { telemetryAttributes, telemetryResource } from './semconv.js';
 export class EventService {
   private readonly retentionHours: number;
   private readonly evidenceRetentionHours: number | undefined;
+  private readonly artifactStore: ArtifactStore | undefined;
+  private readonly inlineDataBytes: number;
 
   public constructor(
     private readonly store: PlatformStore,
-    options: { retentionHours?: number; evidenceRetentionHours?: number; exporter?: TelemetryExporter } = {},
+    options: { retentionHours?: number; evidenceRetentionHours?: number; exporter?: TelemetryExporter; artifactStore?: ArtifactStore; inlineDataBytes?: number } = {},
   ) {
     this.retentionHours = options.retentionHours ?? 48;
     this.evidenceRetentionHours = options.evidenceRetentionHours;
+    this.artifactStore = options.artifactStore;
+    this.inlineDataBytes = Math.max(1_024, options.inlineDataBytes ?? 64 * 1_024);
     this.exporter = options.exporter;
   }
 
@@ -47,6 +52,9 @@ export class EventService {
     });
     const traceId = options.traceId ?? runContext.traceId ?? runId.replaceAll('-', '').padEnd(32, '0').slice(0, 32);
     const spanId = randomUUID().replaceAll('-', '').slice(0, 16);
+    const data = options.data === undefined
+      ? undefined
+      : await this.offloadPayload(runId, options.data, `event:${type}`);
     const event: RunEvent = {
       ...((options.tenantId ?? runContext.tenantId) === undefined ? {} : { tenantId: options.tenantId ?? runContext.tenantId }),
       ...((options.projectId ?? runContext.projectId) === undefined ? {} : { projectId: options.projectId ?? runContext.projectId }),
@@ -59,7 +67,7 @@ export class EventService {
       traceId,
       spanId,
       ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
-      ...(options.data === undefined ? {} : { data: options.data }),
+      ...(data === undefined ? {} : { data: data as Record<string, unknown> }),
       ...(options.parentSpanId === undefined ? {} : { parentSpanId: options.parentSpanId }),
       ...(options.spanKind === undefined ? {} : { spanKind: options.spanKind }),
       ...(options.severityText === undefined ? {} : { severityText: options.severityText }),
@@ -141,6 +149,41 @@ export class EventService {
     return this.store.listEvidence(query);
   }
 
+  /** Replace an oversized JSON payload with a durable artifact reference. */
+  public async offloadPayload(runId: string, payload: unknown, kind: string): Promise<unknown> {
+    if (this.artifactStore === undefined) return payload;
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(payload);
+    } catch {
+      return payload;
+    }
+    if (Buffer.byteLength(serialized, 'utf8') <= this.inlineDataBytes) return payload;
+    const scope = await this.store.read((state) => {
+      const run = state.runs.find((candidate) => candidate.id === runId);
+      return { tenantId: run?.tenantId, projectId: run?.projectId };
+    });
+    const reference = await this.artifactStore.put({
+      kind,
+      content: serialized,
+      contentType: 'application/json',
+      runId,
+      ...(scope.tenantId === undefined ? {} : { tenantId: scope.tenantId }),
+      ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
+    });
+    return { artifactRef: reference };
+  }
+
+  /** Resolve an artifact-backed payload before delivering it to a downstream unit. */
+  public async resolvePayload(payload: unknown): Promise<unknown> {
+    if (this.artifactStore === undefined || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+    const reference = (payload as { artifactRef?: unknown }).artifactRef;
+    if (reference === null || typeof reference !== 'object' || typeof (reference as { id?: unknown }).id !== 'string') return payload;
+    const artifact = await this.artifactStore.get((reference as { id: string }).id);
+    if (artifact.reference.contentType === 'application/json') return JSON.parse(new TextDecoder().decode(artifact.content));
+    return artifact.content;
+  }
+
   public prune(): Promise<number> {
     const before = new Date(Date.now() - this.retentionHours * 60 * 60 * 1000).toISOString();
     const evidenceBefore = this.evidenceRetentionHours === undefined
@@ -152,13 +195,17 @@ export class EventService {
         .map((event) => event.traceId))];
       const deleted = this.store.pruneEvents === undefined ? 0 : await this.store.pruneEvents(before);
       const deletedEvidence = evidenceBefore === undefined || this.store.pruneEvidence === undefined ? 0 : await this.store.pruneEvidence(evidenceBefore);
+      const deletedArtifacts = this.artifactStore === undefined ? 0 : await this.artifactStore.prune(before);
       await this.exporter?.prune?.(traceIds);
-      return deleted + deletedEvidence;
+      return deleted + deletedEvidence + deletedArtifacts;
     });
   }
 
   public close(): Promise<void> {
-    return this.exporter?.close?.() ?? Promise.resolve();
+    return Promise.all([
+      this.exporter?.close?.() ?? Promise.resolve(),
+      this.artifactStore?.close?.() ?? Promise.resolve(),
+    ]).then(() => undefined);
   }
 }
 

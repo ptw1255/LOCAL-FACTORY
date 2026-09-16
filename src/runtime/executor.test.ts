@@ -8,6 +8,7 @@ import { seedWorkflow } from '../domain/seed.js';
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
+import { FileArtifactStore } from '../storage/artifact-store.js';
 import { LocalWorkflowExecutor } from './executor.js';
 import { OpenAIProviderError } from './openai.js';
 import type { GitHubRepositoryClient } from '../repository/github.js';
@@ -230,6 +231,34 @@ describe('LocalWorkflowExecutor', () => {
     expect(recorded.find((event) => event.type === 'node.completed' && event.nodeId === 'prepare')?.data?.result).toBe('VALIDATED REQUEST');
     const output = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.unitOutputs.prepare);
     expect(output).toBe('VALIDATED REQUEST');
+  });
+
+  it('resolves artifact-backed unit outputs before dispatching downstream work', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-runtime-artifacts-'));
+    const artifactStore = new FileArtifactStore(path.join(directory, 'artifacts'));
+    const artifactEvents = new EventService(store, { artifactStore, inlineDataBytes: 1_024 });
+    const artifactExecutor = new LocalWorkflowExecutor(store, artifactEvents);
+    const workflow = structuredClone(seedWorkflow);
+    workflow.nodes = workflow.nodes.filter((node) => ['trigger', 'prepare', 'output'].includes(node.id));
+    const prepare = workflow.nodes.find((node) => node.id === 'prepare');
+    const output = workflow.nodes.find((node) => node.id === 'output');
+    if (prepare === undefined || output === undefined) throw new Error('Seed nodes are missing.');
+    prepare.type = 'code';
+    prepare.unit = defaultWorkUnit('code');
+    prepare.config = { operation: 'identity', value: 'x'.repeat(2_000) };
+    output.type = 'code';
+    output.unit = defaultWorkUnit('code');
+    output.config = { operation: 'identity' };
+    workflow.edges = [
+      { id: 'trigger-prepare', source: 'trigger', target: 'prepare' },
+      { id: 'prepare-output', source: 'prepare', target: 'output' },
+    ];
+
+    const run = await artifactExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
+    const persisted = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id));
+    expect(persisted?.unitOutputs.prepare).toEqual(expect.objectContaining({ artifactRef: expect.objectContaining({ id: expect.stringMatching(/^artifact:sha256:/) }) }));
+    await expect(artifactEvents.resolvePayload(persisted?.unitOutputs.output)).resolves.toEqual('x'.repeat(2_000));
   });
 
   it('dispatches repository mutations into an isolated workspace', async () => {
