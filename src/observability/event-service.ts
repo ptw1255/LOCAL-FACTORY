@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
-import type { AgentSpanKind, RunEvent } from '../domain/types.js';
+import type { AgentSpanKind, OperationEvidence, OperationEvidenceStatus, RunEvent } from '../domain/types.js';
 import type { PlatformStore } from '../storage/store.js';
 import type { TelemetryExporter } from './otlp-exporter.js';
 import { telemetryResource } from './semconv.js';
@@ -73,6 +73,44 @@ export class EventService {
 
   public list(runId?: string): Promise<RunEvent[]> {
     return this.store.listEvents(runId);
+  }
+
+  public async recordEvidence(input: {
+    runId: string;
+    unitId: string;
+    operation: string;
+    status: OperationEvidenceStatus;
+    attempt?: number;
+    input?: unknown;
+    output?: unknown;
+    error?: string;
+    metadata?: Record<string, string | number | boolean>;
+  }): Promise<OperationEvidence> {
+    const scope = await this.store.read((state) => {
+      const run = state.runs.find((candidate) => candidate.id === input.runId);
+      return { tenantId: run?.tenantId, projectId: run?.projectId };
+    });
+    const evidence: OperationEvidence = {
+      ...(scope.tenantId === undefined ? {} : { tenantId: scope.tenantId }),
+      ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
+      id: randomUUID(),
+      runId: input.runId,
+      unitId: input.unitId,
+      operation: input.operation,
+      attempt: input.attempt ?? 1,
+      status: input.status,
+      occurredAt: new Date().toISOString(),
+      ...(input.input === undefined ? {} : { inputHash: createHash('sha256').update(JSON.stringify(input.input)).digest('hex') }),
+      ...(input.output === undefined ? {} : { outputHash: createHash('sha256').update(JSON.stringify(input.output)).digest('hex') }),
+      ...(input.error === undefined ? {} : { error: input.error.slice(0, 2_000) }),
+      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+    };
+    await this.store.appendEvidence(evidence);
+    return evidence;
+  }
+
+  public listEvidence(runId?: string): Promise<OperationEvidence[]> {
+    return this.store.listEvidence(runId);
   }
 
   public prune(): Promise<number> {

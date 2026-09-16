@@ -1,7 +1,7 @@
 import { Pool, type PoolConfig } from 'pg';
 
 import { createSeedState } from '../domain/seed.js';
-import type { PlatformState, RunEvent } from '../domain/types.js';
+import type { OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
 import { normalizePlatformState, type PlatformStore, type StateMutation } from './store.js';
 
 interface StateRow {
@@ -104,6 +104,40 @@ export class PostgresStore implements PlatformStore {
     return result.rows.map((row) => row.event);
   }
 
+  public async appendEvidence(evidence: OperationEvidence): Promise<void> {
+    await this.ensureInitialized();
+    await this.pool.query(
+      `INSERT INTO operation_evidence
+        (id, tenant_id, project_id, run_id, unit_id, operation, attempt, status, occurred_at,
+         input_hash, output_hash, error, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10, $11, $12, $13::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        evidence.id,
+        evidence.tenantId ?? null,
+        evidence.projectId ?? null,
+        evidence.runId,
+        evidence.unitId,
+        evidence.operation,
+        evidence.attempt,
+        evidence.status,
+        evidence.occurredAt,
+        evidence.inputHash ?? null,
+        evidence.outputHash ?? null,
+        evidence.error ?? null,
+        JSON.stringify(evidence.metadata ?? {}),
+      ],
+    );
+  }
+
+  public async listEvidence(runId?: string): Promise<OperationEvidence[]> {
+    await this.ensureInitialized();
+    const result = runId === undefined
+      ? await this.pool.query<OperationEvidence>('SELECT id, tenant_id AS "tenantId", project_id AS "projectId", run_id AS "runId", unit_id AS "unitId", operation, attempt, status, occurred_at AS "occurredAt", input_hash AS "inputHash", output_hash AS "outputHash", error, metadata FROM operation_evidence ORDER BY occurred_at ASC')
+      : await this.pool.query<OperationEvidence>('SELECT id, tenant_id AS "tenantId", project_id AS "projectId", run_id AS "runId", unit_id AS "unitId", operation, attempt, status, occurred_at AS "occurredAt", input_hash AS "inputHash", output_hash AS "outputHash", error, metadata FROM operation_evidence WHERE run_id = $1 ORDER BY occurred_at ASC', [runId]);
+    return result.rows;
+  }
+
   public async pruneEvents(before: string): Promise<number> {
     await this.ensureInitialized();
     const result = await this.pool.query(
@@ -165,6 +199,25 @@ export class PostgresStore implements PlatformStore {
         event JSONB NOT NULL
       )
     `);
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS operation_evidence (
+        id UUID PRIMARY KEY,
+        tenant_id TEXT,
+        project_id TEXT,
+        run_id TEXT NOT NULL,
+        unit_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        attempt INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('started', 'waiting', 'succeeded', 'failed', 'cancelled')),
+        occurred_at TIMESTAMPTZ NOT NULL,
+        input_hash TEXT,
+        output_hash TEXT,
+        error TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+      )
+    `);
+    await this.pool.query('CREATE INDEX IF NOT EXISTS operation_evidence_run_time_idx ON operation_evidence (run_id, occurred_at)');
+    await this.pool.query('CREATE INDEX IF NOT EXISTS operation_evidence_project_time_idx ON operation_evidence (project_id, occurred_at)');
     await this.pool.query('ALTER TABLE observability_events ADD COLUMN IF NOT EXISTS tenant_id TEXT');
     await this.pool.query('ALTER TABLE observability_events ADD COLUMN IF NOT EXISTS project_id TEXT');
     await this.pool.query(

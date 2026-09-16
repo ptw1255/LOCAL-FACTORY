@@ -130,6 +130,42 @@ describe('LocalWorkflowExecutor', () => {
     expect(output).toBe('VALIDATED REQUEST');
   });
 
+  it('dispatches repository mutations into an isolated workspace', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const prepare = workflow.nodes.find((node) => node.id === 'prepare');
+    if (prepare === undefined) throw new Error('Seed prepare node is missing.');
+    prepare.type = 'repositoryMutation';
+    prepare.label = 'Prepare repository workspace';
+    prepare.config = { operations: [{ operation: 'create', path: '.factory-run-marker', content: 'created' }] };
+    prepare.unit = defaultWorkUnit('repositoryMutation');
+
+    const repository = await (await import('../repository/workspace.js')).RepositoryWorkspace.open(process.cwd());
+    const isolatedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, repository);
+    const run = await isolatedExecutor.start(workflow);
+    await waitFor(async () =>
+      (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded',
+    );
+
+    const recorded = await events.list(run.id);
+    expect(recorded.some((event) => event.type === 'unit.completed' && event.nodeId === 'prepare')).toBe(true);
+    await expect(repository.read('.factory-run-marker')).rejects.toThrow();
+  });
+
+  it('routes OpenAI agents through the provider-neutral agent lifecycle', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    if (agent === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider: 'openai', model: 'gpt-5' };
+    const openai = { chat: async () => ({ content: 'hosted result', model: 'gpt-5', promptTokens: 3, completionTokens: 2, requestId: 'req-1' }) };
+    const hostedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, openai);
+    const run = await hostedExecutor.start(workflow);
+    await waitFor(async () =>
+      (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded',
+    );
+    const recorded = await events.list(run.id);
+    expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'openai', 'llm.request_id': 'req-1' }));
+  });
+
   it('does not execute nodes unreachable from the declared trigger', async () => {
     const workflow = structuredClone(seedWorkflow);
     workflow.nodes.push({
@@ -199,10 +235,12 @@ describe('LocalWorkflowExecutor', () => {
         costUsd: 0,
         humanTouchpoints: 0,
         workflowDefinition: structuredClone(seedWorkflow),
-        completedNodeIds: [],
-        activatedNodeIds: ['trigger'],
-        approvedNodeIds: [],
-        unitOutputs: {},
+    completedNodeIds: [],
+    activatedNodeIds: ['trigger'],
+    approvedNodeIds: [],
+    approvedNodeHashes: {},
+    pendingApprovalHashes: {},
+    unitOutputs: {},
       });
     });
 

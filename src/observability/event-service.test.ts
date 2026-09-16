@@ -61,4 +61,25 @@ describe('EventService retention', () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(await service.list('run-1')).toHaveLength(1);
   });
+
+  it('persists redacted operation evidence independently of telemetry retention', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const service = new EventService(store);
+
+    const evidence = await service.recordEvidence({
+      runId: 'run-1',
+      unitId: 'repository-check',
+      operation: 'repositoryCheck',
+      status: 'succeeded',
+      input: { command: 'npm test', secret: 'must-not-be-stored' },
+      output: { exitCode: 0 },
+      metadata: { attempt: 1 },
+    });
+
+    expect(evidence.inputHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(evidence.outputHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(await service.listEvidence('run-1'))).not.toContain('must-not-be-stored');
+    expect(await service.listEvidence('run-1')).toEqual([evidence]);
+  });
 });

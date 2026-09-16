@@ -4,6 +4,8 @@ import type {
   FactoryMetrics,
   NodeCatalogItem,
   RunEvent,
+  OperationEvidence,
+  DeploymentRecord,
   RunRecord,
   ProjectRecord,
   ProjectFileRecord,
@@ -113,6 +115,8 @@ export const api = {
     }),
   events: (runId: string) =>
     request<ItemsResponse<RunEvent>>(`/api/events?runId=${encodeURIComponent(runId)}`),
+  evidence: (runId: string) =>
+    request<ItemsResponse<OperationEvidence>>(`/api/evidence?runId=${encodeURIComponent(runId)}`),
   telemetry: (runId: string, signal?: 'log' | 'trace' | 'metric') =>
     request<ItemsResponse<RunEvent> & { resource: Record<string, string> }>(
       `/api/telemetry?runId=${encodeURIComponent(runId)}${signal === undefined ? '' : `&signal=${signal}`}`,
@@ -135,4 +139,7 @@ export const api = {
       body: JSON.stringify({ goal, workflowId }),
     }),
   factoryMetrics: () => request<FactoryMetrics>('/api/factory/metrics'),
+  deployments: () => request<ItemsResponse<DeploymentRecord>>('/api/deployments'),
+  deploymentAction: (id: string, action: DeploymentRecord['history'][number]['action'], artifactId?: string) =>
+    request<DeploymentRecord>(`/api/deployments/${encodeURIComponent(id)}/action`, { method: 'POST', body: JSON.stringify({ action, ...(artifactId === undefined ? {} : { artifactId }) }) }),
 };

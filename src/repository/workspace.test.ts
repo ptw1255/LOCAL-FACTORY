@@ -1,8 +1,13 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { RepositoryWorkspace } from './workspace.js';
+
+const execFileAsync = (file: string, args: string[], options: { cwd?: string } = {}) => new Promise<void>((resolve, reject) => {
+  execFile(file, args, options, (error) => error === null ? resolve() : reject(error));
+});
 
 describe('RepositoryWorkspace', () => {
   it('reads and lists only workspace-contained files', async () => {
@@ -31,5 +36,55 @@ describe('RepositoryWorkspace', () => {
     expect(artifact.baseRevision).toMatch(/^[0-9a-f]{40}$/);
     expect(typeof artifact.patch).toBe('string');
     expect(Array.isArray(artifact.changedPaths)).toBe(true);
+  });
+
+  it('mutates only an isolated run workspace and enforces hashes and protected paths', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-repo-'));
+    await writeFile(path.join(root, 'README.md'), 'before');
+    const source = await RepositoryWorkspace.open(root);
+    const run = await source.cloneForRun('run-test');
+
+    const result = await run.applyMutations([
+      { operation: 'replace', path: 'README.md', content: 'after', expectedSha256: '0'.repeat(64) },
+    ]).catch(() => undefined);
+    // Use the actual hash to prove optimistic concurrency without hard-coding fixture details.
+    const beforeHash = (await import('node:crypto')).createHash('sha256').update('before').digest('hex');
+    const replaced = await run.applyMutations([{ operation: 'replace', path: 'README.md', content: 'after', expectedSha256: beforeHash }]);
+    expect(result).toBeUndefined();
+    expect(replaced[0]?.sha256).toBe((await import('node:crypto')).createHash('sha256').update('after').digest('hex'));
+    expect(await run.read('README.md')).toBe('after');
+    expect(await source.read('README.md')).toBe('before');
+    await expect(run.applyMutations([{ operation: 'replace', path: 'README.md', content: 'blocked' }], { protectedPaths: ['README.md'] })).rejects.toThrow(/protected/);
+  });
+
+  it('rejects traversal and symbolic-link escapes before writing', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-repo-'));
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'factory-outside-'));
+    await writeFile(path.join(outside, 'secret.txt'), 'secret');
+    await symlink(outside, path.join(root, 'linked'));
+    const workspace = await RepositoryWorkspace.open(root);
+    const run = await workspace.cloneForRun('run-boundary');
+    await expect(run.applyMutations([{ operation: 'create', path: '../escape.txt', content: 'nope' }])).rejects.toThrow(/escapes/);
+    await expect(run.applyMutations([{ operation: 'create', path: 'linked/new.txt', content: 'nope' }])).rejects.toThrow(/symbolic link/);
+  });
+
+  it('creates a branch and commits only declared changed paths', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-git-'));
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: root });
+    await execFileAsync('git', ['config', 'user.email', 'factory@example.test'], { cwd: root });
+    await execFileAsync('git', ['config', 'user.name', 'Factory Test'], { cwd: root });
+    await writeFile(path.join(root, 'README.md'), 'before');
+    await execFileAsync('git', ['add', 'README.md'], { cwd: root });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: root });
+    const source = await RepositoryWorkspace.open(root);
+    const run = await source.cloneForRun('run-git');
+    const base = await run.revision();
+    await run.createBranch('factory/change', base);
+    await run.applyMutations([{ operation: 'replace', path: 'README.md', content: 'after' }]);
+    const committed = await run.commit('Apply workflow change', ['README.md']);
+    expect(committed.branch).toBe('factory/change');
+    expect(committed.revision).toMatch(/^[0-9a-f]{40}$/);
+    expect(await run.currentBranch()).toBe('factory/change');
+    await expect(run.createBranch('factory/change', committed.revision)).rejects.toThrow();
   });
 });

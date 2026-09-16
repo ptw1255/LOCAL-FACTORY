@@ -31,8 +31,11 @@ import { parseProjectYaml, stringifyProjectYaml } from '../declarative/yaml.js';
 import { CompositeTelemetryExporter, OtlpHttpExporter } from '../observability/otlp-exporter.js';
 import { LocalWorkflowExecutor } from '../runtime/executor.js';
 import { HttpOllamaClient } from '../runtime/ollama.js';
+import { HttpOpenAIClient } from '../runtime/openai.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 import { GitHubRepositoryClient } from '../repository/github.js';
+import { DeploymentReconciler } from '../deployment/reconciler.js';
+import type { OpenAIClient } from '../runtime/openai.js';
 import { JsonStore } from '../storage/json-store.js';
 import { PostgresStore } from '../storage/postgres-store.js';
 import { DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID, type PlatformStore } from '../storage/store.js';
@@ -45,6 +48,9 @@ export interface AppOptions {
   logger?: boolean;
   serveStatic?: boolean;
   observabilityRetentionHours?: number;
+  repositoryWorkspace?: RepositoryWorkspace;
+  githubRepository?: GitHubRepositoryClient;
+  openaiClient?: OpenAIClient;
 }
 
 function errorMessage(error: unknown): string {
@@ -115,19 +121,21 @@ export async function createApp(
   const exporter = telemetryExporter();
   const events = new EventService(store, { retentionHours, exporter });
   const ollama = new HttpOllamaClient();
-  const executor = new LocalWorkflowExecutor(store, events, ollama);
-  const repositoryWorkspace = process.env.REPOSITORY_WORKSPACE === undefined
+  const repositoryWorkspace = options.repositoryWorkspace ?? (process.env.REPOSITORY_WORKSPACE === undefined
     ? undefined
-    : await RepositoryWorkspace.open(process.env.REPOSITORY_WORKSPACE);
-  const githubRepository = process.env.GITHUB_TOKEN !== undefined && process.env.GITHUB_REPOSITORY_OWNER !== undefined && process.env.GITHUB_REPOSITORY_NAME !== undefined
+    : await RepositoryWorkspace.open(process.env.REPOSITORY_WORKSPACE));
+  const githubRepository = options.githubRepository ?? (process.env.GITHUB_TOKEN !== undefined && process.env.GITHUB_REPOSITORY_OWNER !== undefined && process.env.GITHUB_REPOSITORY_NAME !== undefined
     ? new GitHubRepositoryClient({ token: process.env.GITHUB_TOKEN, owner: process.env.GITHUB_REPOSITORY_OWNER, repo: process.env.GITHUB_REPOSITORY_NAME })
-    : undefined;
+    : undefined);
+  const openai = options.openaiClient ?? new HttpOpenAIClient({ secretBroker });
+  const executor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace, githubRepository, openai);
   const ollamaAgents = await store.read((state) => state.workflows.flatMap((workflow) => workflow.agents));
   if (ollamaAgents.some((agent) => agent.model.provider?.toLowerCase() === 'ollama' && agent.model.provisioning?.mode === 'pull-on-start')) {
     void ollama.provision(ollamaAgents).catch((error: unknown) => app.log.warn({ error }, 'Ollama model provisioning did not complete; execution will retry on demand.'));
   }
   const connections = new ConnectionService(store, secretBroker);
   const proposals = new ProposalService(store);
+  const deployments = new DeploymentReconciler(store);
   if (store.close !== undefined) {
     app.addHook('onClose', async () => store.close?.());
   }
@@ -572,6 +580,39 @@ export async function createApp(
     return { items: await store.read((state) => state.runs.filter((run) => inScope(run, scope))) };
   });
 
+  app.get('/api/deployments', async (request) => {
+    return { items: await deployments.list(scopeFromRequest(request)) };
+  });
+
+  app.post<{ Body: unknown }>('/api/deployments', async (request, reply) => {
+    const body = request.body as { workflowId?: unknown; environment?: unknown; artifactId?: unknown; trigger?: unknown };
+    if (![body?.workflowId, body?.environment, body?.artifactId, body?.trigger].every((value) => typeof value === 'string' && value.trim() !== '')) return reply.status(422).send({ message: 'workflowId, environment, artifactId, and trigger are required.' });
+    try {
+      return await deployments.create({ scope: scopeFromRequest(request), workflowId: body.workflowId as string, environment: body.environment as string, artifactId: body.artifactId as string, trigger: body.trigger as string });
+    } catch (error) {
+      return reply.status(422).send({ message: errorMessage(error) });
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/deployments/:id/action', async (request, reply) => {
+    const body = request.body as { action?: unknown; artifactId?: unknown; reason?: unknown };
+    const actions = new Set(['deploy', 'start', 'stop', 'restart', 'rollback']);
+    if (typeof body?.action !== 'string' || !actions.has(body.action)) return reply.status(422).send({ message: 'A supported deployment action is required.' });
+    try {
+      return await deployments.action(request.params.id, scopeFromRequest(request), body.action as import('../domain/types.js').DeploymentAction, {
+        ...(typeof body.artifactId === 'string' ? { artifactId: body.artifactId } : {}),
+        ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
+      });
+    } catch (error) {
+      return reply.status(409).send({ message: errorMessage(error) });
+    }
+  });
+
+  app.post<{ Params: { id: string } }>('/api/deployments/:id/reconcile', async (request, reply) => {
+    try { return await deployments.reconcile(request.params.id, scopeFromRequest(request)); }
+    catch (error) { return reply.status(409).send({ message: errorMessage(error) }); }
+  });
+
   app.get<{ Params: { id: string } }>('/api/runs/:id', async (request, reply) => {
     const scope = scopeFromRequest(request);
     const run = await store.read((state) =>
@@ -614,6 +655,13 @@ export async function createApp(
   app.get<{ Querystring: { runId?: string } }>('/api/events', async (request) => {
     const scope = scopeFromRequest(request);
     return { items: (await events.list(request.query.runId)).filter((event) => inScope(event, scope)) };
+  });
+
+  app.get<{ Querystring: { runId?: string } }>('/api/evidence', async (request) => {
+    const scope = scopeFromRequest(request);
+    return {
+      items: (await events.listEvidence(request.query.runId)).filter((entry) => inScope(entry, scope)),
+    };
   });
 
   app.get<{

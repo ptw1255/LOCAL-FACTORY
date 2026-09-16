@@ -1,4 +1,4 @@
-export type ViewId = 'studio' | 'observe' | 'runs' | 'connections' | 'proposals' | 'factory';
+export type ViewId = 'studio' | 'observe' | 'runs' | 'connections' | 'proposals' | 'factory' | 'deployments';
 export type WorkflowStatus = 'draft' | 'deployed';
 export type RunStatus =
   | 'queued'
@@ -54,6 +54,22 @@ export interface WorkUnitDefinition {
   timeoutMs: number;
   retryAttempts: number;
   idempotencyKey?: string;
+}
+
+export interface OperationEvidence {
+  id: string;
+  tenantId?: string;
+  projectId?: string;
+  runId: string;
+  unitId: string;
+  operation: string;
+  attempt: number;
+  status: 'started' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
+  occurredAt: string;
+  inputHash?: string;
+  outputHash?: string;
+  error?: string;
+  metadata?: Record<string, string | number | boolean>;
 }
 
 export interface AgentDefinition {
@@ -167,6 +183,34 @@ export interface ConnectionRecord {
   usageCount: number;
   secretRef?: string;
   secretConfigured: boolean;
+}
+
+export interface DeploymentTransition {
+  id: string;
+  action: 'deploy' | 'start' | 'stop' | 'restart' | 'rollback';
+  actor: string;
+  occurredAt: string;
+  fromArtifactId?: string;
+  toArtifactId?: string;
+  outcome: 'succeeded' | 'failed';
+  reason?: string;
+}
+
+export interface DeploymentRecord {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  workflowId: string;
+  environment: string;
+  artifactId: string;
+  desiredState: 'running' | 'stopped';
+  observedState: 'unknown' | 'starting' | 'live' | 'stopping' | 'degraded' | 'failed' | 'stopped';
+  health: 'healthy' | 'degraded' | 'unknown';
+  trigger: string;
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
+  history: DeploymentTransition[];
 }
 
 export interface AgentProposal {

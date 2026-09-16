@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type {
   RunRecord,
@@ -10,6 +10,10 @@ import { validateWorkflow } from '../domain/validator.js';
 import type { EventService } from '../observability/event-service.js';
 import type { PlatformStore } from '../storage/store.js';
 import { HttpOllamaClient, type OllamaClient } from './ollama.js';
+import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
+import type { RepositoryWorkspace } from '../repository/workspace.js';
+import type { GitHubRepositoryClient } from '../repository/github.js';
+import type { OpenAIClient } from './openai.js';
 
 const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
@@ -38,11 +42,16 @@ function edgeMatches(edge: WorkflowEdge, result: unknown): boolean {
 
 export class LocalWorkflowExecutor {
   private readonly activeRuns = new Map<string, AbortController>();
+  private readonly runWorkspaces = new Map<string, RepositoryWorkspace>();
 
   public constructor(
     private readonly store: PlatformStore,
     private readonly events: EventService,
     private readonly ollama: OllamaClient = new HttpOllamaClient(),
+    private readonly dispatcher: WorkUnitDispatcher = new WorkUnitDispatcher(),
+    private readonly repositoryWorkspace?: RepositoryWorkspace,
+    private readonly githubRepository?: GitHubRepositoryClient,
+    private readonly openai?: OpenAIClient,
   ) {}
 
   public async recover(): Promise<number> {
@@ -96,6 +105,8 @@ export class LocalWorkflowExecutor {
       completedNodeIds: [],
       activatedNodeIds: [trigger.id],
       approvedNodeIds: [],
+      approvedNodeHashes: {},
+      pendingApprovalHashes: {},
       unitOutputs: {},
     };
 
@@ -116,23 +127,28 @@ export class LocalWorkflowExecutor {
       if (target.status !== 'waiting') {
         throw new Error('Only waiting runs can be approved.');
       }
-      const waitingNode = target.workflowDefinition.nodes.find(
-        (node) =>
-          node.type === 'approval' &&
-          target.activatedNodeIds.includes(node.id) &&
-          !target.completedNodeIds.includes(node.id),
-      );
+      const waitingNode = target.workflowDefinition.nodes.find((node) =>
+        this.requiresApproval(node) && target.activatedNodeIds.includes(node.id) && !target.completedNodeIds.includes(node.id));
       if (waitingNode === undefined) {
         throw new Error('No approval node is waiting.');
       }
+      const expectedHash = target.pendingApprovalHashes[waitingNode.id];
+      const currentHash = this.approvalFingerprint(target, waitingNode);
+      if (expectedHash === undefined || expectedHash !== currentHash) {
+        throw new Error('Approval is no longer valid because the approved operation changed.');
+      }
       target.approvedNodeIds.push(waitingNode.id);
+      target.approvedNodeHashes[waitingNode.id] = currentHash;
+      delete target.pendingApprovalHashes[waitingNode.id];
       target.humanTouchpoints += 1;
       target.status = 'queued';
       return target;
     });
 
     await this.events.emit(runId, 'approval.received', 'Human approval received.');
-    void this.execute(runId);
+    // The waiting execution is still unwinding its finally block when approval
+    // arrives. Yield once so its active-run guard is released before resuming.
+    setTimeout(() => void this.execute(runId), 0);
     return run;
   }
 
@@ -200,16 +216,34 @@ export class LocalWorkflowExecutor {
           return;
         }
 
-        if (
-          nextNode.type === 'approval' &&
-          !context.run.approvedNodeIds.includes(nextNode.id)
-        ) {
+        if (this.requiresApproval(nextNode) && !context.run.approvedNodeIds.includes(nextNode.id)) {
+          await this.waitForApproval(runId, nextNode.id);
+          return;
+        }
+        if (this.requiresApproval(nextNode) && context.run.approvedNodeHashes[nextNode.id] !== this.approvalFingerprint(context.run, nextNode)) {
+          await this.store.mutate((state) => {
+            const run = state.runs.find((candidate) => candidate.id === runId);
+            if (run === undefined) return;
+            run.approvedNodeIds = run.approvedNodeIds.filter((nodeId) => nodeId !== nextNode.id);
+            delete run.approvedNodeHashes[nextNode.id];
+          });
           await this.waitForApproval(runId, nextNode.id);
           return;
         }
 
         const currentRun = context.run;
         const unitStartedAt = Date.now();
+        const inputs = context.workflow.edges
+          .filter((edge) => edge.target === nextNode.id && currentRun.unitOutputs[edge.source] !== undefined)
+          .map((edge) => currentRun.unitOutputs[edge.source]);
+        await this.events.recordEvidence({
+          runId,
+          unitId: nextNode.id,
+          operation: nextNode.type,
+          status: 'started',
+          input: inputs,
+          metadata: { 'work.unit.kind': nextNode.unit?.kind ?? 'unknown', 'work.unit.version': nextNode.unit?.version ?? 0 },
+        });
         await this.events.emit(runId, 'unit.started', `${nextNode.label} unit started.`, {
           nodeId: nextNode.id,
           signal: 'trace',
@@ -222,10 +256,14 @@ export class LocalWorkflowExecutor {
           },
         });
         try {
-          const inputs = context.workflow.edges
-            .filter((edge) => edge.target === nextNode.id && currentRun.unitOutputs[edge.source] !== undefined)
-            .map((edge) => currentRun.unitOutputs[edge.source]);
-          const result = await this.executeNode(runId, nextNode, controller.signal, inputs);
+          const result = await this.executeNode(
+            runId,
+            currentRun.traceId,
+            nextNode,
+            controller.signal,
+            inputs,
+            currentRun.completedNodeIds.length + 1,
+          );
           await this.events.emit(runId, 'unit.output.produced', `${nextNode.label} produced output.`, {
             nodeId: nextNode.id,
             signal: 'trace',
@@ -233,7 +271,11 @@ export class LocalWorkflowExecutor {
             attributes: { 'work.unit.output_schema': nextNode.unit?.outputSchema ?? 'unknown' },
           });
           const completed = await this.completeNode(context.run.id, context.workflow, nextNode, result);
-          if (!completed) return;
+          if (!completed) {
+            await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'cancelled', output: result });
+            return;
+          }
+          await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'succeeded', output: result });
           await this.events.emit(runId, 'unit.completed', `${nextNode.label} unit completed.`, {
             nodeId: nextNode.id,
             signal: 'trace',
@@ -253,6 +295,13 @@ export class LocalWorkflowExecutor {
             },
           });
         } catch (error) {
+          await this.events.recordEvidence({
+            runId,
+            unitId: nextNode.id,
+            operation: nextNode.type,
+            status: controller.signal.aborted ? 'cancelled' : 'failed',
+            error: error instanceof Error ? error.message : 'Unknown unit failure.',
+          });
           await this.events.emit(runId, 'unit.failed', `${nextNode.label} unit failed.`, {
             nodeId: nextNode.id,
             severityText: 'ERROR',
@@ -306,9 +355,11 @@ export class LocalWorkflowExecutor {
 
   private async executeNode(
     runId: string,
+    traceId: string,
     node: WorkflowNode,
     signal: AbortSignal,
     inputs: unknown[] = [],
+    sequence = 1,
   ): Promise<unknown> {
     signal.throwIfAborted();
     await this.events.emit(runId, 'node.started', `${node.label} started.`, {
@@ -322,6 +373,23 @@ export class LocalWorkflowExecutor {
       data: { nodeType: node.type },
     });
 
+    return this.dispatcher.dispatch(node.unit, {
+      runId,
+      traceId,
+      sequence,
+      node,
+      inputs,
+      signal,
+      execute: () => this.executeNodeImplementation(runId, node, signal, inputs),
+    });
+  }
+
+  private async executeNodeImplementation(
+    runId: string,
+    node: WorkflowNode,
+    signal: AbortSignal,
+    inputs: unknown[],
+  ): Promise<unknown> {
     let result: unknown = true;
     switch (node.type) {
       case 'condition':
@@ -349,6 +417,68 @@ export class LocalWorkflowExecutor {
       case 'code':
         result = this.executeDeterministicCode(node, inputs);
         break;
+      case 'repositoryCheck': {
+        const workspace = await this.workspaceForRun(runId);
+        const command = typeof node.config.command === 'string' ? node.config.command : 'npm test';
+        const timeoutMs = typeof node.config.timeoutMs === 'number' ? node.config.timeoutMs : undefined;
+        result = await workspace.runCheck(command, timeoutMs);
+        break;
+      }
+      case 'repositoryPatch': {
+        const workspace = await this.workspaceForRun(runId);
+        result = await workspace.patchArtifact();
+        break;
+      }
+      case 'repositoryMutation': {
+        const workspace = await this.workspaceForRun(runId);
+        const operations = Array.isArray(node.config.operations) ? node.config.operations : [];
+        const protectedPaths = Array.isArray(node.config.protectedPaths)
+          ? node.config.protectedPaths.filter((value): value is string => typeof value === 'string')
+          : [];
+        result = await workspace.applyMutations(operations, { protectedPaths });
+        break;
+      }
+      case 'repositoryBranch': {
+        const workspace = await this.workspaceForRun(runId);
+        const branch = typeof node.config.branch === 'string' ? node.config.branch : '';
+        const baseRevision = typeof node.config.baseRevision === 'string' ? node.config.baseRevision : await workspace.revision();
+        result = await workspace.createBranch(branch, baseRevision);
+        break;
+      }
+      case 'repositoryCommit': {
+        const workspace = await this.workspaceForRun(runId);
+        const message = typeof node.config.message === 'string' ? node.config.message : '';
+        const paths = Array.isArray(node.config.paths) ? node.config.paths.filter((value): value is string => typeof value === 'string') : [];
+        result = await workspace.commit(message, paths);
+        break;
+      }
+      case 'repositoryPush': {
+        const workspace = await this.workspaceForRun(runId);
+        const branch = typeof node.config.branch === 'string' && node.config.branch !== ''
+          ? node.config.branch
+          : await workspace.currentBranch();
+        const remote = typeof node.config.remote === 'string' ? node.config.remote : 'origin';
+        result = await workspace.push(branch, remote);
+        break;
+      }
+      case 'repositoryPullRequest': {
+        if (this.githubRepository === undefined) throw new Error('GitHub repository integration is not configured.');
+        const title = typeof node.config.title === 'string' ? node.config.title : '';
+        const body = typeof node.config.body === 'string' ? node.config.body : '';
+        const head = typeof node.config.head === 'string' ? node.config.head : '';
+        const base = typeof node.config.base === 'string' ? node.config.base : 'main';
+        result = await this.githubRepository.createOrGetPullRequest({ title, body, head, base });
+        break;
+      }
+      case 'repositoryCi': {
+        if (this.githubRepository === undefined) throw new Error('GitHub repository integration is not configured.');
+        const ref = typeof node.config.ref === 'string' && node.config.ref !== '' ? node.config.ref : await (await this.workspaceForRun(runId)).revision();
+        const required = Array.isArray(node.config.required) ? node.config.required.filter((value): value is string => typeof value === 'string') : [];
+        const timeoutMs = typeof node.config.timeoutMs === 'number' ? node.config.timeoutMs : undefined;
+        const intervalMs = typeof node.config.intervalMs === 'number' ? node.config.intervalMs : undefined;
+        result = await this.githubRepository.waitForChecks({ ref, required, timeoutMs, intervalMs, signal });
+        break;
+      }
       case 'notification':
         signal.throwIfAborted();
         await this.events.emit(
@@ -445,6 +575,8 @@ export class LocalWorkflowExecutor {
       const provider = agent.model.provider?.toLowerCase();
       const modelResult = provider === 'ollama'
         ? await this.ollama.chat({ agent, goal, signal })
+        : provider === 'openai' && this.openai !== undefined
+          ? await this.openai.chat({ agent, goal, signal, traceId: runId })
         : undefined;
       if (modelResult !== undefined) lastModelOutput = modelResult.content;
       await this.events.emit(
@@ -469,14 +601,15 @@ export class LocalWorkflowExecutor {
         },
       );
       if (modelResult !== undefined) {
-        await this.events.emit(runId, 'llm.completed', 'Ollama model completed.', {
+        await this.events.emit(runId, 'llm.completed', `${provider ?? 'Configured'} model completed.`, {
           nodeId: node.id,
           signal: 'trace',
           spanKind: 'llm',
           attributes: {
             'openinference.span.kind': 'LLM',
             'llm.model_name': modelResult.model,
-            'llm.provider': 'ollama',
+            'llm.provider': provider ?? 'unknown',
+            ...(modelResult.requestId === undefined ? {} : { 'llm.request_id': modelResult.requestId }),
             ...(modelResult.promptTokens === undefined ? {} : { 'llm.token_count.prompt': modelResult.promptTokens }),
             ...(modelResult.completionTokens === undefined ? {} : { 'llm.token_count.completion': modelResult.completionTokens }),
           },
@@ -514,6 +647,34 @@ export class LocalWorkflowExecutor {
       outcome: 'bounded-completion',
       ...(lastModelOutput === undefined ? {} : { output: lastModelOutput }),
     };
+  }
+
+  private async workspaceForRun(runId: string): Promise<RepositoryWorkspace> {
+    if (this.repositoryWorkspace === undefined) {
+      throw new Error('Repository workspace is not configured for this runtime.');
+    }
+    const existing = this.runWorkspaces.get(runId);
+    if (existing !== undefined) return existing;
+    const isolated = await this.repositoryWorkspace.cloneForRun(runId);
+    this.runWorkspaces.set(runId, isolated);
+    return isolated;
+  }
+
+  private requiresApproval(node: WorkflowNode): boolean {
+    return node.type === 'approval' || node.config.requiresApproval === true;
+  }
+
+  private approvalFingerprint(run: RunRecord, node: WorkflowNode): string {
+    const inputs = run.workflowDefinition.edges
+      .filter((edge) => edge.target === node.id)
+      .map((edge) => run.unitOutputs[edge.source]);
+    return createHash('sha256').update(JSON.stringify({
+      artifactId: run.artifactId,
+      nodeId: node.id,
+      nodeType: node.type,
+      config: node.config,
+      inputs,
+    })).digest('hex');
   }
 
   private async completeNode(
@@ -583,6 +744,8 @@ export class LocalWorkflowExecutor {
         return false;
       }
       run.status = 'waiting';
+      const node = run.workflowDefinition.nodes.find((candidate) => candidate.id === nodeId);
+      if (node !== undefined) run.pendingApprovalHashes[nodeId] = this.approvalFingerprint(run, node);
       return true;
     });
     if (!waiting) {
@@ -594,6 +757,7 @@ export class LocalWorkflowExecutor {
       'Workflow is waiting for human approval.',
       { nodeId },
     );
+    await this.events.recordEvidence({ runId, unitId: nodeId, operation: 'approval', status: 'waiting' });
   }
 
   private async completeRun(runId: string): Promise<void> {

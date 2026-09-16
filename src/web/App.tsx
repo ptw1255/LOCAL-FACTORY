@@ -32,6 +32,8 @@ import type {
   AgentProposal,
   ConnectionRecord,
   FactoryMetrics,
+  DeploymentRecord,
+  OperationEvidence,
   NodeCatalogItem,
   ProjectRecord,
   ProjectFileRecord,
@@ -55,6 +57,7 @@ const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconNam
   connections: { label: 'Connections', icon: 'connections' },
   proposals: { label: 'Agent Proposals', icon: 'agent' },
   factory: { label: 'Factory', icon: 'factory' },
+  deployments: { label: 'Deployments', icon: 'factory' },
 };
 
 function readView(): ViewId {
@@ -351,6 +354,7 @@ export function App() {
         {view === 'connections' ? <ConnectionsView key={projectId} /> : null}
         {view === 'proposals' ? <ProposalsView key={projectId} onOpenStudio={() => setView('studio')} /> : null}
         {view === 'factory' ? <FactoryView key={projectId} onNavigate={setView} /> : null}
+        {view === 'deployments' ? <DeploymentsView key={projectId} onNavigate={setView} /> : null}
       </main>
     </div>
   );
@@ -1168,6 +1172,7 @@ function RunsView() {
   );
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
+  const [evidence, setEvidence] = useState<OperationEvidence[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -1203,18 +1208,20 @@ function RunsView() {
     if (selectedRunId === null) {
       setSelectedRun(null);
       setEvents([]);
+      setEvidence([]);
       return;
     }
     sessionStorage.setItem('selectedRunId', selectedRunId);
     setDetailLoading(true);
-    Promise.all([api.run(selectedRunId), api.events(selectedRunId)])
-      .then(([run, eventResponse]) => {
+    Promise.all([api.run(selectedRunId), api.events(selectedRunId), api.evidence(selectedRunId)])
+      .then(([run, eventResponse, evidenceResponse]) => {
         setSelectedRun(run);
         setEvents(
           [...eventResponse.items].sort(
             (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
           ),
         );
+        setEvidence([...evidenceResponse.items].sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()));
       })
       .catch((detailError: unknown) => setError(errorText(detailError)))
       .finally(() => setDetailLoading(false));
@@ -1340,6 +1347,13 @@ function RunsView() {
                       </li>
                     ))}
                   </ol>
+                )}
+                <div className="timeline-heading"><div><span className="eyebrow">Durable evidence</span><h3>Operation history</h3></div><span className="count-pill">{evidence.length} records</span></div>
+                {evidence.length === 0 ? <p className="inline-empty">No durable operation evidence recorded.</p> : (
+                  <div className="stage-table evidence-table">
+                    <div className="stage-row stage-head"><span>Operation</span><span>Status</span><span>Attempt</span><span>Occurred</span></div>
+                    {evidence.map((entry) => <div className="stage-row" key={entry.id}><strong>{entry.operation} · {entry.unitId}</strong><StatusBadge status={entry.status} /><span>{entry.attempt}</span><span>{formatDate(entry.occurredAt)}</span></div>)}
+                  </div>
                 )}
               </>
             )}
@@ -1518,6 +1532,72 @@ function ProposalsView({ onOpenStudio }: { onOpenStudio: () => void }) {
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
+  const [deployments, setDeployments] = useState<DeploymentRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const loadDeployments = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try { setDeployments((await api.deployments()).items); }
+    catch (loadError) { setError(errorText(loadError)); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => void loadDeployments(), [loadDeployments]);
+
+  async function act(deployment: DeploymentRecord, action: DeploymentRecord['history'][number]['action']) {
+    setBusyId(deployment.id);
+    setError(null);
+    try {
+      const updated = await api.deploymentAction(deployment.id, action);
+      setDeployments((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
+    } catch (actionError) { setError(errorText(actionError)); }
+    finally { setBusyId(null); }
+  }
+
+  if (loading) return <LoadingState label="Loading deployments" />;
+  if (error !== null && deployments.length === 0) return <ErrorState message={error} retry={() => void loadDeployments()} />;
+  const live = deployments.filter((deployment) => deployment.observedState === 'live').length;
+  const attention = deployments.filter((deployment) => ['degraded', 'failed', 'unknown'].includes(deployment.observedState)).length;
+
+  return (
+    <div className="page">
+      <AppHeader eyebrow="Operational control plane" title="Deployments">
+        <button className="button secondary" onClick={() => void loadDeployments()} type="button"><Icon name="refresh" /> Refresh</button>
+      </AppHeader>
+      <p className="page-intro">Manage which workflow versions are live in each environment. These are logical deployments backed by the local runtime, not Docker containers.</p>
+      {error === null ? null : <p className="form-error" role="alert">{error}</p>}
+      <section className="summary-strip connection-summary">
+        <div><span>Total</span><strong>{deployments.length}</strong></div>
+        <div><span>Live</span><strong>{live}</strong></div>
+        <div><span>Attention</span><strong>{attention}</strong></div>
+        <div><span>Stopped</span><strong>{deployments.filter((deployment) => deployment.observedState === 'stopped').length}</strong></div>
+      </section>
+      {deployments.length === 0 ? (
+        <EmptyState icon="factory" title="No deployments yet" message="Compile a workflow artifact, then create a deployment through the API to manage its desired state here." action={<button className="button primary" onClick={() => onNavigate('studio')} type="button">Open Workspace <Icon name="chevron" /></button>} />
+      ) : (
+        <div className="connection-grid">
+          {deployments.map((deployment) => {
+            const workflowName = deployment.workflowId;
+            const action = deployment.observedState === 'live' ? 'stop' : 'start';
+            return (
+              <article className="connection-card" key={deployment.id}>
+                <header><span className="connector-logo"><Icon name="factory" size={18} /></span><div><h2>{workflowName}</h2><span>{deployment.environment} · artifact {deployment.artifactId.slice(0, 18)}</span></div><StatusBadge status={deployment.observedState} /></header>
+                <dl><div><dt>Desired</dt><dd>{deployment.desiredState}</dd></div><div><dt>Health</dt><dd>{deployment.health}</dd></div><div><dt>Trigger</dt><dd>{deployment.trigger}</dd></div><div><dt>Updated</dt><dd>{formatDate(deployment.updatedAt)}</dd></div></dl>
+                {deployment.lastError === undefined ? null : <p className="form-error">{deployment.lastError}</p>}
+                <div className="form-actions"><button className="button primary" disabled={busyId === deployment.id} onClick={() => void act(deployment, action)} type="button">{busyId === deployment.id ? 'Working…' : action === 'stop' ? 'Stop' : 'Start'}</button><button className="button ghost" disabled={busyId === deployment.id} onClick={() => void act(deployment, 'restart')} type="button">Restart</button><button className="text-button" onClick={() => onNavigate('observe')} type="button">Observe <Icon name="chevron" /></button></div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

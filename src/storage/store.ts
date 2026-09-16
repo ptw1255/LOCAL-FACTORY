@@ -1,4 +1,4 @@
-import type { PlatformState, RunEvent } from '../domain/types.js';
+import type { OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
 import { defaultWorkUnit } from '../domain/catalog.js';
 
 export const DEFAULT_TENANT_ID = 'tenant-local';
@@ -12,6 +12,8 @@ export interface PlatformStore {
   mutate<T>(mutation: StateMutation<T>): Promise<T>;
   appendEvent(event: RunEvent): Promise<void>;
   listEvents(runId?: string): Promise<RunEvent[]>;
+  appendEvidence(evidence: OperationEvidence): Promise<void>;
+  listEvidence(runId?: string): Promise<OperationEvidence[]>;
   /** Remove observability records older than the configured retention window. */
   pruneEvents?(before: string): Promise<number>;
   close?(): Promise<void>;
@@ -20,6 +22,8 @@ export interface PlatformStore {
 export function normalizePlatformState(state: PlatformState): PlatformState {
   state.files ??= [];
   state.artifacts ??= [];
+  state.evidence ??= [];
+  state.deployments ??= [];
   state.tenants ??= [{
     id: DEFAULT_TENANT_ID,
     name: 'Local tenant',
@@ -65,6 +69,8 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
     run.tenantId ??= run.workflowDefinition.tenantId ?? tenantId;
     run.projectId ??= run.workflowDefinition.projectId ?? projectId;
     run.unitOutputs ??= {};
+    run.approvedNodeHashes ??= {};
+    run.pendingApprovalHashes ??= {};
   }
   for (const event of state.events) {
     const run = state.runs.find((candidate) => candidate.id === event.runId);
