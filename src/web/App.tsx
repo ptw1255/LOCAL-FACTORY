@@ -1370,7 +1370,7 @@ function RunsView() {
                 {evidence.length === 0 ? <p className="inline-empty">No durable operation evidence recorded.</p> : (
                   <div className="stage-table evidence-table">
                     <div className="stage-row stage-head"><span>Operation</span><span>Status</span><span>Attempt</span><span>Occurred</span></div>
-                    {evidence.map((entry) => <div className="stage-row" key={entry.id}><strong>{entry.operation} · {entry.unitId}</strong><StatusBadge status={entry.status} /><span>{entry.attempt}</span><span>{formatDate(entry.occurredAt)}</span></div>)}
+                    {evidence.map((entry) => <div className="stage-row" key={entry.id}><details className="evidence-detail"><summary><strong>{entry.operation} · {entry.unitId}</strong></summary><div className="evidence-detail-body">{entry.inputHash === undefined ? null : <span>Input hash: <code>{entry.inputHash}</code></span>}{entry.outputHash === undefined ? null : <span>Output hash: <code>{entry.outputHash}</code></span>}{entry.error === undefined ? null : <span className="form-error">{entry.error}</span>}{entry.metadata === undefined || Object.keys(entry.metadata).length === 0 ? null : <pre>{JSON.stringify(entry.metadata, null, 2)}</pre>}{typeof entry.metadata?.['provider.url'] === 'string' && entry.metadata['provider.url'].startsWith('https://github.com/') ? <a href={entry.metadata['provider.url']} rel="noreferrer" target="_blank">Open provider record <Icon name="chevron" /></a> : null}</div></details><StatusBadge status={entry.status} /><span>{entry.attempt}</span><span>{formatDate(entry.occurredAt)}</span></div>)}
                   </div>
                 )}</> : null}
               </>
