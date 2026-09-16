@@ -158,7 +158,7 @@ async function executeNodeImplementation(
     case 'manualTrigger':
     case 'scheduleTrigger':
     case 'webhookTrigger':
-      return true;
+      return input.inputs?.length === 1 ? input.inputs[0] : input.inputs !== undefined && input.inputs.length > 1 ? input.inputs : true;
     case 'transform':
     case 'output':
       return input.config.value ?? true;

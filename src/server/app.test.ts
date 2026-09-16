@@ -274,6 +274,27 @@ describe('platform API', () => {
     expect(await store.read((state) => state.runs.length)).toBe(before);
   });
 
+  it('validates run input and records environment/deployment context', async () => {
+    await store.mutate((state) => {
+      const workflow = state.workflows.find((candidate) => candidate.id === 'workflow-agent-intake');
+      if (workflow === undefined) throw new Error('Seed workflow missing.');
+      workflow.inputSchema = { type: 'object', required: ['request'], properties: { request: { type: 'string', minLength: 3 } } };
+    });
+    const invalid = await app.inject({ method: 'POST', url: '/api/workflows/workflow-agent-intake/runs', payload: { input: { request: 'x' } } });
+    expect(invalid.statusCode).toBe(422);
+    expect(invalid.json()).toEqual(expect.objectContaining({ message: 'Workflow input is invalid.', issues: expect.any(Array) }));
+
+    const dryRun = await app.inject({ method: 'POST', url: '/api/workflows/workflow-agent-intake/runs', payload: { dryRun: true, environment: 'staging', input: { request: 'Fix login' } } });
+    expect(dryRun.statusCode).toBe(200);
+    expect(dryRun.json()).toEqual(expect.objectContaining({ environment: 'staging', inputHash: expect.any(String) }));
+
+    const started = await app.inject({ method: 'POST', url: '/api/workflows/workflow-agent-intake/runs', payload: { environment: 'staging', input: { request: 'Fix login' } } });
+    expect(started.statusCode).toBe(200);
+    const run = started.json<{ id: string; environment?: string; input?: unknown; inputHash?: string }>();
+    expect(run).toEqual(expect.objectContaining({ environment: 'staging', input: { request: 'Fix login' }, inputHash: expect.any(String) }));
+    await waitForTerminal(store, run.id);
+  });
+
   it('blocks execution when workflow preflight validation fails', async () => {
     await store.mutate((state) => {
       const workflow = state.workflows.find((candidate) => candidate.id === 'workflow-agent-intake');

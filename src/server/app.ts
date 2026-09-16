@@ -23,6 +23,7 @@ import {
 } from '../domain/schema.js';
 import type { ArtifactRecord, DeletedProjectFileRecord, EvaluationDatasetCase, ProjectFileRecord, ReplayReportRecord, SourceDiagnostic, WorkflowDefinition } from '../domain/types.js';
 import { validateWorkflow } from '../domain/validator.js';
+import { validateWorkflowInput } from '../domain/input-schema.js';
 import { defaultFactoryManifest } from '../factory/manifest.js';
 import { calculateFactoryMetrics } from '../factory/metrics.js';
 import { EventService } from '../observability/event-service.js';
@@ -713,25 +714,42 @@ export async function createApp(
     '/api/workflows/:id/runs',
     async (request, reply) => {
       const scope = scopeFromRequest(request);
-      const body = (request.body ?? {}) as { artifactId?: unknown; dryRun?: unknown };
+      const body = (request.body ?? {}) as { artifactId?: unknown; deploymentId?: unknown; environment?: unknown; input?: unknown; dryRun?: unknown };
+      const requestedDeploymentId = typeof body.deploymentId === 'string' && body.deploymentId.trim() !== '' ? body.deploymentId.trim() : undefined;
       const selected = await store.read((state) => {
-        const artifactId = typeof body?.artifactId === 'string' ? body.artifactId : undefined;
-        const artifact = artifactId === undefined ? undefined : state.artifacts.find((candidate) => candidate.id === artifactId && inScope(candidate, scope));
+        const deployment = requestedDeploymentId === undefined ? undefined : state.deployments.find((candidate) => candidate.id === requestedDeploymentId && inScope(candidate, scope));
+        const requestedArtifactId = typeof body?.artifactId === 'string' && body.artifactId.trim() !== '' ? body.artifactId.trim() : deployment?.artifactId;
+        const artifact = requestedArtifactId === undefined ? undefined : state.artifacts.find((candidate) => candidate.id === requestedArtifactId && inScope(candidate, scope));
         const workflow = state.workflows.find((candidate) => candidate.id === request.params.id && inScope(candidate, scope));
         const pinned = artifact?.workflows.find((candidate) => candidate.id === request.params.id);
-        return { workflow: pinned ?? workflow, artifactId: artifact?.id };
+        return { workflow: pinned ?? workflow, artifactId: artifact?.id, artifactEnvironment: artifact?.environment, deployment };
       });
+      if (requestedDeploymentId !== undefined && selected.deployment === undefined) return reply.status(404).send({ message: 'Deployment not found.' });
+      if (selected.deployment !== undefined && selected.deployment.workflowId !== request.params.id) return reply.status(422).send({ message: 'Deployment does not reference the selected workflow.' });
+      if (typeof body.artifactId === 'string' && selected.deployment !== undefined && body.artifactId !== selected.deployment.artifactId) return reply.status(422).send({ message: 'Selected artifact does not match the deployment context.' });
       const workflow = selected.workflow;
       if (workflow === undefined) {
         return reply.status(404).send({ message: 'Workflow not found.' });
       }
       const validation = validateWorkflow(workflow);
       if (!validation.valid) return reply.status(422).send({ message: 'Workflow must pass validation before it can run.', issues: validation.issues });
+      const inputValidation = validateWorkflowInput(workflow.inputSchema, body.input);
+      if (!inputValidation.valid) return reply.status(422).send({ message: 'Workflow input is invalid.', issues: inputValidation.issues });
+      const environment = typeof body.environment === 'string' && body.environment.trim() !== ''
+        ? body.environment.trim()
+        : selected.deployment?.environment ?? selected.artifactEnvironment ?? 'local';
+      if (environment.length > 50 || /[\r\n]/.test(environment)) return reply.status(422).send({ message: 'Environment must be a short single-line value.' });
+      const inputHash = body.input === undefined ? undefined : createHash('sha256').update(JSON.stringify(body.input) ?? 'undefined').digest('hex');
       if (body.dryRun === true) {
-        return { dryRun: true, workflowId: workflow.id, workflowVersion: workflow.version, artifactId: selected.artifactId, valid: true, issues: [] };
+        return { dryRun: true, workflowId: workflow.id, workflowVersion: workflow.version, artifactId: selected.artifactId, environment, ...(selected.deployment?.id === undefined ? {} : { deploymentId: selected.deployment.id }), ...(inputHash === undefined ? {} : { inputHash }), valid: true, issues: [] };
       }
       try {
-      return await runExecutor.start(workflow, selected.artifactId === undefined ? {} : { artifactId: selected.artifactId });
+      return await runExecutor.start(workflow, {
+        ...(selected.artifactId === undefined ? {} : { artifactId: selected.artifactId }),
+        environment,
+        ...(selected.deployment?.id === undefined ? {} : { deploymentId: selected.deployment.id }),
+        ...(body.input === undefined ? {} : { input: body.input }),
+      });
       } catch (error) {
         return reply.status(422).send({ message: errorMessage(error) });
       }

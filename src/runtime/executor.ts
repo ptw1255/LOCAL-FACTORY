@@ -10,6 +10,7 @@ import type {
   WorkflowNode,
 } from '../domain/types.js';
 import { validateWorkflow } from '../domain/validator.js';
+import { validateWorkflowInput } from '../domain/input-schema.js';
 import type { EventService } from '../observability/event-service.js';
 import type { PlatformStore } from '../storage/store.js';
 import { HttpOllamaClient, type OllamaClient, type OllamaModelResult } from './ollama.js';
@@ -26,6 +27,9 @@ const APPROVAL_TTL_MS = 30 * 60 * 1_000;
 export interface RunCreationOptions {
   artifactId?: string;
   replayOfRunId?: string;
+  environment?: string;
+  deploymentId?: string;
+  input?: unknown;
   executionEngine?: 'local' | 'temporal';
   temporalWorkflowId?: string;
   temporalRunId?: string;
@@ -42,6 +46,10 @@ export function createQueuedRun(workflow: WorkflowDefinition, options: RunCreati
       .join(' ');
     throw new Error(`Workflow is not executable. ${message}`);
   }
+  const inputValidation = validateWorkflowInput(workflow.inputSchema, options.input);
+  if (!inputValidation.valid) {
+    throw new Error(`Workflow input is invalid. ${inputValidation.issues.map((issue) => issue.message).join(' ')}`);
+  }
   const trigger = workflow.nodes.find((node) => node.type === workflow.trigger.type);
   if (trigger === undefined) throw new Error('The declared workflow trigger node is missing.');
   const now = new Date().toISOString();
@@ -53,6 +61,12 @@ export function createQueuedRun(workflow: WorkflowDefinition, options: RunCreati
     workflowName: workflow.name,
     workflowVersion: workflow.version,
     ...(options.artifactId === undefined ? {} : { artifactId: options.artifactId }),
+    environment: options.environment?.trim() || 'local',
+    ...(options.deploymentId === undefined ? {} : { deploymentId: options.deploymentId }),
+    ...(options.input === undefined ? {} : {
+      input: structuredClone(options.input),
+      inputHash: createHash('sha256').update(JSON.stringify(options.input) ?? 'undefined').digest('hex'),
+    }),
     ...(options.replayOfRunId === undefined ? {} : { replayOfRunId: options.replayOfRunId }),
     executionEngine: options.executionEngine ?? 'local',
     ...(options.temporalWorkflowId === undefined ? {} : { temporalWorkflowId: options.temporalWorkflowId }),
@@ -153,7 +167,7 @@ export class LocalWorkflowExecutor {
     return runIds.length;
   }
 
-  public async start(workflow: WorkflowDefinition, options: { artifactId?: string; replayOfRunId?: string } = {}): Promise<RunRecord> {
+  public async start(workflow: WorkflowDefinition, options: RunCreationOptions = {}): Promise<RunRecord> {
     const run = createQueuedRun(workflow, { ...options, executionEngine: 'local' });
 
     await this.store.mutate((state) => {
@@ -381,7 +395,12 @@ export class LocalWorkflowExecutor {
         const persistedInputs = context.workflow.edges
           .filter((edge) => edge.target === nextNode.id && currentRun.unitOutputs[edge.source] !== undefined)
           .map((edge) => currentRun.unitOutputs[edge.source]);
-        const inputs = await Promise.all(persistedInputs.map((input) => this.events.resolvePayload(input)));
+        const initialInput = currentRun.completedNodeIds.length === 0
+          && nextNode.type === context.workflow.trigger.type
+          && currentRun.input !== undefined
+          ? [currentRun.input]
+          : persistedInputs;
+        const inputs = await Promise.all(initialInput.map((input) => this.events.resolvePayload(input)));
         const unitEvidenceKey = nextNode.unit?.idempotencyKey ?? `run:${runId}:unit:${nextNode.id}`;
         await this.events.recordEvidence({
           runId,
@@ -554,6 +573,11 @@ export class LocalWorkflowExecutor {
     switch (node.type) {
       case 'condition':
         result = node.config.result === true;
+        break;
+      case 'manualTrigger':
+      case 'scheduleTrigger':
+      case 'webhookTrigger':
+        result = inputs.length === 0 ? true : inputs.length === 1 ? inputs[0] : inputs;
         break;
       case 'wait': {
         const requested =

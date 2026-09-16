@@ -148,6 +148,7 @@ export interface WorkflowDefinition {
   version: number;
   status: WorkflowStatus;
   trigger: { type: string };
+  inputSchema?: Record<string, unknown>;
   agents: AgentDefinition[];
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
@@ -183,6 +184,11 @@ export interface RunRecord {
   workflowId: string;
   workflowName: string;
   workflowVersion: number;
+  artifactId?: string;
+  environment?: string;
+  deploymentId?: string;
+  input?: unknown;
+  inputHash?: string;
   traceId: string;
   executionEngine?: ExecutionEngine;
   temporalWorkflowId?: string;
