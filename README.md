@@ -212,6 +212,12 @@ POST /api/projects/:projectId/declarative       # replace project config from { 
 Imports are validated and compiled through the same canonical schemas used by the
 runtime. A failed import leaves the existing project configuration untouched.
 
+Deterministic runs can be replayed from their pinned workflow definition by an
+operator (`POST /api/runs/:runId/replay`). The bounded replay report compares
+completed nodes and output structure without returning captured payloads. Runs that
+include agents, network calls, notifications, or other nondeterministic units are
+rejected instead of silently replaying a newer or different behavior.
+
 ### Artifact-backed run data
 
 Large event payloads and completed unit outputs are stored outside the control-plane

@@ -94,7 +94,7 @@ export class LocalWorkflowExecutor {
     return runIds.length;
   }
 
-  public async start(workflow: WorkflowDefinition, options: { artifactId?: string } = {}): Promise<RunRecord> {
+  public async start(workflow: WorkflowDefinition, options: { artifactId?: string; replayOfRunId?: string } = {}): Promise<RunRecord> {
     const validation = validateWorkflow(workflow);
     if (!validation.valid) {
       const message = validation.issues
@@ -119,6 +119,7 @@ export class LocalWorkflowExecutor {
       workflowName: workflow.name,
       workflowVersion: workflow.version,
       ...(options.artifactId === undefined ? {} : { artifactId: options.artifactId }),
+      ...(options.replayOfRunId === undefined ? {} : { replayOfRunId: options.replayOfRunId }),
       traceId: randomUUID().replaceAll('-', '').slice(0, 32),
       status: 'queued',
       startedAt: now,

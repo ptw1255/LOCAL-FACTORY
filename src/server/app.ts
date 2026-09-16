@@ -30,6 +30,7 @@ import { compileResourceFiles } from '../declarative/resources.js';
 import { parseProjectYaml, stringifyProjectYaml } from '../declarative/yaml.js';
 import { CompositeTelemetryExporter, OtlpHttpExporter } from '../observability/otlp-exporter.js';
 import { LocalWorkflowExecutor } from '../runtime/executor.js';
+import { WorkflowReplayService } from '../runtime/replay.js';
 import { HttpOllamaClient } from '../runtime/ollama.js';
 import { OpenAISDKClient } from '../runtime/openai-sdk.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
@@ -156,6 +157,7 @@ export async function createApp(
     : undefined);
   const openai = options.openaiClient ?? new OpenAISDKClient({ secretBroker });
   const executor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace, githubRepository, openai);
+  const replayService = new WorkflowReplayService(store, executor);
   const ollamaAgents = await store.read((state) => state.workflows.flatMap((workflow) => workflow.agents).flatMap((agent) => {
     const routes = agent.model.routes ?? [];
     const routeAgents = routes.map((route) => ({ ...agent, model: { ...agent.model, ...route } }));
@@ -640,6 +642,18 @@ export async function createApp(
   app.get('/api/runs', async (request) => {
     const scope = scopeFromRequest(request);
     return { items: await store.read((state) => state.runs.filter((run) => inScope(run, scope))) };
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/runs/:id/replay', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    const source = await store.read((state) => state.runs.find((run) => run.id === request.params.id && inScope(run, scope)));
+    if (source === undefined) return reply.status(404).send({ message: 'Run not found.' });
+    const body = request.body as { timeoutMs?: unknown };
+    try {
+      return await replayService.replay(source.id, typeof body?.timeoutMs === 'number' ? { timeoutMs: body.timeoutMs } : {});
+    } catch (error) {
+      return reply.status(422).send({ message: errorMessage(error) });
+    }
   });
 
   app.get('/api/deployments', async (request) => {
