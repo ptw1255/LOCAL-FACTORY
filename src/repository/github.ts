@@ -3,6 +3,7 @@ export interface PullRequest { number: number; url: string; head: string; base: 
 export interface CheckRunSummary { name: string; status: string; conclusion: string | null; url?: string; summary?: string }
 export interface CiFailure { name: string; conclusion: string | null; url?: string; summary?: string }
 export interface CiResult { ref: string; status: 'success' | 'failure' | 'pending' | 'cancelled' | 'timed_out'; checks: CheckRunSummary[]; required: string[]; failures: CiFailure[] }
+export interface CiPollUpdate { checks: CheckRunSummary[]; status: 'pending' | 'success' | 'failure' | 'timed_out'; }
 export class GitHubApiError extends Error {
   public readonly code = 'GITHUB_API_ERROR';
   public constructor(message: string, public readonly status: number, public readonly retryAfterMs?: number) { super(message); this.name = 'GitHubApiError'; }
@@ -61,7 +62,7 @@ export class GitHubRepositoryClient {
       : []);
   }
 
-  public async waitForChecks(input: { ref: string; required?: string[]; timeoutMs?: number; intervalMs?: number; signal?: AbortSignal }): Promise<CiResult> {
+  public async waitForChecks(input: { ref: string; required?: string[]; timeoutMs?: number; intervalMs?: number; signal?: AbortSignal; onPoll?: (update: CiPollUpdate) => Promise<void> | void }): Promise<CiResult> {
     const deadline = Date.now() + Math.max(1, input.timeoutMs ?? 120_000);
     const required = input.required ?? [];
     let rateLimitAttempts = 0;
@@ -86,9 +87,10 @@ export class GitHubRepositoryClient {
       const failed = selected.some((check) => check.status === 'completed' && !['success', 'skipped', 'neutral'].includes(check.conclusion ?? ''));
       const complete = !missingRequired && selected.length > 0 && selected.every((check) => check.status === 'completed');
       const failures = selected.filter((check) => check.status === 'completed' && !['success', 'skipped', 'neutral'].includes(check.conclusion ?? '')).map((check) => ({ name: check.name, conclusion: check.conclusion, ...(check.url === undefined ? {} : { url: check.url }), ...(check.summary === undefined ? {} : { summary: check.summary }) }));
-      if (failed) return { ref: input.ref, status: 'failure', checks, required, failures };
-      if (complete) return { ref: input.ref, status: 'success', checks, required, failures };
-      if (Date.now() >= deadline) return { ref: input.ref, status: 'timed_out', checks, required, failures };
+      if (failed) { await input.onPoll?.({ checks, status: 'failure' }); return { ref: input.ref, status: 'failure', checks, required, failures }; }
+      if (complete) { await input.onPoll?.({ checks, status: 'success' }); return { ref: input.ref, status: 'success', checks, required, failures }; }
+      if (Date.now() >= deadline) { await input.onPoll?.({ checks, status: 'timed_out' }); return { ref: input.ref, status: 'timed_out', checks, required, failures }; }
+      await input.onPoll?.({ checks, status: 'pending' });
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(resolve, Math.min(Math.max(10, input.intervalMs ?? 2_000), Math.max(1, deadline - Date.now())));
         input.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(input.signal?.reason); }, { once: true });

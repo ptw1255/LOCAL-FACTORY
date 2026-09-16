@@ -128,6 +128,7 @@ export class LocalWorkflowExecutor {
       approvedNodeHashes: {},
       pendingApprovalHashes: {},
       unitOutputs: {},
+      ciCheckpoints: {},
     };
 
     await this.store.mutate((state) => {
@@ -332,11 +333,12 @@ export class LocalWorkflowExecutor {
         const inputs = context.workflow.edges
           .filter((edge) => edge.target === nextNode.id && currentRun.unitOutputs[edge.source] !== undefined)
           .map((edge) => currentRun.unitOutputs[edge.source]);
+        const unitEvidenceKey = nextNode.unit?.idempotencyKey ?? `run:${runId}:unit:${nextNode.id}`;
         await this.events.recordEvidence({
           runId,
           unitId: nextNode.id,
           operation: nextNode.type,
-          idempotencyKey: nextNode.unit?.idempotencyKey === undefined ? undefined : `${nextNode.unit.idempotencyKey}:started`,
+          idempotencyKey: `${unitEvidenceKey}:started`,
           status: 'started',
           input: inputs,
           metadata: { 'work.unit.kind': nextNode.unit?.kind ?? 'unknown', 'work.unit.version': nextNode.unit?.version ?? 0 },
@@ -369,10 +371,10 @@ export class LocalWorkflowExecutor {
           });
           const completed = await this.completeNode(context.run.id, context.workflow, nextNode, result);
           if (!completed) {
-            await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'cancelled', idempotencyKey: nextNode.unit?.idempotencyKey === undefined ? undefined : `${nextNode.unit.idempotencyKey}:cancelled`, output: result });
+            await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'cancelled', idempotencyKey: `${unitEvidenceKey}:cancelled`, output: result });
             return;
           }
-          await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'succeeded', idempotencyKey: nextNode.unit?.idempotencyKey === undefined ? undefined : `${nextNode.unit.idempotencyKey}:succeeded`, output: result, metadata: this.operationMetadata(result) });
+          await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'succeeded', idempotencyKey: `${unitEvidenceKey}:succeeded`, output: result, metadata: this.operationMetadata(result) });
           await this.events.emit(runId, 'unit.completed', `${nextNode.label} unit completed.`, {
             nodeId: nextNode.id,
             signal: 'trace',
@@ -397,7 +399,7 @@ export class LocalWorkflowExecutor {
             unitId: nextNode.id,
             operation: nextNode.type,
             status: controller.signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && error.code === 'WORK_UNIT_TIMED_OUT' ? 'timed_out' : 'failed',
-            idempotencyKey: nextNode.unit?.idempotencyKey === undefined ? undefined : `${nextNode.unit.idempotencyKey}:failed`,
+            idempotencyKey: `${unitEvidenceKey}:failed`,
             error: error instanceof Error ? error.message : 'Unknown unit failure.',
             metadata: error instanceof RepositoryCiError ? this.operationMetadata(error.result) : undefined,
           });
@@ -593,9 +595,57 @@ export class LocalWorkflowExecutor {
         if (this.githubRepository === undefined) throw new Error('GitHub repository integration is not configured.');
         const ref = typeof node.config.ref === 'string' && node.config.ref !== '' ? node.config.ref : await (await this.workspaceForRun(runId)).revision();
         const required = Array.isArray(node.config.required) ? node.config.required.filter((value): value is string => typeof value === 'string') : [];
-        const timeoutMs = typeof node.config.timeoutMs === 'number' ? node.config.timeoutMs : undefined;
-        const intervalMs = typeof node.config.intervalMs === 'number' ? node.config.intervalMs : undefined;
-        const ciResult = await this.githubRepository.waitForChecks({ ref, required, timeoutMs, intervalMs, signal });
+        const configuredTimeoutMs = typeof node.config.timeoutMs === 'number' ? Math.max(1, node.config.timeoutMs) : 120_000;
+        const configuredIntervalMs = typeof node.config.intervalMs === 'number' ? Math.max(10, node.config.intervalMs) : 2_000;
+        const checkpoint = await this.store.read((state) => state.runs.find((candidate) => candidate.id === runId)?.ciCheckpoints[node.id]);
+        const startedAt = checkpoint?.startedAt ?? new Date().toISOString();
+        const startedAtMs = Date.parse(startedAt);
+        const elapsed = Number.isFinite(startedAtMs) ? Date.now() - startedAtMs : 0;
+        const remainingTimeoutMs = checkpoint === undefined ? configuredTimeoutMs : Math.max(1, configuredTimeoutMs - Math.max(0, elapsed));
+        await this.store.mutate((state) => {
+          const run = state.runs.find((candidate) => candidate.id === runId);
+          if (run !== undefined) {
+            run.ciCheckpoints[node.id] = {
+              ref,
+              required,
+              timeoutMs: configuredTimeoutMs,
+              intervalMs: configuredIntervalMs,
+              startedAt,
+              polls: checkpoint?.polls ?? 0,
+              lastStatus: checkpoint?.lastStatus ?? 'pending',
+            };
+          }
+        });
+        await this.events.recordEvidence({
+          runId,
+          unitId: node.id,
+          operation: node.type,
+          status: 'waiting',
+          idempotencyKey: `${node.unit?.idempotencyKey ?? `run:${runId}:unit:${node.id}`}:waiting`,
+          input: { ref, required },
+          metadata: { 'ci.ref': ref, 'ci.required_count': required.length },
+        });
+        const ciResult = await this.githubRepository.waitForChecks({
+          ref,
+          required,
+          timeoutMs: remainingTimeoutMs,
+          intervalMs: configuredIntervalMs,
+          signal,
+          onPoll: async ({ status }) => {
+            await this.store.mutate((state) => {
+              const run = state.runs.find((candidate) => candidate.id === runId);
+              const current = run?.ciCheckpoints[node.id];
+              if (current !== undefined) {
+                current.polls += 1;
+                current.lastStatus = status;
+              }
+            });
+          },
+        });
+        await this.store.mutate((state) => {
+          const run = state.runs.find((candidate) => candidate.id === runId);
+          if (run !== undefined) delete run.ciCheckpoints[node.id];
+        });
         result = ciResult;
         const failurePolicy = node.config.failurePolicy === 'route' ? 'route' : 'fail';
         if (failurePolicy === 'fail' && required.length > 0 && ciResult.status !== 'success') {
@@ -853,6 +903,15 @@ export class LocalWorkflowExecutor {
     if (typeof value.status === 'string') metadata['ci.status'] = value.status;
     if (Array.isArray(value.required)) metadata['ci.required_count'] = value.required.length;
     if (Array.isArray(value.failures)) metadata['ci.failure_count'] = value.failures.length;
+    if (Array.isArray(value.failures)) {
+      value.failures.slice(0, 10).forEach((failure, index) => {
+        if (failure === null || typeof failure !== 'object') return;
+        const entry = failure as Record<string, unknown>;
+        if (typeof entry.name === 'string') metadata[`ci.failure.${index}.name`] = entry.name;
+        if (typeof entry.conclusion === 'string') metadata[`ci.failure.${index}.conclusion`] = entry.conclusion;
+        if (typeof entry.url === 'string') metadata[`ci.failure.${index}.url`] = entry.url;
+      });
+    }
     const patch = value.patch;
     if (patch !== null && typeof patch === 'object') {
       const patchValue = patch as Record<string, unknown>;
@@ -897,6 +956,7 @@ export class LocalWorkflowExecutor {
         run.completedNodeIds.push(node.id);
       }
       run.unitOutputs[node.id] = result;
+      delete run.ciCheckpoints[node.id];
       for (const edge of workflow.edges.filter(
         (candidate) =>
           candidate.source === node.id && edgeMatches(candidate, result),
@@ -1002,6 +1062,7 @@ export class LocalWorkflowExecutor {
       run.completedAt = completedAt.toISOString();
       run.durationMs =
         completedAt.getTime() - new Date(run.startedAt).getTime();
+      run.ciCheckpoints = {};
       return true;
     });
     if (completed) {
