@@ -189,6 +189,7 @@ export const api = {
   factoryMetrics: () => request<FactoryMetrics>('/api/factory/metrics'),
   deployments: () => request<ItemsResponse<DeploymentRecord>>('/api/deployments'),
   deploymentEnvelopes: () => request<ItemsResponse<DeploymentEnvelope>>('/api/deployments?format=envelope'),
+  deploymentEvidence: (deploymentId: string) => request<ItemsResponse<OperationEvidence>>(`/api/evidence?deploymentId=${encodeURIComponent(deploymentId)}`),
   deploymentAction: (id: string, action: DeploymentRecord['history'][number]['action'], options: { artifactId?: string; expectedUpdatedAt?: string; idempotencyKey?: string } = {}) =>
     request<DeploymentRecord>(`/api/deployments/${encodeURIComponent(id)}/action`, { method: 'POST', body: JSON.stringify({ action, ...options }) }),
   reconcileDeployment: (id: string) =>
