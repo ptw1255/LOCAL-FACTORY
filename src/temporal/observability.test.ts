@@ -78,4 +78,21 @@ describe('PlatformTemporalObservabilitySink', () => {
     expect(events[0]?.data).toEqual({ error: 'x'.repeat(2_000) });
     expect(JSON.stringify(evidence)).not.toContain('payload');
   });
+
+  it('keeps distinct retry attempts while deduplicating duplicate delivery', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-observability-retries-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const sink = new PlatformTemporalObservabilitySink(store);
+    const first = lifecycle({ attempt: 1 });
+    const retry = lifecycle({ attempt: 2, spanId: 'c'.repeat(16), occurredAt: '2026-09-16T19:00:01.000Z' });
+
+    await sink.record(first);
+    await sink.record(first);
+    await sink.record(retry);
+    await sink.record(retry);
+
+    expect(await store.listEvidence(first.runId)).toHaveLength(2);
+    expect(await store.listEvents(first.runId)).toHaveLength(2);
+    expect((await store.listEvidence(first.runId)).map((entry) => entry.attempt)).toEqual([1, 2]);
+  });
 });
