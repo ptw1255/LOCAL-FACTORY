@@ -1,5 +1,6 @@
 import type {
   AgentProposal,
+  ArtifactRecord,
   ConnectionRecord,
   FactoryMetrics,
   NodeCatalogItem,
@@ -76,6 +77,7 @@ export const api = {
     ),
   projectFiles: (projectId: string) => request<ItemsResponse<ProjectFileRecord>>(`/api/projects/${encodeURIComponent(projectId)}/files`),
   projectFile: (projectId: string, filePath: string) => request<ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files?path=${encodeURIComponent(filePath)}`),
+  artifacts: (projectId: string) => request<ItemsResponse<ArtifactRecord>>(`/api/projects/${encodeURIComponent(projectId)}/artifacts`),
   saveProjectFile: (projectId: string, filePath: string, content: string) => request<ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files`, { method: 'PUT', body: JSON.stringify({ path: filePath, content }) }),
   renameProjectFile: (projectId: string, filePath: string, newPath: string) => request<{ renamed: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/files`, { method: 'PATCH', body: JSON.stringify({ path: filePath, newPath }) }),
   catalog: () => request<ItemsResponse<NodeCatalogItem>>('/api/catalog/nodes'),
@@ -142,4 +144,6 @@ export const api = {
   deployments: () => request<ItemsResponse<DeploymentRecord>>('/api/deployments'),
   deploymentAction: (id: string, action: DeploymentRecord['history'][number]['action'], artifactId?: string) =>
     request<DeploymentRecord>(`/api/deployments/${encodeURIComponent(id)}/action`, { method: 'POST', body: JSON.stringify({ action, ...(artifactId === undefined ? {} : { artifactId }) }) }),
+  createDeployment: (input: { workflowId: string; environment: string; artifactId: string; trigger: string }) =>
+    request<DeploymentRecord>('/api/deployments', { method: 'POST', body: JSON.stringify(input) }),
 };

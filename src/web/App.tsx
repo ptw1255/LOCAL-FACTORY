@@ -30,6 +30,7 @@ import { defaultWorkUnit } from '../domain/catalog';
 import type {
   AgentDefinition,
   AgentProposal,
+  ArtifactRecord,
   ConnectionRecord,
   FactoryMetrics,
   DeploymentRecord,
@@ -1550,17 +1551,28 @@ function ProposalsView({ onOpenStudio }: { onOpenStudio: () => void }) {
 
 function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void }) {
   const [deployments, setDeployments] = useState<DeploymentRecord[]>([]);
+  const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const projectId = window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? 'project-local';
+  const [form, setForm] = useState({ artifactId: '', workflowId: '', environment: 'local', trigger: 'manual' });
 
   const loadDeployments = useCallback(async () => {
     setLoading(true);
     setError(null);
-    try { setDeployments((await api.deployments()).items); }
+    try {
+      const [deploymentResponse, artifactResponse] = await Promise.all([api.deployments(), api.artifacts(projectId)]);
+      setDeployments(deploymentResponse.items);
+      setArtifacts(artifactResponse.items);
+      setForm((current) => ({ ...current, artifactId: current.artifactId || artifactResponse.items[0]?.id || '', workflowId: current.workflowId || artifactResponse.items[0]?.workflows[0]?.id || '' }));
+    }
     catch (loadError) { setError(errorText(loadError)); }
     finally { setLoading(false); }
-  }, []);
+  }, [projectId]);
 
   useEffect(() => void loadDeployments(), [loadDeployments]);
 
@@ -1574,6 +1586,25 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
     finally { setBusyId(null); }
   }
 
+  async function createDeployment(event: FormEvent) {
+    event.preventDefault();
+    if (form.artifactId === '' || form.workflowId === '') {
+      setFormError('Choose an artifact and workflow before creating a deployment.');
+      return;
+    }
+    setCreating(true);
+    setFormError(null);
+    try {
+      const created = await api.createDeployment(form);
+      setDeployments((current) => [created, ...current]);
+      setShowCreate(false);
+    } catch (createError) { setFormError(errorText(createError)); }
+    finally { setCreating(false); }
+  }
+
+  const selectedArtifact = artifacts.find((artifact) => artifact.id === form.artifactId);
+  const artifactWorkflows = selectedArtifact?.workflows ?? [];
+
   if (loading) return <LoadingState label="Loading deployments" />;
   if (error !== null && deployments.length === 0) return <ErrorState message={error} retry={() => void loadDeployments()} />;
   const live = deployments.filter((deployment) => deployment.observedState === 'live').length;
@@ -1582,10 +1613,17 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   return (
     <div className="page">
       <AppHeader eyebrow="Operational control plane" title="Deployments">
-        <button className="button secondary" onClick={() => void loadDeployments()} type="button"><Icon name="refresh" /> Refresh</button>
+        <button className="button secondary" onClick={() => setShowCreate((current) => !current)} type="button">{showCreate ? 'Close' : 'New deployment'}</button><button className="button secondary" onClick={() => void loadDeployments()} type="button"><Icon name="refresh" /> Refresh</button>
       </AppHeader>
       <p className="page-intro">Manage which workflow versions are live in each environment. These are logical deployments backed by the local runtime, not Docker containers.</p>
       {error === null ? null : <p className="form-error" role="alert">{error}</p>}
+      {showCreate ? <form className="deployment-create-form" onSubmit={(event) => void createDeployment(event)}>
+        <div><label htmlFor="deployment-artifact">Artifact</label><select id="deployment-artifact" onChange={(event) => setForm((current) => ({ ...current, artifactId: event.target.value, workflowId: artifacts.find((artifact) => artifact.id === event.target.value)?.workflows[0]?.id ?? '' }))} value={form.artifactId}><option value="">Select compiled artifact</option>{artifacts.map((artifact) => <option key={artifact.id} value={artifact.id}>{artifact.environment} · {artifact.id.slice(0, 18)}</option>)}</select></div>
+        <div><label htmlFor="deployment-workflow">Workflow</label><select id="deployment-workflow" onChange={(event) => setForm((current) => ({ ...current, workflowId: event.target.value }))} value={form.workflowId}><option value="">Select workflow</option>{artifactWorkflows.map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}</select></div>
+        <div><label htmlFor="deployment-environment">Environment</label><input id="deployment-environment" onChange={(event) => setForm((current) => ({ ...current, environment: event.target.value }))} value={form.environment} /></div>
+        <div><label htmlFor="deployment-trigger">Trigger</label><input id="deployment-trigger" onChange={(event) => setForm((current) => ({ ...current, trigger: event.target.value }))} value={form.trigger} /></div>
+        <div className="form-actions"><button className="button primary" disabled={creating} type="submit">{creating ? 'Creating…' : 'Create deployment'}</button>{formError === null ? null : <span className="field-error">{formError}</span>}</div>
+      </form> : null}
       <section className="summary-strip connection-summary">
         <div><span>Total</span><strong>{deployments.length}</strong></div>
         <div><span>Live</span><strong>{live}</strong></div>
