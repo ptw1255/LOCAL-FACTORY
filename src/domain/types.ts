@@ -329,6 +329,8 @@ export interface DeploymentRecord {
   updatedAt: string;
   lease?: { ownerId: string; expiresAt: string };
   lastError?: string;
+  /** Successful coding-workflow run that most recently verified a protected promotion. */
+  lastVerifiedRunId?: string;
   healthyArtifactIds: string[];
   history: DeploymentTransition[];
 }

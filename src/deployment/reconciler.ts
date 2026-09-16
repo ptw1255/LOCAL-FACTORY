@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ArtifactRecord, DeploymentAction, DeploymentRecord, DeploymentTransition } from '../domain/types.js';
+import type { ArtifactRecord, DeploymentAction, DeploymentRecord, DeploymentTransition, PlatformState } from '../domain/types.js';
 import type { EventService } from '../observability/event-service.js';
 import type { PlatformStore } from '../storage/store.js';
 
@@ -15,6 +15,11 @@ export interface DeploymentObservation {
 
 export interface DeploymentRuntimeAdapter {
   observe(deployment: DeploymentRecord): Promise<DeploymentObservation> | DeploymentObservation;
+}
+
+function isProtectedEnvironment(environment: string): boolean {
+  const normalized = environment.trim().toLowerCase();
+  return normalized === 'production' || normalized === 'prod' || normalized === 'preprod' || normalized === 'staging';
 }
 
 const localRuntimeAdapter: DeploymentRuntimeAdapter = {
@@ -87,6 +92,10 @@ export class DeploymentReconciler {
           const artifact = this.findArtifact(state.artifacts, targetArtifactId, scope);
           if (artifact === undefined || !artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)) throw new Error('Deployment artifact is not available for this workflow.');
           if (action === 'rollback' && (!deployment.healthyArtifactIds.includes(targetArtifactId) || targetArtifactId === deployment.artifactId)) throw new Error('Rollback requires a prior healthy artifact for this deployment.');
+          if (action === 'deploy' && isProtectedEnvironment(deployment.environment)) {
+            this.requirePromotionEvidence(state, deployment, scope, options.runId);
+            deployment.lastVerifiedRunId = options.runId;
+          }
           deployment.artifactId = targetArtifactId;
         }
         if (action === 'stop') { deployment.desiredState = 'stopped'; deployment.observedState = 'stopping'; }
@@ -264,5 +273,26 @@ export class DeploymentReconciler {
 
   private findArtifact(artifacts: ArtifactRecord[], id: string, scope: DeploymentScope): ArtifactRecord | undefined {
     return artifacts.find((artifact) => artifact.id === id && artifact.tenantId === scope.tenantId && artifact.projectId === scope.projectId);
+  }
+
+  private requirePromotionEvidence(
+    state: PlatformState,
+    deployment: DeploymentRecord,
+    scope: DeploymentScope,
+    runId: string | undefined,
+  ): void {
+    if (runId === undefined || runId.trim() === '') {
+      throw new Error('Protected deployment environments require a successful coding-workflow run.');
+    }
+    const run = state.runs.find((candidate) => candidate.id === runId && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
+    if (run === undefined || run.workflowId !== deployment.workflowId || run.status !== 'succeeded') {
+      throw new Error('Protected deployment requires a succeeded run for the selected workflow.');
+    }
+    const runEvidence = state.evidence.filter((entry) => entry.runId === runId);
+    const hasReviewablePatch = runEvidence.some((entry) => entry.status === 'succeeded' && (entry.operation === 'repositoryPatch' || entry.operation === 'repositoryMutation'));
+    const hasPassingChecks = runEvidence.some((entry) => entry.status === 'succeeded' && entry.operation === 'repositoryCi' && entry.metadata?.['ci.status'] === 'success');
+    if (!hasReviewablePatch || !hasPassingChecks) {
+      throw new Error('Protected deployment requires a succeeded reviewable patch and passing required checks.');
+    }
   }
 }

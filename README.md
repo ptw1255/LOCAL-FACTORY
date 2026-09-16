@@ -232,6 +232,13 @@ JSON state events are moved into that table automatically on first startup. Runt
 observability retention is 48 hours by default; a cleanup pass runs at startup and
 every 15 minutes and removes older records.
 
+Deployments to `production`, `prod`, `preprod`, or `staging` are promotion-gated:
+the action must reference a succeeded run for the same workflow that has both a
+reviewable repository patch and a passing `repositoryCi` evidence record. The
+deployment stores that verified run ID and continues to record its release artifact,
+health, and transition history. Local environments remain available for adapter and
+UI development without this promotion gate.
+
 ### Tenants and projects
 
 The runtime is one shared installation that can host multiple isolated projects
