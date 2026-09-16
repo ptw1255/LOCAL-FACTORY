@@ -1227,6 +1227,7 @@ function OperationalTree({
   const [recentRuns, setRecentRuns] = useState<RunRecord[]>([]);
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
   const [problems, setProblems] = useState<SourceDiagnostic[]>([]);
+  const fileEventCursor = useRef<string | undefined>(undefined);
   const editorRef = useRef<{ revealLineInCenter: (line: number) => void; setPosition: (position: { lineNumber: number; column: number }) => void; focus: () => void } | null>(null);
   const pendingProblem = useRef<SourceDiagnostic | null>(null);
 
@@ -1242,6 +1243,27 @@ function OperationalTree({
         setSelectedPath(response.items[0]?.path ?? 'project.yaml');
       }
     }).catch(() => setFiles([]));
+  }, [fileSearch, projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const reconcileFileEvents = async (): Promise<void> => {
+      try {
+        const response = await api.projectFileEvents(projectId, fileEventCursor.current);
+        if (cancelled || response.items.length === 0) return;
+        fileEventCursor.current = response.items.at(-1)?.timestamp;
+        const filesResponse = await api.projectFiles(projectId, fileSearch);
+        if (cancelled) return;
+        setFiles(filesResponse.items);
+        setDirectories((filesResponse.directories ?? []).map((directory) => directory.path));
+      } catch {
+        // The regular project-file load remains the fallback when event polling
+        // is unavailable (for example during an app restart).
+      }
+    };
+    void reconcileFileEvents();
+    const interval = window.setInterval(() => void reconcileFileEvents(), 2_000);
+    return () => { cancelled = true; window.clearInterval(interval); };
   }, [fileSearch, projectId]);
 
   useEffect(() => {
