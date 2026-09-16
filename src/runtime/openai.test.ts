@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentDefinition } from '../domain/types.js';
-import { HttpOpenAIClient } from './openai.js';
+import { HttpOpenAIClient, OpenAIProviderError } from './openai.js';
 
 const agent = {
   id: 'hosted-agent', version: 1, name: 'Hosted', purpose: 'test', instructions: 'Be concise.', skills: [], tools: [],
@@ -53,5 +53,35 @@ describe('HttpOpenAIClient', () => {
     });
     expect(result).toEqual({ content: 'hello', model: 'gpt-5-mini', promptTokens: 3, completionTokens: 2, requestId: 'req-stream' });
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ stream: true });
+  });
+
+  it('classifies provider failures without exposing credentials', async () => {
+    const configuredAgent = { ...agent, model: { provider: 'openai', model: 'gpt-5' } };
+    const cases = [
+      [401, 'authentication'],
+      [429, 'rate_limited'],
+      [503, 'server'],
+      [400, 'request'],
+    ] as const;
+    for (const [status, code] of cases) {
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('provider detail', { status }));
+      const error = await new HttpOpenAIClient({ apiKey: 'secret-key', fetcher }).chat({ agent: configuredAgent, goal: 'fail', signal: new AbortController().signal }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(OpenAIProviderError);
+      expect(error).toMatchObject({ code, status });
+      expect(String(error)).not.toContain('secret-key');
+    }
+  });
+
+  it('classifies cancellation, timeout, and connection failures', async () => {
+    const configuredAgent = { ...agent, model: { provider: 'openai', model: 'gpt-5' } };
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await expect(new HttpOpenAIClient({ apiKey: 'key', fetcher: vi.fn() }).chat({ agent: configuredAgent, goal: 'cancel', signal: cancelled.signal })).rejects.toMatchObject({ code: 'cancelled', retryable: false });
+
+    const timeoutFetcher = vi.fn<typeof fetch>().mockRejectedValue(Object.assign(new Error('deadline'), { name: 'TimeoutError' }));
+    await expect(new HttpOpenAIClient({ apiKey: 'key', fetcher: timeoutFetcher }).chat({ agent: configuredAgent, goal: 'timeout', signal: new AbortController().signal })).rejects.toMatchObject({ code: 'timeout' });
+
+    const connectionFetcher = vi.fn<typeof fetch>().mockRejectedValue(new Error('offline'));
+    await expect(new HttpOpenAIClient({ apiKey: 'key', fetcher: connectionFetcher }).chat({ agent: configuredAgent, goal: 'offline', signal: new AbortController().signal })).rejects.toMatchObject({ code: 'connection' });
   });
 });

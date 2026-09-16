@@ -10,6 +10,31 @@ export interface OpenAIModelResult {
   toolCalls?: Array<{ callId: string; name: string; arguments: string }>;
 }
 
+export type OpenAIProviderErrorCode =
+  | 'authentication'
+  | 'rate_limited'
+  | 'server'
+  | 'timeout'
+  | 'cancelled'
+  | 'connection'
+  | 'incomplete'
+  | 'refusal'
+  | 'request';
+
+export class OpenAIProviderError extends Error {
+  public readonly code: OpenAIProviderErrorCode;
+  public readonly status?: number;
+  public readonly retryable: boolean;
+
+  public constructor(code: OpenAIProviderErrorCode, message: string, options: { status?: number; retryable?: boolean } = {}) {
+    super(message);
+    this.name = 'OpenAIProviderError';
+    this.code = code;
+    this.status = options.status;
+    this.retryable = options.retryable ?? ['rate_limited', 'server', 'timeout', 'connection'].includes(code);
+  }
+}
+
 export interface OpenAIClient {
   chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string }): Promise<OpenAIModelResult>;
 }
@@ -39,36 +64,58 @@ export class HttpOpenAIClient implements OpenAIClient {
     const model = input.agent.model.model;
     if (model === undefined) throw new Error(`OpenAI agent "${input.agent.id}" must declare model.model.`);
     const apiKey = await this.resolveApiKey(input.agent);
-    const response = await this.fetcher(`${input.agent.model.endpoint ?? this.baseUrl}/responses`, {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json',
-        authorization: `Bearer ${apiKey}`,
-        ...(input.traceId === undefined ? {} : { 'x-client-request-id': input.traceId }),
-      },
-      signal: AbortSignal.any([input.signal, AbortSignal.timeout(input.agent.limits.maxDurationMs)]),
-      body: JSON.stringify({
-        model,
-        store: false,
-        stream: input.agent.model.streaming === true,
-        input: [
-          { role: 'developer', content: input.agent.instructions },
-          { role: 'user', content: input.goal },
-        ],
-        ...(input.agent.limits.maxTokens === undefined ? {} : { max_output_tokens: input.agent.limits.maxTokens }),
-      }),
-    });
+    if (input.signal.aborted) throw new OpenAIProviderError('cancelled', 'OpenAI request was cancelled.', { retryable: false });
+    let response: Response;
+    try {
+      response = await this.fetcher(`${input.agent.model.endpoint ?? this.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          authorization: `Bearer ${apiKey}`,
+          ...(input.traceId === undefined ? {} : { 'x-client-request-id': input.traceId }),
+        },
+        signal: AbortSignal.any([input.signal, AbortSignal.timeout(input.agent.limits.maxDurationMs)]),
+        body: JSON.stringify({
+          model,
+          store: false,
+          stream: input.agent.model.streaming === true,
+          input: [
+            { role: 'developer', content: input.agent.instructions },
+            { role: 'user', content: input.goal },
+          ],
+          ...(input.agent.limits.maxTokens === undefined ? {} : { max_output_tokens: input.agent.limits.maxTokens }),
+        }),
+      });
+    } catch (error) {
+      if (input.signal.aborted) throw new OpenAIProviderError('cancelled', 'OpenAI request was cancelled.', { retryable: false });
+      const name = error instanceof Error ? error.name : '';
+      if (name === 'TimeoutError' || name === 'AbortError') throw new OpenAIProviderError('timeout', 'OpenAI request timed out.');
+      throw new OpenAIProviderError('connection', 'OpenAI request could not connect to the provider.');
+    }
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 500);
-      throw new Error(`OpenAI Responses request failed with status ${response.status}${detail === '' ? '.' : `: ${detail}`}`);
+      const code: OpenAIProviderErrorCode = response.status === 401 || response.status === 403
+        ? 'authentication'
+        : response.status === 429
+          ? 'rate_limited'
+          : response.status >= 500 ? 'server' : 'request';
+      throw new OpenAIProviderError(code, `OpenAI Responses request failed with status ${response.status}${detail === '' ? '.' : `: ${detail}`}`, { status: response.status });
     }
     if (input.agent.model.streaming === true) return this.parseStream(response, model);
-    const body = await response.json() as {
+    let body: {
       model?: unknown;
       output?: Array<{ type?: unknown; text?: unknown; content?: Array<{ type?: unknown; text?: unknown }>; call_id?: unknown; name?: unknown; arguments?: unknown }>;
       usage?: { input_tokens?: unknown; output_tokens?: unknown };
     };
+    try {
+      body = await response.json() as typeof body;
+    } catch {
+      throw new OpenAIProviderError('incomplete', 'OpenAI response was not valid JSON.', { retryable: true });
+    }
+    if (body.output?.some((item) => item.type === 'refusal')) {
+      throw new OpenAIProviderError('refusal', 'OpenAI declined the requested response.', { retryable: false });
+    }
     const text = (body.output ?? []).flatMap((item) => {
       if (item.type === 'message') return (item.content ?? []).flatMap((part) => part.type === 'output_text' && typeof part.text === 'string' ? [part.text] : []);
       return item.type === 'output_text' && typeof item.text === 'string' ? [item.text] : [];
