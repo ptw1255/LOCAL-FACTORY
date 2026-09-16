@@ -253,6 +253,13 @@ describe('platform API', () => {
     expect((await app.inject({ method: 'GET', url: '/api/projects/project-local/files?path=concurrent.yaml', headers })).json<{ content: string }>().content).toBe('two');
   });
 
+  it('enforces safe project file extensions and size limits', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    expect((await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: '.env', content: 'TOKEN=secret' } })).statusCode).toBe(422);
+    expect((await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'binary.exe', content: 'x' } })).statusCode).toBe(422);
+    expect((await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'large.txt', content: 'x'.repeat(1_000_001) } })).statusCode).toBe(422);
+  });
+
   it('exposes deployments through the lean envelope projection', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/deployments?format=envelope', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' } });
     expect(response.statusCode).toBe(200);
