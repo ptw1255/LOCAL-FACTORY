@@ -197,7 +197,7 @@ export interface RunEvent {
   data?: Record<string, unknown>;
 }
 
-export type OperationEvidenceStatus = 'started' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
+export type OperationEvidenceStatus = 'started' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
 
 /** Durable, redacted record of a unit operation; retained independently of telemetry. */
 export interface OperationEvidence {

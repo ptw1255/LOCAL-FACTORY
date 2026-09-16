@@ -223,7 +223,7 @@ export class PostgresStore implements PlatformStore {
         unit_id TEXT NOT NULL,
         operation TEXT NOT NULL,
         attempt INTEGER NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('started', 'waiting', 'succeeded', 'failed', 'cancelled')),
+        status TEXT NOT NULL CHECK (status IN ('started', 'waiting', 'succeeded', 'failed', 'cancelled', 'timed_out')),
         occurred_at TIMESTAMPTZ NOT NULL,
         input_hash TEXT,
         output_hash TEXT,
@@ -231,6 +231,8 @@ export class PostgresStore implements PlatformStore {
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb
       )
     `);
+    await this.pool.query(`ALTER TABLE operation_evidence DROP CONSTRAINT IF EXISTS operation_evidence_status_check`);
+    await this.pool.query(`ALTER TABLE operation_evidence ADD CONSTRAINT operation_evidence_status_check CHECK (status IN ('started', 'waiting', 'succeeded', 'failed', 'cancelled', 'timed_out'))`);
     await this.pool.query('CREATE INDEX IF NOT EXISTS operation_evidence_run_time_idx ON operation_evidence (run_id, occurred_at)');
     await this.pool.query('CREATE INDEX IF NOT EXISTS operation_evidence_project_time_idx ON operation_evidence (project_id, occurred_at)');
     await this.pool.query('ALTER TABLE observability_events ADD COLUMN IF NOT EXISTS tenant_id TEXT');

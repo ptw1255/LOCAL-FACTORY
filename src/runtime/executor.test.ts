@@ -333,6 +333,7 @@ describe('LocalWorkflowExecutor', () => {
     const run = await executor.start(workflow);
     await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'timed_out');
     expect((await events.list(run.id)).some((event) => event.type === 'run.timed_out')).toBe(true);
+    expect((await events.listEvidence(run.id)).some((evidence) => evidence.status === 'timed_out')).toBe(true);
   });
 
   it('recovers persisted queued and running executions', async () => {
