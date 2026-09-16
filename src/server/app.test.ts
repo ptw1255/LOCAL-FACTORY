@@ -158,6 +158,14 @@ describe('platform API', () => {
       payload: { source: 'kind: NotAProject' },
     });
     expect(invalid.statusCode).toBe(422);
+    const invalidSyntax = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${projectId}/declarative`,
+      headers: { 'x-tenant-id': 'tenant-local' },
+      payload: { source: 'apiVersion: [\n' },
+    });
+    expect(invalidSyntax.statusCode).toBe(422);
+    expect(invalidSyntax.json<{ diagnostics: Array<{ path: string; line: number; column: number; code: string }> }>().diagnostics).toEqual([expect.objectContaining({ path: 'project.yaml', line: 2, column: 1, code: 'yaml.parse' })]);
     const afterInvalid = await app.inject({
       method: 'GET',
       url: '/api/workflows',

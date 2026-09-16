@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { defaultWorkUnit, knownNodeTypes } from '../domain/catalog.js';
 import { agentDefinitionSchema } from '../domain/schema.js';
-import type { AgentDefinition, ProjectRecord, WorkflowDefinition, WorkflowNode } from '../domain/types.js';
+import type { AgentDefinition, ProjectRecord, SourceDiagnostic, WorkflowDefinition, WorkflowNode } from '../domain/types.js';
 import { validateWorkflow } from '../domain/validator.js';
 
 export interface DeclarativeProjectDocument {
@@ -19,6 +19,16 @@ export interface DeclarativeProjectDocument {
     trigger?: string;
     steps: Array<Record<string, unknown>>;
   }>;
+}
+
+export class DeclarativeSourceError extends Error {
+  public readonly diagnostics: SourceDiagnostic[];
+
+  public constructor(message: string, diagnostics: SourceDiagnostic[]) {
+    super(message);
+    this.name = 'DeclarativeSourceError';
+    this.diagnostics = diagnostics;
+  }
 }
 
 const declarativeDocumentSchema = z.object({
@@ -129,7 +139,19 @@ export function parseProjectYaml(source: string, scope: { tenantId: string; proj
   project: ProjectRecord;
   workflows: WorkflowDefinition[];
 } {
-  const parsed: unknown = parse(source);
+  let parsed: unknown;
+  try {
+    parsed = parse(source);
+  } catch (error) {
+    const yamlError = error as { message?: unknown; linePos?: Array<{ line?: unknown; col?: unknown }> };
+    const position = yamlError.linePos?.[0];
+    const line = typeof position?.line === 'number' && position.line > 0 ? position.line : 1;
+    const column = typeof position?.col === 'number' && position.col > 0 ? position.col : 1;
+    const rawMessage = typeof yamlError.message === 'string' ? yamlError.message : 'Invalid YAML syntax.';
+    // YAML parser messages may append source excerpts; keep diagnostics safe for API/UI responses.
+    const message = rawMessage.split(/\r?\n/, 1)[0] ?? 'Invalid YAML syntax.';
+    throw new DeclarativeSourceError(`Invalid project YAML: ${message}`, [{ severity: 'error', path: 'project.yaml', line, column, code: 'yaml.parse', message }]);
+  }
   const result = declarativeDocumentSchema.safeParse(parsed);
   if (!result.success) {
     throw new Error(`Invalid project YAML: ${result.error.issues.map((issue) => `${issue.path.join('.') || 'document'} ${issue.message}`).join('; ')}`);

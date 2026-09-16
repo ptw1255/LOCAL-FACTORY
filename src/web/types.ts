@@ -160,6 +160,15 @@ export interface ValidationIssue {
   nodeId?: string;
 }
 
+export interface SourceDiagnostic {
+  severity: 'error' | 'warning';
+  path: string;
+  line: number;
+  column: number;
+  code: string;
+  message: string;
+}
+
 export interface ValidationResult {
   valid: boolean;
   issues: ValidationIssue[];

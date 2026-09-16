@@ -149,6 +149,16 @@ export interface ValidationIssue {
   nodeId?: string;
 }
 
+/** A source-anchored diagnostic suitable for editor and API consumers. */
+export interface SourceDiagnostic {
+  severity: IssueLevel;
+  path: string;
+  line: number;
+  column: number;
+  code: string;
+  message: string;
+}
+
 export interface ValidationResult {
   valid: boolean;
   issues: ValidationIssue[];

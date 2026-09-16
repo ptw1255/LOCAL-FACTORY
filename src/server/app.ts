@@ -21,7 +21,7 @@ import {
   createTenantSchema,
   workflowDefinitionSchema,
 } from '../domain/schema.js';
-import type { ArtifactRecord, ProjectFileRecord, WorkflowDefinition } from '../domain/types.js';
+import type { ArtifactRecord, ProjectFileRecord, SourceDiagnostic, WorkflowDefinition } from '../domain/types.js';
 import { validateWorkflow } from '../domain/validator.js';
 import { defaultFactoryManifest } from '../factory/manifest.js';
 import { calculateFactoryMetrics } from '../factory/metrics.js';
@@ -56,6 +56,14 @@ export interface AppOptions {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unexpected platform error.';
+}
+
+function errorDiagnostics(error: unknown): SourceDiagnostic[] {
+  const diagnostics = (error as { diagnostics?: unknown }).diagnostics;
+  if (Array.isArray(diagnostics)) return diagnostics as SourceDiagnostic[];
+  const message = errorMessage(error);
+  const sourcePath = message.match(/^([^:]+):\s/)?.[1] ?? 'project.yaml';
+  return [{ severity: 'error', path: sourcePath, line: 1, column: 1, code: 'declarative.invalid', message }];
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {
@@ -324,7 +332,7 @@ export async function createApp(
         });
         return { project: imported.project, workflows: imported.workflows };
       } catch (error) {
-        return reply.status(422).send({ message: errorMessage(error) });
+        return reply.status(422).send({ message: errorMessage(error), diagnostics: errorDiagnostics(error) });
       }
     },
   );
@@ -418,7 +426,7 @@ export async function createApp(
         });
         return artifact;
       } catch (error) {
-        return reply.status(422).send({ message: errorMessage(error) });
+        return reply.status(422).send({ message: errorMessage(error), diagnostics: errorDiagnostics(error) });
       }
     },
   );

@@ -11,6 +11,7 @@ import type {
   RunRecord,
   ProjectRecord,
   ProjectFileRecord,
+  SourceDiagnostic,
   TenantRecord,
   ValidationResult,
   WorkflowDefinition,
@@ -22,6 +23,17 @@ interface ItemsResponse<T> {
 
 interface ErrorPayload {
   message?: string;
+  diagnostics?: SourceDiagnostic[];
+}
+
+export class ApiRequestError extends Error {
+  public readonly diagnostics?: SourceDiagnostic[];
+
+  public constructor(message: string, diagnostics?: SourceDiagnostic[]) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.diagnostics = diagnostics;
+  }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -40,7 +52,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const error = payload as ErrorPayload | null;
-    throw new Error(error?.message ?? `Request failed with status ${response.status}.`);
+    throw new ApiRequestError(error?.message ?? `Request failed with status ${response.status}.`, error?.diagnostics);
   }
   return payload as T;
 }
