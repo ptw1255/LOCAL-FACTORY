@@ -62,7 +62,9 @@ const STUDIO_FILE_STORAGE_PREFIX = 'factory.studioFile.';
 
 const nodeTypes = { workflow: WorkflowNodeCard };
 const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName }> = {
-  studio: { label: 'Studio', icon: 'studio' },
+  // Keep the /studio route as a backwards-compatible deep link while exposing
+  // the product surface as Workspace in navigation and copy.
+  studio: { label: 'Workspace', icon: 'studio' },
   observe: { label: 'Observe', icon: 'runs' },
   connections: { label: 'Connections', icon: 'connections' },
   proposals: { label: 'Agent Proposals', icon: 'agent' },
@@ -910,7 +912,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     await executeRun(input);
   }
 
-  if (loading && workflow === null) return <LoadingState label="Opening workflow studio" />;
+  if (loading && workflow === null) return <LoadingState label="Opening workspace" />;
   if (error !== null && workflow === null) return <ErrorState message={error} retry={() => void loadStudio()} />;
   if (workflow === null) {
     return (
@@ -1645,7 +1647,7 @@ function RunsView() {
       {loading ? <LoadingState label="Loading run history" /> : error !== null && runs.length === 0 ? (
         <ErrorState message={error} retry={() => void loadRuns()} />
       ) : runs.length === 0 ? (
-        <EmptyState icon="runs" title="No runs recorded" message="Run a workflow from Studio to see execution events and performance here." />
+        <EmptyState icon="runs" title="No runs recorded" message="Run a workflow from Workspace to see execution events and performance here." />
       ) : (
         <div className="runs-layout">
           <section className="runs-list-panel">
@@ -1929,7 +1931,7 @@ function ProposalsView({ onOpenStudio }: { onOpenStudio: () => void }) {
                 <div><h3>Why this design</h3><ol>{rationaleItems.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ol></div>
                 <div><h3>Validation</h3>{proposal.issues.length === 0 ? <p className="valid-message"><Icon name="check" /> No issues detected</p> : <ul className="proposal-issues">{proposal.issues.map((issue) => <li className={`issue-${issue.level}`} key={`${issue.code}-${issue.nodeId ?? ''}`}><strong>{issue.code}</strong><span>{issue.message}</span></li>)}</ul>}</div>
               </div>
-              <div className="proposal-footer"><span>{proposal.workflow.nodes.length} nodes · {proposal.workflow.edges.length} connections</span><button className="button primary" onClick={onOpenStudio} type="button">Open Studio <Icon name="chevron" /></button></div>
+              <div className="proposal-footer"><span>{proposal.workflow.nodes.length} nodes · {proposal.workflow.edges.length} connections</span><button className="button primary" onClick={onOpenStudio} type="button">Open Workspace <Icon name="chevron" /></button></div>
             </>
           )}
         </section>
