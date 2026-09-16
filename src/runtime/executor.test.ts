@@ -433,6 +433,19 @@ describe('LocalWorkflowExecutor', () => {
     expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'lmstudio', 'llm.request_id': 'local-1' }));
   });
 
+  it('resolves registered hosted adapters by provider name', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    if (agent === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider: 'gemini', model: 'gemini-2.5-flash' };
+    const gemini = { provider: 'gemini', chat: async () => ({ content: 'gemini result', model: 'gemini-2.5-flash', requestId: 'gemini-1' }) };
+    const hostedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, undefined, new Map(), undefined, new Map([['gemini', gemini]]));
+    const run = await hostedExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
+    const recorded = await events.list(run.id);
+    expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'gemini', 'llm.request_id': 'gemini-1' }));
+  });
+
   it('uses a bounded fallback route when the primary provider is unavailable', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];

@@ -127,6 +127,7 @@ export class LocalWorkflowExecutor {
     private readonly openai?: OpenAIClient,
     private readonly toolExecutors: ReadonlyMap<string, AgentToolExecutor> = new Map(),
     private readonly openaiCompatible?: OpenAIClient,
+    private readonly providerClients: ReadonlyMap<string, OpenAIClient> = new Map(),
   ) {}
 
   public async recover(): Promise<number> {
@@ -981,7 +982,10 @@ export class LocalWorkflowExecutor {
       }
       try {
         let result: OpenAIModelResult | OllamaModelResult;
-        if (provider === 'ollama') {
+        const registered = this.providerClients.get(provider);
+        if (registered !== undefined) {
+          result = await registered.chat({ agent: routeAgent, goal, signal, traceId });
+        } else if (provider === 'ollama') {
           result = await this.ollama.chat({ agent: routeAgent, goal, signal });
         } else if (provider === 'openai') {
           if (this.openai === undefined) throw new Error('OpenAI credentials are not configured for this runtime.');

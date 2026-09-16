@@ -20,8 +20,9 @@ The repository is an actively developed MVP. The current release includes the vi
 Studio, versioned workflows and agent boxes, a local durable executor, an optional
 Temporal execution adapter, PostgreSQL persistence, Vault-backed local secrets, standardized
 OpenTelemetry/OpenInference-style telemetry, bounded proposals, and factory metrics.
-The model-provider and repository-execution adapters are intentionally explicit next
-steps rather than hidden capabilities.
+The model-provider and repository-execution adapters are explicit, testable seams:
+OpenAI Responses, Anthropic Messages, Gemini generate-content, Ollama, and generic
+OpenAI-compatible local servers are available without changing workflow semantics.
 
 ## Run locally
 
@@ -132,8 +133,9 @@ model:
 ```
 
 Routing is bounded to eight declared attempts and does not expose API keys in YAML,
-PostgreSQL, or telemetry. The built-in routes are OpenAI and Ollama; additional
-provider adapters can implement the same provider-neutral contract.
+PostgreSQL, or telemetry. Built-in routes include OpenAI, Anthropic, Gemini, Ollama,
+and OpenAI-compatible local servers; additional adapters can implement the same
+provider-neutral contract.
 
 ### OpenAI Responses API
 
