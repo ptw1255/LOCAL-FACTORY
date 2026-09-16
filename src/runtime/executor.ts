@@ -19,6 +19,7 @@ import type { RepositoryWorkspace } from '../repository/workspace.js';
 import { RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryConflictError, RepositoryMutationError, RepositoryPolicyError } from '../repository/workspace.js';
 import { RepositoryCiError, type GitHubRepositoryClient } from '../repository/github.js';
 import type { OpenAIClient, OpenAIModelResult } from './openai.js';
+import { evaluatePolicy, PolicyDeniedError } from '../domain/policy.js';
 
 const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
@@ -573,6 +574,25 @@ export class LocalWorkflowExecutor {
       },
       data: { nodeType: node.type },
     });
+
+    const policy = evaluatePolicy(node.config.policyRules, {
+      action: node.type,
+      nodeType: node.type,
+      ...(typeof node.config.operation === 'string' ? { operation: node.config.operation } : {}),
+    });
+    if (!policy.allowed) {
+      await this.events.emit(runId, 'policy.denied', policy.reason ?? `Policy denied ${node.type}.`, {
+        nodeId: node.id,
+        signal: 'log',
+        severityText: 'WARN',
+        attributes: {
+          'policy.decision': 'deny',
+          ...(typeof node.config.policyId === 'string' ? { 'policy.id': node.config.policyId } : {}),
+          ...this.sourceMetadata(node),
+        },
+      });
+      throw new PolicyDeniedError(policy.reason ?? `Policy denied ${node.type}.`);
+    }
 
     return this.dispatcher.dispatch(node.unit, {
       runId,

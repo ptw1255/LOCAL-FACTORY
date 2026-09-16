@@ -318,7 +318,12 @@ function compileResourceFilesInternal(resources: ResourceFile[], scope: { tenant
       if (typeof step.policy === 'string') {
         const policyId = resolveReference(step.policy, 'Policy', policyIds);
         if (policyId === undefined) throw new Error(`Workflow ${resource.metadata.id} step ${String(step.id ?? stepIndex + 1)} references missing Policy/${step.policy}.`);
-        resolved.config = { ...(resolved.config as Record<string, unknown> | undefined), policyId };
+        const policy = envelopes.find((candidate) => candidate.kind === 'Policy' && candidate.metadata.id === policyId);
+        resolved.config = {
+          ...(resolved.config as Record<string, unknown> | undefined),
+          policyId,
+          ...(policy === undefined || !Array.isArray(policy.spec.rules) ? {} : { policyRules: structuredClone(policy.spec.rules) }),
+        };
       }
       if (typeof step.connection === 'string') {
         const connectionId = resolveReference(step.connection, 'Connection', connectionIds);
