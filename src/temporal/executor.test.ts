@@ -105,4 +105,21 @@ describe('TemporalWorkflowExecutor', () => {
     expect(handle.cancel).toHaveBeenCalledOnce();
     expect((await events.list(run.id)).some((event) => event.type === 'run.cancelled')).toBe(true);
   });
+
+  it('records approval denial as one failed decision after cancelling the handle', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-deny-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-deny');
+    const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-temporal-deny';
+    const run = await executor.start(workflow);
+    const denied = await executor.deny(run.id, { reason: 'Risk review rejected the action.' });
+    expect(denied).toEqual(expect.objectContaining({ status: 'failed', error: 'Risk review rejected the action.' }));
+    expect(handle.cancel).toHaveBeenCalledOnce();
+    const terminalEvents = (await events.list(run.id)).filter((event) => ['run.cancelled', 'run.failed'].includes(event.type));
+    expect(terminalEvents.map((event) => event.type)).toEqual(['run.failed']);
+  });
 });
