@@ -1572,6 +1572,9 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [environmentFilter, setEnvironmentFilter] = useState('all');
+  const [stateFilter, setStateFilter] = useState('all');
+  const [healthFilter, setHealthFilter] = useState('all');
   const projectId = window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? 'project-local';
   const [form, setForm] = useState({ artifactId: '', workflowId: '', environment: 'local', trigger: 'manual' });
 
@@ -1603,11 +1606,18 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   }, [refreshDeploymentState]);
 
   async function act(deployment: DeploymentRecord, action: DeploymentRecord['history'][number]['action'], artifactId?: string) {
-    if (['stop', 'restart', 'rollback'].includes(action) && !window.confirm(`Confirm ${action} for ${deployment.workflowId}?`)) return;
+    if (['deploy', 'stop', 'restart', 'rollback'].includes(action) && !window.confirm(`Confirm ${action} for ${deployment.workflowId}?`)) return;
     setBusyId(deployment.id);
     setError(null);
     try {
-      const updated = await api.deploymentAction(deployment.id, action, artifactId);
+      const idempotencyKey = typeof window.crypto?.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : `${deployment.id}:${action}:${Date.now()}`;
+      const updated = await api.deploymentAction(deployment.id, action, {
+        ...(artifactId === undefined ? {} : { artifactId }),
+        expectedUpdatedAt: deployment.updatedAt,
+        idempotencyKey,
+      });
       setDeployments((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
     } catch (actionError) { setError(errorText(actionError)); }
     finally { setBusyId(null); }
@@ -1631,6 +1641,12 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
 
   const selectedArtifact = artifacts.find((artifact) => artifact.id === form.artifactId);
   const artifactWorkflows = selectedArtifact?.workflows ?? [];
+  const environments = [...new Set(deployments.map((deployment) => deployment.environment))].sort();
+  const filteredDeployments = deployments.filter((deployment) =>
+    (environmentFilter === 'all' || deployment.environment === environmentFilter)
+    && (stateFilter === 'all' || deployment.observedState === stateFilter)
+    && (healthFilter === 'all' || deployment.health === healthFilter),
+  );
 
   if (loading) return <LoadingState label="Loading deployments" />;
   if (error !== null && deployments.length === 0) return <ErrorState message={error} retry={() => void loadDeployments()} />;
@@ -1657,20 +1673,30 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
         <div><span>Attention</span><strong>{attention}</strong></div>
         <div><span>Stopped</span><strong>{deployments.filter((deployment) => deployment.observedState === 'stopped').length}</strong></div>
       </section>
+      <section className="deployment-filters" aria-label="Deployment filters">
+        <label>Environment<select aria-label="Filter deployments by environment" onChange={(event) => setEnvironmentFilter(event.target.value)} value={environmentFilter}><option value="all">All environments</option>{environments.map((environment) => <option key={environment} value={environment}>{environment}</option>)}</select></label>
+        <label>Observed state<select aria-label="Filter deployments by observed state" onChange={(event) => setStateFilter(event.target.value)} value={stateFilter}><option value="all">All states</option>{['live', 'starting', 'stopping', 'stopped', 'degraded', 'failed', 'unknown'].map((state) => <option key={state} value={state}>{state}</option>)}</select></label>
+        <label>Health<select aria-label="Filter deployments by health" onChange={(event) => setHealthFilter(event.target.value)} value={healthFilter}><option value="all">All health</option><option value="healthy">healthy</option><option value="degraded">degraded</option><option value="unknown">unknown</option></select></label>
+        <span className="deployment-filter-count">Showing {filteredDeployments.length} of {deployments.length}</span>
+      </section>
       {deployments.length === 0 ? (
         <EmptyState icon="factory" title="No deployments yet" message="Compile a workflow artifact, then create a deployment through the API to manage its desired state here." action={<button className="button primary" onClick={() => onNavigate('studio')} type="button">Open Workspace <Icon name="chevron" /></button>} />
+      ) : filteredDeployments.length === 0 ? (
+        <EmptyState icon="factory" title="No matching deployments" message="Adjust the environment, state, or health filters to see another deployment." />
       ) : (
         <div className="connection-grid">
-          {deployments.map((deployment) => {
+          {filteredDeployments.map((deployment) => {
             const workflowName = deployment.workflowId;
             const action = deployment.observedState === 'live' ? 'stop' : 'start';
+            const stale = Date.now() - Date.parse(deployment.updatedAt) > 30_000;
+            const deployable = artifacts.filter((artifact) => artifact.id !== deployment.artifactId && artifact.workflows.some((workflow) => workflow.id === deployment.workflowId));
             return (
               <article className="connection-card" key={deployment.id}>
-                <header><span className="connector-logo"><Icon name="factory" size={18} /></span><div><h2>{workflowName}</h2><span>{deployment.environment} · artifact {deployment.artifactId.slice(0, 18)}</span></div><StatusBadge status={deployment.observedState} /></header>
+                <header><span className="connector-logo"><Icon name="factory" size={18} /></span><div><h2>{workflowName}</h2><span>{deployment.environment} · artifact {deployment.artifactId.slice(0, 18)}</span></div><div className="deployment-status"><StatusBadge status={deployment.observedState} />{stale ? <span className="stale-indicator">stale</span> : null}</div></header>
                 <dl><div><dt>Desired</dt><dd>{deployment.desiredState}</dd></div><div><dt>Health</dt><dd>{deployment.health}</dd></div><div><dt>Trigger</dt><dd>{deployment.trigger} · {deployment.triggerStatus}</dd></div><div><dt>Updated</dt><dd>{formatDate(deployment.updatedAt)}</dd></div></dl>
                 {deployment.lastError === undefined ? null : <p className="form-error">{deployment.lastError}</p>}
                 <details className="deployment-history"><summary>Transition history ({deployment.history.length})</summary>{deployment.history.length === 0 ? <p className="inline-empty">No transitions recorded.</p> : <ul>{deployment.history.map((transition) => <li key={transition.id}><strong>{transition.action}</strong><span>{transition.outcome} · {transition.actor}</span><time>{formatDate(transition.occurredAt)}</time>{transition.reason === undefined ? null : <small>{transition.reason}</small>}</li>)}</ul>}</details>
-                <div className="form-actions"><button className="button primary" disabled={busyId === deployment.id} onClick={() => void act(deployment, action)} type="button">{busyId === deployment.id ? 'Working…' : action === 'stop' ? 'Stop' : 'Start'}</button><button className="button ghost" disabled={busyId === deployment.id} onClick={() => void act(deployment, 'restart')} type="button">Restart</button>{(() => { const healthy = new Set(deployment.healthyArtifactIds ?? []); const prior = artifacts.filter((artifact) => artifact.id !== deployment.artifactId && healthy.has(artifact.id) && artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)); return prior.length === 0 ? null : <><select aria-label={`Rollback artifact for ${deployment.workflowId}`} defaultValue="" disabled={busyId === deployment.id} onChange={(event) => { if (event.target.value !== '') void act(deployment, 'rollback', event.target.value); }}><option value="">Rollback…</option>{prior.map((artifact) => <option key={artifact.id} value={artifact.id}>{artifact.environment} · {artifact.id.slice(0, 12)}</option>)}</select></>; })()}<button className="text-button" onClick={() => onNavigate('observe')} type="button">Observe <Icon name="chevron" /></button></div>
+                <div className="form-actions"><button className="button primary" disabled={busyId === deployment.id} onClick={() => void act(deployment, action)} type="button">{busyId === deployment.id ? 'Working…' : action === 'stop' ? 'Stop' : 'Start'}</button><button className="button ghost" disabled={busyId === deployment.id} onClick={() => void act(deployment, 'restart')} type="button">Restart</button>{deployable.length === 0 ? null : <select aria-label={`Deploy artifact for ${deployment.workflowId}`} defaultValue="" disabled={busyId === deployment.id} onChange={(event) => { if (event.target.value !== '') void act(deployment, 'deploy', event.target.value); }}><option value="">Deploy…</option>{deployable.map((artifact) => <option key={artifact.id} value={artifact.id}>{artifact.environment} · {artifact.id.slice(0, 12)}</option>)}</select>}{(() => { const healthy = new Set(deployment.healthyArtifactIds ?? []); const prior = artifacts.filter((artifact) => artifact.id !== deployment.artifactId && healthy.has(artifact.id) && artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)); return prior.length === 0 ? null : <><select aria-label={`Rollback artifact for ${deployment.workflowId}`} defaultValue="" disabled={busyId === deployment.id} onChange={(event) => { if (event.target.value !== '') void act(deployment, 'rollback', event.target.value); }}><option value="">Rollback…</option>{prior.map((artifact) => <option key={artifact.id} value={artifact.id}>{artifact.environment} · {artifact.id.slice(0, 12)}</option>)}</select></>; })()}<button className="text-button" onClick={() => onNavigate('studio')} type="button">Workspace <Icon name="chevron" /></button><button className="text-button" onClick={() => onNavigate('observe')} type="button">Observe <Icon name="chevron" /></button></div>
               </article>
             );
           })}

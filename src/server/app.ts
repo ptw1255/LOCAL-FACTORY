@@ -600,13 +600,15 @@ export async function createApp(
   });
 
   app.post<{ Params: { id: string }; Body: unknown }>('/api/deployments/:id/action', async (request, reply) => {
-    const body = request.body as { action?: unknown; artifactId?: unknown; reason?: unknown };
+    const body = request.body as { action?: unknown; artifactId?: unknown; reason?: unknown; expectedUpdatedAt?: unknown; idempotencyKey?: unknown };
     const actions = new Set(['deploy', 'start', 'stop', 'restart', 'rollback']);
     if (typeof body?.action !== 'string' || !actions.has(body.action)) return reply.status(422).send({ message: 'A supported deployment action is required.' });
     try {
       return await deployments.action(request.params.id, scopeFromRequest(request), body.action as import('../domain/types.js').DeploymentAction, {
         ...(typeof body.artifactId === 'string' ? { artifactId: body.artifactId } : {}),
         ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
+        ...(typeof body.expectedUpdatedAt === 'string' ? { expectedUpdatedAt: body.expectedUpdatedAt } : {}),
+        ...(typeof body.idempotencyKey === 'string' ? { idempotencyKey: body.idempotencyKey } : {}),
       });
     } catch (error) {
       return reply.status(409).send({ message: errorMessage(error) });

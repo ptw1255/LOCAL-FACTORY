@@ -276,6 +276,8 @@ export interface DeploymentTransition {
   occurredAt: string;
   fromArtifactId?: string;
   toArtifactId?: string;
+  /** Client-supplied key that makes retried actions idempotent. */
+  idempotencyKey?: string;
   outcome: 'succeeded' | 'failed';
   reason?: string;
 }

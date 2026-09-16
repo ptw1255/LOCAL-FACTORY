@@ -63,11 +63,18 @@ export class DeploymentReconciler {
     });
   }
 
-  public async action(id: string, scope: DeploymentScope, action: DeploymentAction, options: { artifactId?: string; actor?: string; reason?: string } = {}): Promise<DeploymentRecord> {
+  public async action(id: string, scope: DeploymentScope, action: DeploymentAction, options: { artifactId?: string; actor?: string; reason?: string; expectedUpdatedAt?: string; idempotencyKey?: string } = {}): Promise<DeploymentRecord> {
     let transitionError: unknown;
     const result = await this.store.mutate(async (state) => {
       const deployment = state.deployments.find((candidate) => candidate.id === id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
       if (deployment === undefined) throw new Error('Deployment not found.');
+      if (options.idempotencyKey !== undefined) {
+        const prior = deployment.history.find((transition) => transition.idempotencyKey === options.idempotencyKey);
+        if (prior !== undefined) return deployment;
+      }
+      if (options.expectedUpdatedAt !== undefined && options.expectedUpdatedAt !== deployment.updatedAt) {
+        throw new Error('Deployment changed since it was loaded; refresh before retrying the action.');
+      }
       const fromArtifactId = deployment.artifactId;
       const targetArtifactId = options.artifactId ?? deployment.artifactId;
       const actor = options.actor?.trim() || 'local-operator';
@@ -94,6 +101,7 @@ export class DeploymentReconciler {
           id: randomUUID(), action, actor, occurredAt: now,
           ...(fromArtifactId === undefined ? {} : { fromArtifactId }),
           ...(targetArtifactId === undefined ? {} : { toArtifactId: targetArtifactId }),
+          ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
           outcome: 'succeeded',
           ...(options.reason === undefined ? {} : { reason: options.reason }),
         };
@@ -104,7 +112,7 @@ export class DeploymentReconciler {
         deployment.health = 'degraded';
         deployment.lastError = error instanceof Error ? error.message : 'Deployment transition failed.';
         deployment.updatedAt = now;
-        deployment.history.unshift({ id: randomUUID(), action, actor, occurredAt: now, outcome: 'failed', reason: deployment.lastError });
+        deployment.history.unshift({ id: randomUUID(), action, actor, occurredAt: now, ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }), outcome: 'failed', reason: deployment.lastError });
         transitionError = error;
         return deployment;
       } finally {
