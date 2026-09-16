@@ -159,7 +159,7 @@ export const nodeCatalog: NodeCatalogItem[] = [
     label: 'Push repository branch',
     category: 'Repository',
     description: 'Push a branch to an allow-listed remote.',
-    defaultConfig: { remote: 'origin', branch: '' },
+    defaultConfig: { remote: 'origin', branch: '', allowedRemotes: ['origin'] },
   },
   {
     type: 'repositoryPullRequest',

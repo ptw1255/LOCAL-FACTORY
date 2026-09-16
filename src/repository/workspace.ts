@@ -22,6 +22,14 @@ export class RepositoryMutationError extends Error {
   public readonly code = 'REPOSITORY_MUTATION_FAILED';
   public constructor(message: string, public readonly transactionId: string, public readonly rolledBack: boolean) { super(message); this.name = 'RepositoryMutationError'; }
 }
+export class RepositoryConflictError extends Error {
+  public readonly code = 'REPOSITORY_CONFLICT';
+  public constructor(message: string, public readonly expected?: string, public readonly actual?: string) { super(message); this.name = 'RepositoryConflictError'; }
+}
+export class RepositoryPolicyError extends Error {
+  public readonly code = 'REPOSITORY_POLICY_VIOLATION';
+  public constructor(message: string, public readonly policy?: string, public readonly value?: string) { super(message); this.name = 'RepositoryPolicyError'; }
+}
 export interface GitRevisionResult { branch: string; revision: string }
 
 function truncate(value: string): string { return value.length > MAX_OUTPUT ? `${value.slice(0, MAX_OUTPUT)}\n… output truncated` : value; }
@@ -203,7 +211,7 @@ export class RepositoryWorkspace {
     this.assertWritableRepository();
     this.assertBranchName(branch);
     const current = await this.revision();
-    if (current !== baseRevision) throw new Error(`Repository base revision changed from ${baseRevision} to ${current}.`);
+    if (current !== baseRevision) throw new RepositoryConflictError(`Repository base revision changed from ${baseRevision} to ${current}.`, baseRevision, current);
     await this.git(['switch', '-c', branch]);
     return { branch, revision: await this.revision() };
   }
@@ -222,10 +230,14 @@ export class RepositoryWorkspace {
     return { branch, revision: await this.revision() };
   }
 
-  public async push(branch: string, remote = 'origin'): Promise<GitRevisionResult> {
+  public async push(branch: string, remote = 'origin', options: { allowedRemotes?: string[] } = {}): Promise<GitRevisionResult> {
     this.assertWritableRepository();
     this.assertBranchName(branch);
-    if (!/^[A-Za-z0-9._-]+$/.test(remote) || remote.startsWith('-')) throw new Error('Git remote is not allowed.');
+    const allowedRemotes = options.allowedRemotes ?? ['origin'];
+    if (!allowedRemotes.includes(remote)) throw new RepositoryPolicyError(`Git remote "${remote}" is not allowed by the workflow policy.`, 'allowedRemotes', remote);
+    if (!/^[A-Za-z0-9._-]+$/.test(remote) || remote.startsWith('-')) throw new RepositoryPolicyError('Git remote is not allowed.', 'remote', remote);
+    const current = await this.currentBranch();
+    if (current !== branch) throw new RepositoryConflictError(`Repository push branch "${branch}" is not checked out; current branch is "${current}".`, branch, current);
     await this.git(['push', '--set-upstream', remote, branch]);
     return { branch, revision: await this.revision() };
   }

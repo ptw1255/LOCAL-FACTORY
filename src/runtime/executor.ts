@@ -13,7 +13,7 @@ import type { PlatformStore } from '../storage/store.js';
 import { HttpOllamaClient, type OllamaClient } from './ollama.js';
 import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
 import type { RepositoryWorkspace } from '../repository/workspace.js';
-import { RepositoryMutationError } from '../repository/workspace.js';
+import { RepositoryConflictError, RepositoryMutationError, RepositoryPolicyError } from '../repository/workspace.js';
 import { RepositoryCiError, type GitHubRepositoryClient } from '../repository/github.js';
 import type { OpenAIClient } from './openai.js';
 
@@ -406,6 +406,8 @@ export class LocalWorkflowExecutor {
               ? this.operationMetadata(error.result)
               : error instanceof RepositoryMutationError
                 ? this.operationMetadata(error)
+                : error instanceof RepositoryConflictError || error instanceof RepositoryPolicyError
+                  ? this.operationMetadata(error)
                 : undefined,
           });
           await this.events.emit(runId, 'unit.failed', `${nextNode.label} unit failed.`, {
@@ -595,7 +597,10 @@ export class LocalWorkflowExecutor {
           ? node.config.branch
           : await workspace.currentBranch();
         const remote = typeof node.config.remote === 'string' ? node.config.remote : 'origin';
-        result = await workspace.push(branch, remote);
+        const allowedRemotes = Array.isArray(node.config.allowedRemotes)
+          ? node.config.allowedRemotes.filter((value): value is string => typeof value === 'string')
+          : ['origin'];
+        result = await workspace.push(branch, remote, { allowedRemotes });
         break;
       }
       case 'repositoryPullRequest': {
@@ -921,6 +926,10 @@ export class LocalWorkflowExecutor {
     if (typeof value.status === 'string') metadata['ci.status'] = value.status;
     if (typeof value.transactionId === 'string') metadata['operation.transaction_id'] = value.transactionId;
     if (typeof value.rolledBack === 'boolean') metadata['mutation.rolled_back'] = value.rolledBack;
+    if (typeof value.expected === 'string') metadata['repository.expected'] = value.expected;
+    if (typeof value.actual === 'string') metadata['repository.actual'] = value.actual;
+    if (typeof value.policy === 'string') metadata['repository.policy'] = value.policy;
+    if (typeof value.value === 'string') metadata['repository.policy_value'] = value.value;
     if (Array.isArray(value.required)) metadata['ci.required_count'] = value.required.length;
     if (Array.isArray(value.failures)) metadata['ci.failure_count'] = value.failures.length;
     if (Array.isArray(value.failures)) {
