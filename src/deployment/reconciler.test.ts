@@ -50,6 +50,40 @@ describe('DeploymentReconciler', () => {
     await expect(reconciler.reconcile(deployment.id, { tenantId: 'tenant-local', projectId: 'project-local' })).rejects.toThrow('currently reconciled');
   });
 
+  it('rejects stale operator actions before changing deployment state', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-stale-action', tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const reconciler = new DeploymentReconciler(store);
+    const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'stale-action', artifactId: artifact.id, trigger: 'manual' });
+    const started = await reconciler.action(deployment.id, scope, 'start');
+    await expect(reconciler.action(deployment.id, scope, 'stop', { expectedUpdatedAt: deployment.updatedAt })).rejects.toThrow('changed since it was loaded');
+    const current = (await reconciler.list(scope)).find((candidate) => candidate.id === deployment.id);
+    expect(current).toMatchObject({ observedState: started.observedState, desiredState: started.desiredState });
+    expect(current?.history).toHaveLength(1);
+  });
+
+  it('returns the original result for a retried idempotent action', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-idempotent', tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const reconciler = new DeploymentReconciler(store);
+    const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'idempotent', artifactId: artifact.id, trigger: 'manual' });
+    const first = await reconciler.action(deployment.id, scope, 'start', { idempotencyKey: 'operator-action-1' });
+    const repeated = await reconciler.action(deployment.id, scope, 'start', { idempotencyKey: 'operator-action-1', expectedUpdatedAt: 'stale' });
+    expect(repeated).toEqual(first);
+    expect(repeated.history).toHaveLength(1);
+    expect(repeated.history[0]?.idempotencyKey).toBe('operator-action-1');
+  });
+
   it('records a durable transition when reconciliation repairs drift', async () => {
     const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
     const artifact = await store.mutate((state) => {

@@ -225,6 +225,7 @@ export interface DeploymentTransition {
   occurredAt: string;
   fromArtifactId?: string;
   toArtifactId?: string;
+  idempotencyKey?: string;
   outcome: 'succeeded' | 'failed';
   reason?: string;
 }
