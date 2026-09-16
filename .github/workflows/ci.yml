@@ -59,3 +59,14 @@ jobs:
         run: npm run check:bundle
       - name: Coding workflow integration gate
         run: npm run test:coding-workflow
+
+  image-budget:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build --tag agentic-workflow-factory:ci .
+      - name: Enforce production image budget
+        run: npm run check:image -- agentic-workflow-factory:ci

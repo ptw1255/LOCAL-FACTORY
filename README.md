@@ -380,6 +380,11 @@ added to `otel-collector-config.yaml`. Keep the factory cleanup and Phoenix's
 two-day policy enabled to preserve the 48-hour retention boundary.
 
 `npm run check` runs type checking, tests, and the production web build.
+`npm run check:bundle` enforces the browser asset budgets (650 KB JavaScript and
+120 KB CSS). CI also builds the multi-stage production image and enforces a 900 MiB
+uncompressed image budget with `npm run check:image`; that check is intentionally
+separate because it requires a Docker daemon and remains optional for local setups
+without Docker Desktop.
 
 The default suite keeps the PostgreSQL restart probe opt-in so contributors do not
 need a database daemon. To exercise the supported local persistence boundary, start
