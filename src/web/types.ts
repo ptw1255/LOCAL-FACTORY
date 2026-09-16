@@ -32,6 +32,17 @@ export interface ProjectFileRecord {
   updatedAt: string;
 }
 
+export interface ArtifactRecord {
+  tenantId: string;
+  projectId: string;
+  id: string;
+  environment: string;
+  compilerVersion: string;
+  sources: Array<{ path: string; sha256: string }>;
+  workflows: WorkflowDefinition[];
+  createdAt: string;
+}
+
 export interface Position {
   x: number;
   y: number;
