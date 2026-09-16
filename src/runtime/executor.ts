@@ -555,7 +555,7 @@ export class LocalWorkflowExecutor {
         const command = typeof node.config.command === 'string' ? node.config.command : 'npm test';
         const timeoutMs = typeof node.config.timeoutMs === 'number' ? node.config.timeoutMs : undefined;
         const required = node.config.required !== false;
-        const check = await workspace.runCheck(command, timeoutMs);
+        const check = await workspace.runCheck(command, timeoutMs, signal);
         result = { ...check, required, promotionBlocked: required && check.exitCode !== 0 };
         if (required && check.timedOut) throw new RepositoryCheckTimeoutError(`Required repository check timed out: ${command}.`, check);
         if (required && check.exitCode !== 0) throw new RepositoryCheckError(`Required repository check failed: ${command}.`, check);
@@ -952,6 +952,7 @@ export class LocalWorkflowExecutor {
     if (typeof value.status === 'string') metadata['ci.status'] = value.status;
     if (typeof value.exitCode === 'number') metadata['check.exit_code'] = value.exitCode;
     if (typeof value.timedOut === 'boolean') metadata['check.timed_out'] = value.timedOut;
+    if (typeof value.cancelled === 'boolean') metadata['check.cancelled'] = value.cancelled;
     if (typeof value.transactionId === 'string') metadata['operation.transaction_id'] = value.transactionId;
     if (typeof value.rolledBack === 'boolean') metadata['mutation.rolled_back'] = value.rolledBack;
     if (typeof value.expected === 'string') metadata['repository.expected'] = value.expected;
