@@ -33,6 +33,7 @@ import type {
   ConnectionRecord,
   FactoryMetrics,
   DeploymentRecord,
+  OperationEvidence,
   NodeCatalogItem,
   ProjectRecord,
   ProjectFileRecord,
@@ -1171,6 +1172,7 @@ function RunsView() {
   );
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
+  const [evidence, setEvidence] = useState<OperationEvidence[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -1206,18 +1208,20 @@ function RunsView() {
     if (selectedRunId === null) {
       setSelectedRun(null);
       setEvents([]);
+      setEvidence([]);
       return;
     }
     sessionStorage.setItem('selectedRunId', selectedRunId);
     setDetailLoading(true);
-    Promise.all([api.run(selectedRunId), api.events(selectedRunId)])
-      .then(([run, eventResponse]) => {
+    Promise.all([api.run(selectedRunId), api.events(selectedRunId), api.evidence(selectedRunId)])
+      .then(([run, eventResponse, evidenceResponse]) => {
         setSelectedRun(run);
         setEvents(
           [...eventResponse.items].sort(
             (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
           ),
         );
+        setEvidence([...evidenceResponse.items].sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()));
       })
       .catch((detailError: unknown) => setError(errorText(detailError)))
       .finally(() => setDetailLoading(false));
@@ -1343,6 +1347,13 @@ function RunsView() {
                       </li>
                     ))}
                   </ol>
+                )}
+                <div className="timeline-heading"><div><span className="eyebrow">Durable evidence</span><h3>Operation history</h3></div><span className="count-pill">{evidence.length} records</span></div>
+                {evidence.length === 0 ? <p className="inline-empty">No durable operation evidence recorded.</p> : (
+                  <div className="stage-table evidence-table">
+                    <div className="stage-row stage-head"><span>Operation</span><span>Status</span><span>Attempt</span><span>Occurred</span></div>
+                    {evidence.map((entry) => <div className="stage-row" key={entry.id}><strong>{entry.operation} · {entry.unitId}</strong><StatusBadge status={entry.status} /><span>{entry.attempt}</span><span>{formatDate(entry.occurredAt)}</span></div>)}
+                  </div>
                 )}
               </>
             )}

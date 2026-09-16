@@ -35,6 +35,7 @@ import { HttpOpenAIClient } from '../runtime/openai.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 import { GitHubRepositoryClient } from '../repository/github.js';
 import { DeploymentReconciler } from '../deployment/reconciler.js';
+import type { OpenAIClient } from '../runtime/openai.js';
 import { JsonStore } from '../storage/json-store.js';
 import { PostgresStore } from '../storage/postgres-store.js';
 import { DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID, type PlatformStore } from '../storage/store.js';
@@ -47,6 +48,9 @@ export interface AppOptions {
   logger?: boolean;
   serveStatic?: boolean;
   observabilityRetentionHours?: number;
+  repositoryWorkspace?: RepositoryWorkspace;
+  githubRepository?: GitHubRepositoryClient;
+  openaiClient?: OpenAIClient;
 }
 
 function errorMessage(error: unknown): string {
@@ -117,13 +121,13 @@ export async function createApp(
   const exporter = telemetryExporter();
   const events = new EventService(store, { retentionHours, exporter });
   const ollama = new HttpOllamaClient();
-  const repositoryWorkspace = process.env.REPOSITORY_WORKSPACE === undefined
+  const repositoryWorkspace = options.repositoryWorkspace ?? (process.env.REPOSITORY_WORKSPACE === undefined
     ? undefined
-    : await RepositoryWorkspace.open(process.env.REPOSITORY_WORKSPACE);
-  const githubRepository = process.env.GITHUB_TOKEN !== undefined && process.env.GITHUB_REPOSITORY_OWNER !== undefined && process.env.GITHUB_REPOSITORY_NAME !== undefined
+    : await RepositoryWorkspace.open(process.env.REPOSITORY_WORKSPACE));
+  const githubRepository = options.githubRepository ?? (process.env.GITHUB_TOKEN !== undefined && process.env.GITHUB_REPOSITORY_OWNER !== undefined && process.env.GITHUB_REPOSITORY_NAME !== undefined
     ? new GitHubRepositoryClient({ token: process.env.GITHUB_TOKEN, owner: process.env.GITHUB_REPOSITORY_OWNER, repo: process.env.GITHUB_REPOSITORY_NAME })
-    : undefined;
-  const openai = new HttpOpenAIClient({ secretBroker });
+    : undefined);
+  const openai = options.openaiClient ?? new HttpOpenAIClient({ secretBroker });
   const executor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace, githubRepository, openai);
   const ollamaAgents = await store.read((state) => state.workflows.flatMap((workflow) => workflow.agents));
   if (ollamaAgents.some((agent) => agent.model.provider?.toLowerCase() === 'ollama' && agent.model.provisioning?.mode === 'pull-on-start')) {
