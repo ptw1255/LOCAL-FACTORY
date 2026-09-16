@@ -11,6 +11,7 @@
     "dev": "node scripts/dev.mjs",
     "server": "tsx src/server/main.ts",
     "test": "vitest run",
+    "test:coding-workflow": "vitest run src/server/coding-workflow.e2e.test.ts",
     "typecheck": "tsc --noEmit",
     "worker": "tsx src/temporal/worker.ts"
   },
