@@ -154,5 +154,6 @@ export function createSeedState(): PlatformState {
     files: [],
     artifacts: [],
     evidence: [],
+    deployments: [],
   };
 }

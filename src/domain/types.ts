@@ -215,6 +215,38 @@ export interface OperationEvidence {
   metadata?: Record<string, string | number | boolean>;
 }
 
+export type DeploymentDesiredState = 'running' | 'stopped';
+export type DeploymentObservedState = 'unknown' | 'starting' | 'live' | 'stopping' | 'degraded' | 'failed' | 'stopped';
+export type DeploymentAction = 'deploy' | 'start' | 'stop' | 'restart' | 'rollback';
+
+export interface DeploymentTransition {
+  id: string;
+  action: DeploymentAction;
+  actor: string;
+  occurredAt: string;
+  fromArtifactId?: string;
+  toArtifactId?: string;
+  outcome: 'succeeded' | 'failed';
+  reason?: string;
+}
+
+export interface DeploymentRecord {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  workflowId: string;
+  environment: string;
+  artifactId: string;
+  desiredState: DeploymentDesiredState;
+  observedState: DeploymentObservedState;
+  health: 'healthy' | 'degraded' | 'unknown';
+  trigger: string;
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
+  history: DeploymentTransition[];
+}
+
 export interface ConnectionRecord {
   tenantId?: string;
   projectId?: string;
@@ -279,4 +311,5 @@ export interface PlatformState {
   files: ProjectFileRecord[];
   artifacts: ArtifactRecord[];
   evidence: OperationEvidence[];
+  deployments: DeploymentRecord[];
 }

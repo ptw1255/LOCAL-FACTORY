@@ -13,6 +13,7 @@ import { HttpOllamaClient, type OllamaClient } from './ollama.js';
 import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
 import type { RepositoryWorkspace } from '../repository/workspace.js';
 import type { GitHubRepositoryClient } from '../repository/github.js';
+import type { OpenAIClient } from './openai.js';
 
 const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
@@ -50,6 +51,7 @@ export class LocalWorkflowExecutor {
     private readonly dispatcher: WorkUnitDispatcher = new WorkUnitDispatcher(),
     private readonly repositoryWorkspace?: RepositoryWorkspace,
     private readonly githubRepository?: GitHubRepositoryClient,
+    private readonly openai?: OpenAIClient,
   ) {}
 
   public async recover(): Promise<number> {
@@ -573,6 +575,8 @@ export class LocalWorkflowExecutor {
       const provider = agent.model.provider?.toLowerCase();
       const modelResult = provider === 'ollama'
         ? await this.ollama.chat({ agent, goal, signal })
+        : provider === 'openai' && this.openai !== undefined
+          ? await this.openai.chat({ agent, goal, signal, traceId: runId })
         : undefined;
       if (modelResult !== undefined) lastModelOutput = modelResult.content;
       await this.events.emit(
@@ -597,14 +601,15 @@ export class LocalWorkflowExecutor {
         },
       );
       if (modelResult !== undefined) {
-        await this.events.emit(runId, 'llm.completed', 'Ollama model completed.', {
+        await this.events.emit(runId, 'llm.completed', `${provider ?? 'Configured'} model completed.`, {
           nodeId: node.id,
           signal: 'trace',
           spanKind: 'llm',
           attributes: {
             'openinference.span.kind': 'LLM',
             'llm.model_name': modelResult.model,
-            'llm.provider': 'ollama',
+            'llm.provider': provider ?? 'unknown',
+            ...(modelResult.requestId === undefined ? {} : { 'llm.request_id': modelResult.requestId }),
             ...(modelResult.promptTokens === undefined ? {} : { 'llm.token_count.prompt': modelResult.promptTokens }),
             ...(modelResult.completionTokens === undefined ? {} : { 'llm.token_count.completion': modelResult.completionTokens }),
           },

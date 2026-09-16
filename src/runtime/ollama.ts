@@ -3,7 +3,7 @@ import type { AgentDefinition } from '../domain/types.js';
 export interface OllamaClient {
   ensureModel(input: { agent: AgentDefinition; signal: AbortSignal }): Promise<void>;
   chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal }): Promise<{
-    content: string; promptTokens?: number; completionTokens?: number; model: string;
+    content: string; promptTokens?: number; completionTokens?: number; model: string; requestId?: string;
   }>;
 }
 
@@ -19,7 +19,7 @@ export class HttpOllamaClient implements OllamaClient {
     this.fetcher = options.fetcher ?? fetch;
   }
   public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal }): Promise<{
-    content: string; promptTokens?: number; completionTokens?: number; model: string;
+    content: string; promptTokens?: number; completionTokens?: number; model: string; requestId?: string;
   }> {
     const model = input.agent.model.model;
     if (model === undefined) throw new Error(`Ollama agent "${input.agent.id}" must declare model.model.`);

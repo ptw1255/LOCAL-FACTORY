@@ -1,4 +1,4 @@
-export type ViewId = 'studio' | 'observe' | 'runs' | 'connections' | 'proposals' | 'factory';
+export type ViewId = 'studio' | 'observe' | 'runs' | 'connections' | 'proposals' | 'factory' | 'deployments';
 export type WorkflowStatus = 'draft' | 'deployed';
 export type RunStatus =
   | 'queued'
@@ -183,6 +183,34 @@ export interface ConnectionRecord {
   usageCount: number;
   secretRef?: string;
   secretConfigured: boolean;
+}
+
+export interface DeploymentTransition {
+  id: string;
+  action: 'deploy' | 'start' | 'stop' | 'restart' | 'rollback';
+  actor: string;
+  occurredAt: string;
+  fromArtifactId?: string;
+  toArtifactId?: string;
+  outcome: 'succeeded' | 'failed';
+  reason?: string;
+}
+
+export interface DeploymentRecord {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  workflowId: string;
+  environment: string;
+  artifactId: string;
+  desiredState: 'running' | 'stopped';
+  observedState: 'unknown' | 'starting' | 'live' | 'stopping' | 'degraded' | 'failed' | 'stopped';
+  health: 'healthy' | 'degraded' | 'unknown';
+  trigger: string;
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
+  history: DeploymentTransition[];
 }
 
 export interface AgentProposal {
