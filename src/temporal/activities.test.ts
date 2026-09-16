@@ -128,6 +128,24 @@ describe('Temporal node activities', () => {
     expect(error).toMatchObject({ code: 'TEMPORAL_ACTIVITY_UNSUPPORTED', nodeType: 'agentLoop' });
   });
 
+  it('completes an approval activity after the workflow signal is received', async () => {
+    const lifecycle: Array<{ status: string; nodeId: string }> = [];
+    configureTemporalObservabilitySink({ record: (record) => { lifecycle.push({ status: record.status, nodeId: record.nodeId }); } });
+    try {
+      await expect(executeNodeActivity({
+        runId: 'run-approval',
+        nodeId: 'approve',
+        nodeType: 'approval',
+        label: 'Approve',
+        config: {},
+        unit: defaultWorkUnit('approval'),
+      })).resolves.toMatchObject({ nodeId: 'approve', result: true });
+    } finally {
+      configureTemporalObservabilitySink(undefined);
+    }
+    expect(lifecycle).toEqual([{ status: 'started', nodeId: 'approve' }, { status: 'succeeded', nodeId: 'approve' }]);
+  });
+
   it('enforces WorkUnit timeouts for Temporal activities', async () => {
     await expect(executeNodeActivity({
       runId: 'run-temporal',
