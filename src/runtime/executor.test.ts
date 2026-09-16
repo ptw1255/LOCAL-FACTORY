@@ -231,6 +231,31 @@ describe('LocalWorkflowExecutor', () => {
     await expect(repository.read('.factory-run-marker')).rejects.toThrow();
   });
 
+  it('persists mutation transaction identity and rollback status on failure', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const prepare = workflow.nodes.find((node) => node.id === 'prepare');
+    if (prepare === undefined) throw new Error('Seed prepare node is missing.');
+    prepare.type = 'repositoryMutation';
+    prepare.label = 'Failing repository transaction';
+    prepare.config = {
+      capabilities: ['repository.write'],
+      operations: [
+        { operation: 'replace', path: 'README.md', content: 'temporary mutation' },
+        { operation: 'delete', path: 'missing-file-for-rollback' },
+      ],
+    };
+    prepare.unit = defaultWorkUnit('repositoryMutation');
+    const repository = await (await import('../repository/workspace.js')).RepositoryWorkspace.open(process.cwd());
+    const isolatedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, repository);
+    const run = await isolatedExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    const mutationFailure = (await events.listEvidence(run.id)).find((entry) => entry.unitId === 'prepare' && entry.status === 'failed');
+    expect(mutationFailure?.metadata).toEqual(expect.objectContaining({
+      'operation.transaction_id': expect.stringMatching(/^sha256:/),
+      'mutation.rolled_back': true,
+    }));
+  });
+
   it('rejects repository commits when approved patch content drifts', async () => {
     const workflow = structuredClone(seedWorkflow);
     workflow.agents = [];
