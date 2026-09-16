@@ -44,7 +44,7 @@ export const agentDefinitionSchema = z.object({
       adapterVersion: z.string().trim().min(1).optional(),
     })).max(8).optional(),
     routing: z.object({
-      strategy: z.enum(['single', 'fallback']),
+      strategy: z.enum(['single', 'fallback', 'ensemble']),
       maxAttempts: z.number().int().positive().max(8).optional(),
     }).optional(),
   }),

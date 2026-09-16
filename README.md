@@ -115,8 +115,10 @@ policies.
 
 An agent can declare a bounded list of provider routes. `fallback` tries each route in
 order and records route failures/selections in the same run trace; `single` uses only
-the first route. Each route may override the provider, model, endpoint, or Vault
-secret reference while inheriting the rest of the agent policy. Routes may also
+the first route. `ensemble` invokes each bounded route and returns a deterministic,
+provider-labelled text aggregation; ensemble routes are text-only and reject tool
+calls because repeating side effects across providers would be unsafe. Each route may
+override the provider, model, endpoint, or Vault secret reference while inheriting the rest of the agent policy. Routes may also
 declare required adapter capabilities (`text`, `structured_output`, `streaming`,
 `tools`, `usage`, `request_ids`) and an `adapterVersion`; a route fails closed when
 the selected adapter cannot satisfy those requirements:

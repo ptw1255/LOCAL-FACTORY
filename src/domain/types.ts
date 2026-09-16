@@ -120,7 +120,7 @@ export interface AgentModelRoute {
 }
 
 export interface AgentModelRouting {
-  strategy: 'single' | 'fallback';
+  strategy: 'single' | 'fallback' | 'ensemble';
   maxAttempts?: number;
 }
 
