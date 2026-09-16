@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { AgentSpanKind, EvidenceQuery, OperationEvidence, OperationEvidenceStatus, RunEvent } from '../domain/types.js';
 import type { ArtifactStore } from '../storage/artifact-store.js';
 import type { PlatformStore } from '../storage/store.js';
-import type { TelemetryExporter } from './otlp-exporter.js';
+import type { TelemetryExporter, TelemetryExporterHealth } from './otlp-exporter.js';
 import { telemetryAttributes, telemetryResource } from './semconv.js';
 
 export class EventService {
@@ -95,6 +95,10 @@ export class EventService {
 
   public list(runId?: string): Promise<RunEvent[]> {
     return this.store.listEvents(runId);
+  }
+
+  public exporterHealth(): TelemetryExporterHealth | undefined {
+    return this.exporter?.health?.();
   }
 
   public async recordEvidence(input: {

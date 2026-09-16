@@ -250,6 +250,10 @@ JSON state events are moved into that table automatically on first startup. Runt
 observability retention is 48 hours by default; a cleanup pass runs at startup and
 every 15 minutes and removes older records.
 
+`GET /api/health` includes exporter health when OTLP is enabled (`healthy` or
+`degraded`, failure count, and last success/error timestamps). Export errors remain
+non-blocking for workflow execution but are therefore visible to operators.
+
 Deployments to `production`, `prod`, `preprod`, or `staging` are promotion-gated:
 the action must reference a succeeded run for the same workflow that has both a
 reviewable repository patch and a passing `repositoryCi` evidence record. The
