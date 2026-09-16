@@ -86,6 +86,20 @@ services:
       - phoenix_data:/root/.phoenix
     restart: unless-stopped
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.123.0
+    profiles: ["observability"]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4318:4318"
+      - "4317:4317"
+    depends_on:
+      phoenix:
+        condition: service_started
+    restart: unless-stopped
+
   ollama:
     image: ollama/ollama:latest
     profiles: ["ollama"]

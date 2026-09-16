@@ -357,6 +357,20 @@ backend, set `OTEL_EXPORTER_OTLP_ENDPOINT` as well. The app accepts
 backend must also be configured with its own 48-hour TTL; the factory cannot delete
 records from arbitrary third-party storage.
 
+For a local OpenTelemetry Collector boundary, point the app at the Collector's
+OTLP/HTTP receiver and start the same profile:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
+  docker compose --profile observability up --build
+```
+
+The `otel-collector` service accepts traces, logs, and metrics, applies a
+defense-in-depth redaction processor, batches signals, and forwards traces to
+Phoenix. Logs and metrics stay in the local Collector unless another exporter is
+added to `otel-collector-config.yaml`. Keep the factory cleanup and Phoenix's
+two-day policy enabled to preserve the 48-hour retention boundary.
+
 `npm run check` runs type checking, tests, and the production web build.
 
 The default suite keeps the PostgreSQL restart probe opt-in so contributors do not
