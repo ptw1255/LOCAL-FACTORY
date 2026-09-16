@@ -55,6 +55,17 @@ describe('HttpOpenAIClient', () => {
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ stream: true });
   });
 
+  it('classifies incomplete and refused streaming responses', async () => {
+    const encoder = new TextEncoder();
+    const stream = (payload: string) => new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(encoder.encode(payload)); controller.close(); },
+    });
+    const incompleteFetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(stream('data: {"type":"response.output_text.delta","delta":"partial"}\n\n'), { status: 200 }));
+    await expect(new HttpOpenAIClient({ apiKey: 'key', fetcher: incompleteFetcher }).chat({ agent: { ...agent, model: { provider: 'openai', model: 'gpt-5', streaming: true } }, goal: 'incomplete', signal: new AbortController().signal })).rejects.toMatchObject({ code: 'incomplete' });
+    const refusalFetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(stream('data: {"type":"response.refusal.delta","delta":"no"}\n\ndata: {"type":"response.completed"}\n\n'), { status: 200 }));
+    await expect(new HttpOpenAIClient({ apiKey: 'key', fetcher: refusalFetcher }).chat({ agent: { ...agent, model: { provider: 'openai', model: 'gpt-5', streaming: true } }, goal: 'refusal', signal: new AbortController().signal })).rejects.toMatchObject({ code: 'refusal', retryable: false });
+  });
+
   it('classifies provider failures without exposing credentials', async () => {
     const configuredAgent = { ...agent, model: { provider: 'openai', model: 'gpt-5' } };
     const cases = [
