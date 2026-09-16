@@ -214,9 +214,17 @@ runtime. A failed import leaves the existing project configuration untouched.
 
 Deterministic runs can be replayed from their pinned workflow definition by an
 operator (`POST /api/runs/:runId/replay`). The bounded replay report compares
-completed nodes and output structure without returning captured payloads. Runs that
-include agents, network calls, notifications, or other nondeterministic units are
-rejected instead of silently replaying a newer or different behavior.
+completed nodes and output structure without returning captured payloads. Reports
+are durable and queryable (`GET /api/replays` and `GET /api/replays/:id`) and include
+only structural differences and SHA-256 output fingerprints. Runs that include
+agents, network calls, notifications, or other nondeterministic units are rejected
+instead of silently replaying a newer or different behavior.
+
+Replay reports can be materialized into a small evaluator dataset for regression
+work (`POST /api/evaluation-datasets` with `{ "name": "...", "reportIds": [...] }`).
+Dataset cases reference reports and run/version provenance; prompts, outputs, and
+secrets are never copied into the dataset. List or inspect datasets with
+`GET /api/evaluation-datasets` and `GET /api/evaluation-datasets/:id`.
 
 ### Artifact-backed run data
 

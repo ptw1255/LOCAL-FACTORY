@@ -9,6 +9,7 @@ export type RunStatus =
   | 'cancelled';
 export type ConnectionStatus = 'healthy' | 'degraded' | 'expired';
 export type IssueLevel = 'error' | 'warning';
+export type ReplayReportStatus = 'passed' | 'mismatch' | 'failed' | 'timed_out';
 
 export interface TenantRecord {
   id: string;
@@ -204,6 +205,48 @@ export interface RunRecord {
   unitOutputs: Record<string, unknown>;
   /** Durable checkpoint for a repository CI observer that may outlive a process. */
   ciCheckpoints: Record<string, CiCheckpoint>;
+}
+
+/** Durable, payload-free comparison result for a replay attempt. */
+export interface ReplayReportRecord {
+  id: string;
+  tenantId?: string;
+  projectId?: string;
+  sourceRunId: string;
+  replayRunId: string;
+  workflowId: string;
+  workflowVersion: number;
+  status: ReplayReportStatus;
+  differences: string[];
+  completedNodeIds: string[];
+  durationMs: number;
+  sourceOutputHash?: string;
+  replayOutputHash?: string;
+  createdAt: string;
+}
+
+/** A small durable evaluator dataset made from replay reports, never raw payloads. */
+export interface EvaluationDatasetCase {
+  id: string;
+  reportId: string;
+  sourceRunId: string;
+  replayRunId: string;
+  workflowId: string;
+  workflowVersion: number;
+  status: ReplayReportStatus;
+  sourceOutputHash?: string;
+  replayOutputHash?: string;
+  createdAt: string;
+}
+
+export interface EvaluationDatasetRecord {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  cases: EvaluationDatasetCase[];
 }
 
 export interface CiCheckpoint {
@@ -403,4 +446,6 @@ export interface PlatformState {
   evidence: OperationEvidence[];
   approvals: ApprovalRecord[];
   deployments: DeploymentRecord[];
+  replayReports: ReplayReportRecord[];
+  evaluationDatasets: EvaluationDatasetRecord[];
 }
