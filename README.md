@@ -287,6 +287,19 @@ keys are written to Vault and represented in PostgreSQL only by an opaque refere
 The Compose Vault token is intentionally `dev-only-token`; this setup is for local
 development and must not be used with production credentials.
 
+To exercise the optional Temporal server and compiled worker locally, enable its
+Compose profile and select the execution engine for the app:
+
+```bash
+EXECUTION_ENGINE=temporal docker compose --profile temporal up --build
+```
+
+This starts Temporal on `localhost:7233` and a separate `temporal-worker` container
+using the compiled worker entrypoint. The default `docker compose up --build` path
+still uses the lighter local executor. Temporal activities currently fail closed for
+unsupported agent/repository kinds; full WorkUnit parity is tracked in issue #3 and
+bug #176.
+
 PostgreSQL stores workflow and run control-plane state in `platform_state` and keeps
 runtime logs, traces, and metrics in the indexed `observability_events` table. Legacy
 JSON state events are moved into that table automatically on first startup. Runtime
