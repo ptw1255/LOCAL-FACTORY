@@ -160,6 +160,11 @@ npm run demo
 npm run server
 ```
 
+Pull requests run the same `npm run check` gate in GitHub Actions with a PostgreSQL
+16 service. The default test suite remains network-free apart from that local service;
+Vault transport boundaries use deterministic mocks, while the Docker Compose profile
+is available when a real local Vault probe is needed.
+
 ### YAML-first authoring
 
 Project YAML is the source of truth for loop topology, agent boxes, work-unit
