@@ -130,6 +130,27 @@ describe('LocalWorkflowExecutor', () => {
     expect(output).toBe('VALIDATED REQUEST');
   });
 
+  it('dispatches repository mutations into an isolated workspace', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const prepare = workflow.nodes.find((node) => node.id === 'prepare');
+    if (prepare === undefined) throw new Error('Seed prepare node is missing.');
+    prepare.type = 'repositoryMutation';
+    prepare.label = 'Prepare repository workspace';
+    prepare.config = { operations: [{ operation: 'create', path: '.factory-run-marker', content: 'created' }] };
+    prepare.unit = defaultWorkUnit('repositoryMutation');
+
+    const repository = await (await import('../repository/workspace.js')).RepositoryWorkspace.open(process.cwd());
+    const isolatedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, repository);
+    const run = await isolatedExecutor.start(workflow);
+    await waitFor(async () =>
+      (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded',
+    );
+
+    const recorded = await events.list(run.id);
+    expect(recorded.some((event) => event.type === 'unit.completed' && event.nodeId === 'prepare')).toBe(true);
+    await expect(repository.read('.factory-run-marker')).rejects.toThrow();
+  });
+
   it('does not execute nodes unreachable from the declared trigger', async () => {
     const workflow = structuredClone(seedWorkflow);
     workflow.nodes.push({

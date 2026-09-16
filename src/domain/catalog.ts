@@ -13,6 +13,9 @@ const unitKinds: Record<string, WorkUnitKind> = {
   notification: 'consumer',
   output: 'consumer',
   code: 'deterministic',
+  repositoryCheck: 'connector',
+  repositoryPatch: 'connector',
+  repositoryMutation: 'connector',
 };
 
 export function defaultWorkUnit(type: string): WorkUnitDefinition {
@@ -110,6 +113,27 @@ export const nodeCatalog: NodeCatalogItem[] = [
     category: 'Data',
     description: 'Declare the workflow result.',
     defaultConfig: { value: 'success' },
+  },
+  {
+    type: 'repositoryCheck',
+    label: 'Repository check',
+    category: 'Repository',
+    description: 'Run one allow-listed check in the bounded run workspace.',
+    defaultConfig: { command: 'npm test' },
+  },
+  {
+    type: 'repositoryPatch',
+    label: 'Capture repository patch',
+    category: 'Repository',
+    description: 'Capture the current run workspace diff as a content-addressed artifact.',
+    defaultConfig: {},
+  },
+  {
+    type: 'repositoryMutation',
+    label: 'Apply repository mutation',
+    category: 'Repository',
+    description: 'Apply explicitly declared file operations inside the bounded run workspace.',
+    defaultConfig: { operations: [] },
   },
 ];
 

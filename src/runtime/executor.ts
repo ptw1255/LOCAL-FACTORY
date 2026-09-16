@@ -11,6 +11,7 @@ import type { EventService } from '../observability/event-service.js';
 import type { PlatformStore } from '../storage/store.js';
 import { HttpOllamaClient, type OllamaClient } from './ollama.js';
 import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
+import type { RepositoryWorkspace } from '../repository/workspace.js';
 
 const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
@@ -39,12 +40,14 @@ function edgeMatches(edge: WorkflowEdge, result: unknown): boolean {
 
 export class LocalWorkflowExecutor {
   private readonly activeRuns = new Map<string, AbortController>();
+  private readonly runWorkspaces = new Map<string, RepositoryWorkspace>();
 
   public constructor(
     private readonly store: PlatformStore,
     private readonly events: EventService,
     private readonly ollama: OllamaClient = new HttpOllamaClient(),
     private readonly dispatcher: WorkUnitDispatcher = new WorkUnitDispatcher(),
+    private readonly repositoryWorkspace?: RepositoryWorkspace,
   ) {}
 
   public async recover(): Promise<number> {
@@ -377,6 +380,27 @@ export class LocalWorkflowExecutor {
       case 'code':
         result = this.executeDeterministicCode(node, inputs);
         break;
+      case 'repositoryCheck': {
+        const workspace = await this.workspaceForRun(runId);
+        const command = typeof node.config.command === 'string' ? node.config.command : 'npm test';
+        const timeoutMs = typeof node.config.timeoutMs === 'number' ? node.config.timeoutMs : undefined;
+        result = await workspace.runCheck(command, timeoutMs);
+        break;
+      }
+      case 'repositoryPatch': {
+        const workspace = await this.workspaceForRun(runId);
+        result = await workspace.patchArtifact();
+        break;
+      }
+      case 'repositoryMutation': {
+        const workspace = await this.workspaceForRun(runId);
+        const operations = Array.isArray(node.config.operations) ? node.config.operations : [];
+        const protectedPaths = Array.isArray(node.config.protectedPaths)
+          ? node.config.protectedPaths.filter((value): value is string => typeof value === 'string')
+          : [];
+        result = await workspace.applyMutations(operations, { protectedPaths });
+        break;
+      }
       case 'notification':
         signal.throwIfAborted();
         await this.events.emit(
@@ -542,6 +566,17 @@ export class LocalWorkflowExecutor {
       outcome: 'bounded-completion',
       ...(lastModelOutput === undefined ? {} : { output: lastModelOutput }),
     };
+  }
+
+  private async workspaceForRun(runId: string): Promise<RepositoryWorkspace> {
+    if (this.repositoryWorkspace === undefined) {
+      throw new Error('Repository workspace is not configured for this runtime.');
+    }
+    const existing = this.runWorkspaces.get(runId);
+    if (existing !== undefined) return existing;
+    const isolated = await this.repositoryWorkspace.cloneForRun(runId);
+    this.runWorkspaces.set(runId, isolated);
+    return isolated;
   }
 
   private async completeNode(

@@ -115,10 +115,10 @@ export async function createApp(
   const exporter = telemetryExporter();
   const events = new EventService(store, { retentionHours, exporter });
   const ollama = new HttpOllamaClient();
-  const executor = new LocalWorkflowExecutor(store, events, ollama);
   const repositoryWorkspace = process.env.REPOSITORY_WORKSPACE === undefined
     ? undefined
     : await RepositoryWorkspace.open(process.env.REPOSITORY_WORKSPACE);
+  const executor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace);
   const githubRepository = process.env.GITHUB_TOKEN !== undefined && process.env.GITHUB_REPOSITORY_OWNER !== undefined && process.env.GITHUB_REPOSITORY_NAME !== undefined
     ? new GitHubRepositoryClient({ token: process.env.GITHUB_TOKEN, owner: process.env.GITHUB_REPOSITORY_OWNER, repo: process.env.GITHUB_REPOSITORY_NAME })
     : undefined;
