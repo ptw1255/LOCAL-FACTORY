@@ -289,6 +289,12 @@ the `postgres_data` volume keeps it across restarts. The `DATABASE_URL` environm
 variable selects the PostgreSQL adapter. If it is omitted, the server falls back to
 the local JSON store at `.data/state.json`.
 
+Compose sets `WORKSPACE_ROOT=/app/.data/workspaces`. Authored project files and empty
+directories are stored in that durable workspace volume rather than in PostgreSQL
+control-plane state; compiled artifacts, runs, deployments, evidence, and telemetry
+remain in their dedicated stores. Workspace paths are tenant/project scoped and
+symlinks are rejected so a mounted workspace cannot escape its project boundary.
+
 Compose also starts a local Vault development server on port `8200`. Connection API
 keys are written to Vault and represented in PostgreSQL only by an opaque reference.
 The Compose Vault token is intentionally `dev-only-token`; this setup is for local

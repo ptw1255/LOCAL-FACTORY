@@ -47,6 +47,7 @@ import type { OpenAIClient } from '../runtime/openai.js';
 import { JsonStore } from '../storage/json-store.js';
 import { PostgresStore } from '../storage/postgres-store.js';
 import { FileArtifactStore, type ArtifactStore } from '../storage/artifact-store.js';
+import { ProjectWorkspace } from '../storage/project-workspace.js';
 import { DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID, type PlatformStore } from '../storage/store.js';
 import { Authenticator, type AuthMode, type AuthToken, parseAuthTokens } from './auth.js';
 
@@ -65,6 +66,8 @@ export interface AppOptions {
   providerClients?: ReadonlyMap<string, OpenAIClient>;
   deploymentAdapter?: DeploymentRuntimeAdapter;
   artifactStore?: ArtifactStore;
+  /** Filesystem source-of-truth for authored project files (enabled by WORKSPACE_ROOT in Docker). */
+  projectWorkspace?: ProjectWorkspace;
   authMode?: AuthMode;
   authTokens?: readonly AuthToken[];
   executionEngine?: 'local' | 'temporal';
@@ -172,6 +175,8 @@ export async function createApp(
   const phoenixUiUrl = process.env.PHOENIX_UI_URL?.trim() || undefined;
   const artifactDirectory = process.env.ARTIFACT_STORE_DIR?.trim() || path.join(path.dirname(dataFile), 'artifacts');
   const artifactStore = options.artifactStore ?? new FileArtifactStore(artifactDirectory);
+  const configuredWorkspaceRoot = process.env.WORKSPACE_ROOT?.trim();
+  const projectWorkspace = options.projectWorkspace ?? (configuredWorkspaceRoot === undefined || configuredWorkspaceRoot === '' ? undefined : new ProjectWorkspace(configuredWorkspaceRoot));
   const events = new EventService(store, { retentionHours, ...(evidenceRetentionHours === undefined ? {} : { evidenceRetentionHours }), exporter, artifactStore });
   const emitWorkspaceFileEvent = async (scope: { tenantId: string; projectId: string }, operation: 'created' | 'updated' | 'renamed' | 'deleted' | 'restored' | 'directory-created', filePath: string, sha256?: string): Promise<void> => {
     await events.emit(`workspace:${scope.projectId}`, 'workspace.file.changed', `Project file ${operation}.`, {
@@ -185,6 +190,18 @@ export async function createApp(
         ...(sha256 === undefined ? {} : { 'workspace.file.sha256': sha256 }),
       },
     });
+  };
+  const workspaceListing = async (scope: { tenantId: string; projectId: string }): Promise<{ files: ProjectFileRecord[]; directories: import('../domain/types.js').ProjectDirectoryRecord[] }> => {
+    if (projectWorkspace === undefined) return store.read((state) => ({ files: state.files.filter((file) => file.projectId === scope.projectId && file.tenantId === scope.tenantId), directories: state.directories.filter((directory) => directory.projectId === scope.projectId && directory.tenantId === scope.tenantId) }));
+    const listing = await projectWorkspace.list(scope);
+    // One-time compatibility migration for projects created before the mounted
+    // workspace was enabled. New writes never return to platform_state.
+    if (listing.files.length === 0) {
+      const legacy = await store.read((state) => state.files.filter((file) => file.projectId === scope.projectId && file.tenantId === scope.tenantId));
+      for (const file of legacy) await projectWorkspace.save(scope, file.path, file.content, undefined);
+      if (legacy.length > 0) return projectWorkspace.list(scope);
+    }
+    return listing;
   };
   const configuredAuthMode = options.authMode ?? process.env.FACTORY_AUTH_MODE;
   const authMode: AuthMode = configuredAuthMode === 'required' || (configuredAuthMode === undefined && process.env.NODE_ENV === 'production') ? 'required' : 'local';
@@ -459,12 +476,15 @@ export async function createApp(
     '/api/projects/:projectId/files',
     async (request, reply) => {
       const scope = scopeFromRequest(request);
-      const files = await store.read((state) => state.files.filter((file) => file.projectId === request.params.projectId && file.tenantId === scope.tenantId));
+      const fileScope = { tenantId: scope.tenantId, projectId: request.params.projectId };
+      const projectExists = await store.read((state) => state.projects.some((project) => project.id === fileScope.projectId && project.tenantId === fileScope.tenantId));
+      if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
+      const listing = await workspaceListing(fileScope);
+      const files = listing.files;
       const search = request.query.search?.trim().toLowerCase() ?? '';
       if (request.query.path === undefined) {
         const matching = search === '' ? files : files.filter((file) => file.path.toLowerCase().includes(search) || file.content.toLowerCase().includes(search));
-        const directories = await store.read((state) => state.directories.filter((directory) => directory.projectId === request.params.projectId && directory.tenantId === scope.tenantId));
-        return { items: matching.map(({ content: _content, ...file }) => file), directories };
+        return { items: matching.map(({ content: _content, ...file }) => file), directories: listing.directories };
       }
       const file = files.find((candidate) => candidate.path === request.query.path);
       if (file === undefined) return reply.status(404).send({ message: 'Project file not found.' });
@@ -499,6 +519,12 @@ export async function createApp(
       if (pathError !== undefined) return reply.status(422).send({ message: pathError });
       const projectExists = await store.read((state) => state.projects.some((project) => project.id === request.params.projectId && project.tenantId === scope.tenantId));
       if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
+      if (projectWorkspace !== undefined) {
+        const result = await projectWorkspace.createDirectory({ tenantId: scope.tenantId, projectId: request.params.projectId }, directoryPath);
+        if (result.status === 'exists') return reply.status(409).send({ message: 'A directory already exists at that path.' });
+        await emitWorkspaceFileEvent(scope, 'directory-created', directoryPath);
+        return result.directory;
+      }
       const directory = { tenantId: scope.tenantId, projectId: request.params.projectId, path: directoryPath, createdAt: new Date().toISOString() };
       const created = await store.mutate((state) => {
         if (state.directories.some((candidate) => candidate.tenantId === directory.tenantId && candidate.projectId === directory.projectId && candidate.path === directory.path)) return false;
@@ -523,6 +549,14 @@ export async function createApp(
       if (pathError !== undefined) return reply.status(422).send({ message: pathError });
       const projectExists = await store.read((state) => state.projects.some((project) => project.id === request.params.projectId && project.tenantId === scope.tenantId));
       if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
+      const expectedSha256 = typeof body.expectedSha256 === 'string' ? body.expectedSha256 : typeof request.headers['if-match'] === 'string' ? request.headers['if-match'].replace(/^\"|\"$/g, '') : undefined;
+      if (projectWorkspace !== undefined) {
+        const existed = await projectWorkspace.read({ tenantId: scope.tenantId, projectId: request.params.projectId }, body.path);
+        const saved = await projectWorkspace.save({ tenantId: scope.tenantId, projectId: request.params.projectId }, body.path, body.content, expectedSha256);
+        if (saved.status === 'conflict' || saved.file === undefined) return reply.status(409).send({ message: 'File changed since it was loaded; refresh before saving.' });
+        await emitWorkspaceFileEvent(scope, existed === undefined ? 'created' : 'updated', saved.file.path, saved.file.sha256);
+        return saved.file;
+      }
       const existed = await store.read((state) => state.files.some((candidate) => candidate.projectId === request.params.projectId && candidate.tenantId === scope.tenantId && candidate.path === body.path));
       const file: ProjectFileRecord = {
         tenantId: scope.tenantId,
@@ -539,7 +573,6 @@ export async function createApp(
           return true;
         }
         const current = state.files[index];
-        const expectedSha256 = typeof body.expectedSha256 === 'string' ? body.expectedSha256 : typeof request.headers['if-match'] === 'string' ? request.headers['if-match'].replace(/^\"|\"$/g, '') : undefined;
         if (expectedSha256 !== undefined && current?.sha256 !== expectedSha256) return false;
         state.files[index] = file;
         return true;
@@ -558,6 +591,13 @@ export async function createApp(
     if (newPathError !== undefined) return reply.status(422).send({ message: newPathError });
     const oldPath = body.path;
     const newPath = body.newPath;
+    if (projectWorkspace !== undefined) {
+      const renamed = await projectWorkspace.rename({ tenantId: scope.tenantId, projectId: request.params.projectId }, oldPath, newPath);
+      if (renamed.status === 'missing') return reply.status(404).send({ message: 'Project file not found.' });
+      if (renamed.status === 'conflict') return reply.status(409).send({ message: 'A file already exists at the destination path.' });
+      await emitWorkspaceFileEvent(scope, 'renamed', newPath);
+      return { renamed: true, path: oldPath, newPath };
+    }
     const renamed = await store.mutate((state) => {
       const file = state.files.find((candidate) => candidate.projectId === request.params.projectId && candidate.tenantId === scope.tenantId && candidate.path === oldPath);
       if (file === undefined) return false;
@@ -577,6 +617,12 @@ export async function createApp(
       const scope = scopeFromRequest(request);
       const body = request.body as { path?: unknown };
       if (typeof body?.path !== 'string' || body.path.trim() === '') return reply.status(422).send({ message: 'File path is required.' });
+      if (projectWorkspace !== undefined) {
+        const removed = await projectWorkspace.remove({ tenantId: scope.tenantId, projectId: request.params.projectId }, body.path);
+        if (removed === undefined) return reply.status(404).send({ message: 'Project file not found.' });
+        await emitWorkspaceFileEvent(scope, 'deleted', removed.path, removed.sha256);
+        return { deleted: true, path: body.path, trashId: removed.trashId };
+      }
       const removed = await store.mutate((state) => {
         const index = state.files.findIndex((file) => file.projectId === request.params.projectId && file.tenantId === scope.tenantId && file.path === body.path);
         if (index < 0) return undefined;
@@ -599,6 +645,12 @@ export async function createApp(
       const scope = scopeFromRequest(request);
       const body = request.body as { trashId?: unknown };
       if (typeof body?.trashId !== 'string' || body.trashId.trim() === '') return reply.status(422).send({ message: 'trashId is required.' });
+      if (projectWorkspace !== undefined) {
+        const restored = await projectWorkspace.restore({ tenantId: scope.tenantId, projectId: request.params.projectId }, body.trashId);
+        if (restored === undefined) return reply.status(404).send({ message: 'Deleted project file not found.' });
+        await emitWorkspaceFileEvent(scope, 'restored', restored.path, restored.sha256);
+        return restored;
+      }
       const restored = await store.mutate((state) => {
         const index = state.deletedFiles.findIndex((file) => file.trashId === body.trashId && file.projectId === request.params.projectId && file.tenantId === scope.tenantId);
         if (index < 0) return undefined;
@@ -622,7 +674,7 @@ export async function createApp(
       const scope = scopeFromRequest(request);
       const body = request.body as { environment?: unknown };
       const environment = typeof body?.environment === 'string' && body.environment.trim() !== '' ? body.environment : 'local';
-      const files = await store.read((state) => state.files.filter((file) => file.projectId === request.params.projectId && file.tenantId === scope.tenantId));
+      const files = (await workspaceListing({ tenantId: scope.tenantId, projectId: request.params.projectId })).files;
       try {
         const compiled = compileResourceFiles(files.map((file) => ({ path: file.path, source: file.content })), { tenantId: scope.tenantId, projectId: request.params.projectId });
         const sources = files.map((file) => ({ path: file.path, sha256: file.sha256 }));
