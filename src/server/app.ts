@@ -40,6 +40,7 @@ import { JsonStore } from '../storage/json-store.js';
 import { PostgresStore } from '../storage/postgres-store.js';
 import { FileArtifactStore, type ArtifactStore } from '../storage/artifact-store.js';
 import { DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID, type PlatformStore } from '../storage/store.js';
+import { Authenticator, type AuthMode, type AuthToken, parseAuthTokens } from './auth.js';
 
 export interface AppOptions {
   dataFile?: string;
@@ -54,6 +55,8 @@ export interface AppOptions {
   openaiClient?: OpenAIClient;
   deploymentAdapter?: DeploymentRuntimeAdapter;
   artifactStore?: ArtifactStore;
+  authMode?: AuthMode;
+  authTokens?: readonly AuthToken[];
 }
 
 function errorMessage(error: unknown): string {
@@ -137,6 +140,13 @@ export async function createApp(
   const artifactDirectory = process.env.ARTIFACT_STORE_DIR?.trim() || path.join(path.dirname(dataFile), 'artifacts');
   const artifactStore = options.artifactStore ?? new FileArtifactStore(artifactDirectory);
   const events = new EventService(store, { retentionHours, ...(evidenceRetentionHours === undefined ? {} : { evidenceRetentionHours }), exporter, artifactStore });
+  const configuredAuthMode = options.authMode ?? process.env.FACTORY_AUTH_MODE;
+  const authMode: AuthMode = configuredAuthMode === 'required' || (configuredAuthMode === undefined && process.env.NODE_ENV === 'production') ? 'required' : 'local';
+  const configuredTokens = options.authTokens ?? parseAuthTokens(process.env.FACTORY_AUTH_TOKENS);
+  const authTokens: AuthToken[] = [...configuredTokens];
+  const apiToken = process.env.FACTORY_API_TOKEN?.trim();
+  if (apiToken !== undefined && apiToken !== '') authTokens.push({ token: apiToken, principal: { id: 'factory-api-token', role: 'admin', tenantIds: ['*'], projectIds: ['*'] } });
+  const authenticator = new Authenticator(authMode, authTokens);
   const ollama = new HttpOllamaClient();
   const repositoryWorkspace = options.repositoryWorkspace ?? (process.env.REPOSITORY_WORKSPACE === undefined
     ? undefined
@@ -165,6 +175,29 @@ export async function createApp(
   app.addHook('onClose', async () => {
     clearInterval(retentionTimer);
     await events.close();
+  });
+
+  app.addHook('onRequest', async (request, reply) => {
+    if (!request.url.startsWith('/api/') || request.url.split('?')[0] === '/api/health') return;
+    const scope = scopeFromRequest(request);
+    const principal = authenticator.authenticate(headerValue(request.headers.authorization));
+    const decision = authenticator.authorize(principal, { method: request.method, url: request.url, ...scope });
+    const auditRunId = `auth:${request.id}`;
+    void events.emit(auditRunId, decision.allowed ? 'authz.allowed' : 'authz.denied', decision.reason, {
+      tenantId: scope.tenantId,
+      projectId: scope.projectId,
+      severityText: decision.allowed ? 'INFO' : 'WARN',
+      attributes: {
+        'auth.principal': principal?.id ?? 'anonymous',
+        'auth.role': principal?.role ?? 'anonymous',
+        'auth.required_role': decision.requiredRole,
+        'auth.method': request.method,
+        'auth.path': request.url.split('?')[0] ?? request.url,
+        'auth.allowed': decision.allowed,
+      },
+    }).catch(() => undefined);
+    if (decision.allowed) return;
+    return reply.status(principal === undefined ? 401 : 403).send({ error: principal === undefined ? 'Unauthorized' : 'Forbidden', message: decision.reason });
   });
 
   app.setErrorHandler((error: FastifyError, _request, reply) => {

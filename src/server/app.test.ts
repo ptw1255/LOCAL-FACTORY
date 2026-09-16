@@ -278,3 +278,34 @@ describe('platform API', () => {
     );
   });
 });
+
+describe('platform API authorization', () => {
+  it('enforces required authentication, role actions, and tenant/project scope', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-auth-api-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const app = await createApp({
+      store,
+      serveStatic: false,
+      authMode: 'required',
+      authTokens: [
+        { token: 'reader-token', principal: { id: 'reader-1', role: 'reader', tenantIds: ['tenant-local'], projectIds: ['project-local'] } },
+        { token: 'author-token', principal: { id: 'author-1', role: 'author', tenantIds: ['tenant-local'], projectIds: ['project-local'] } },
+      ],
+    });
+    try {
+      expect((await app.inject({ method: 'GET', url: '/api/health' })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'GET', url: '/api/workflows' })).statusCode).toBe(401);
+      const readerHeaders = { authorization: 'Bearer reader-token' };
+      expect((await app.inject({ method: 'GET', url: '/api/workflows', headers: readerHeaders })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'POST', url: '/api/projects', headers: readerHeaders, payload: { name: 'Rejected' } })).statusCode).toBe(403);
+      const authorHeaders = { authorization: 'Bearer author-token' };
+      expect((await app.inject({ method: 'POST', url: '/api/projects', headers: authorHeaders, payload: { name: 'Authorized' } })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'GET', url: '/api/workflows', headers: { ...readerHeaders, 'x-tenant-id': 'other-tenant' } })).statusCode).toBe(403);
+      await new Promise((resolve) => setImmediate(resolve));
+      const allEvents = await store.listEvents();
+      expect(allEvents.some((event) => event.type === 'authz.denied' && event.attributes?.['auth.role'] === 'reader')).toBe(true);
+    } finally {
+      await app.close();
+    }
+  });
+});
