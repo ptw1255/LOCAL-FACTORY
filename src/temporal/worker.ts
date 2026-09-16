@@ -12,7 +12,8 @@ import type { PlatformStore } from '../storage/store.js';
 
 const address = process.env.TEMPORAL_ADDRESS ?? 'localhost:7233';
 const namespace = process.env.TEMPORAL_NAMESPACE ?? 'default';
-const taskQueue = process.env.TEMPORAL_TASK_QUEUE ?? 'agentic-workflows';
+const configuredTaskQueue = process.env.TEMPORAL_TASK_QUEUE;
+const taskQueue = configuredTaskQueue ?? `${process.env.TEMPORAL_TASK_QUEUE_PREFIX ?? 'agentic-workflows'}-v${process.env.TEMPORAL_WORKFLOW_VERSION ?? '1'}`;
 const databaseUrl = process.env.DATABASE_URL;
 const dataFile = process.env.DATA_FILE ?? path.join(process.cwd(), '.data', 'state.json');
 const store: PlatformStore = databaseUrl === undefined ? new JsonStore(dataFile) : new PostgresStore(databaseUrl);

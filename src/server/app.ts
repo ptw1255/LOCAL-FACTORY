@@ -31,6 +31,7 @@ import { parseProjectYaml, stringifyProjectYaml } from '../declarative/yaml.js';
 import { CompositeTelemetryExporter, OtlpHttpExporter } from '../observability/otlp-exporter.js';
 import { LocalWorkflowExecutor } from '../runtime/executor.js';
 import { WorkflowReplayService } from '../runtime/replay.js';
+import { TemporalWorkflowExecutor, type TemporalWorkflowClientLike } from '../temporal/executor.js';
 import { HttpOllamaClient } from '../runtime/ollama.js';
 import { OpenAISDKClient } from '../runtime/openai-sdk.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
@@ -58,6 +59,8 @@ export interface AppOptions {
   artifactStore?: ArtifactStore;
   authMode?: AuthMode;
   authTokens?: readonly AuthToken[];
+  executionEngine?: 'local' | 'temporal';
+  temporalClient?: TemporalWorkflowClientLike;
 }
 
 function errorMessage(error: unknown): string {
@@ -156,8 +159,31 @@ export async function createApp(
     ? new GitHubRepositoryClient({ owner: process.env.GITHUB_REPOSITORY_OWNER, repo: process.env.GITHUB_REPOSITORY_NAME, ...(process.env.GITHUB_TOKEN === undefined ? {} : { token: process.env.GITHUB_TOKEN }), ...(process.env.GITHUB_SECRET_REF === undefined ? {} : { secretRef: process.env.GITHUB_SECRET_REF, secretBroker }) })
     : undefined);
   const openai = options.openaiClient ?? new OpenAISDKClient({ secretBroker });
-  const executor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace, githubRepository, openai);
-  const replayService = new WorkflowReplayService(store, executor);
+  const configuredExecutionEngine = options.executionEngine ?? process.env.EXECUTION_ENGINE;
+  let temporalClose: (() => Promise<void>) | undefined;
+  const executor = configuredExecutionEngine === 'temporal'
+    ? (() => {
+      if (options.temporalClient !== undefined) return new TemporalWorkflowExecutor({ store, events, client: options.temporalClient, taskQueuePrefix: process.env.TEMPORAL_TASK_QUEUE_PREFIX });
+      return undefined;
+    })()
+    : undefined;
+  let runExecutor: LocalWorkflowExecutor | TemporalWorkflowExecutor;
+  if (executor !== undefined) {
+    runExecutor = executor;
+  } else if (configuredExecutionEngine === 'temporal') {
+    const connected = await TemporalWorkflowExecutor.connect({
+      store,
+      events,
+      address: process.env.TEMPORAL_ADDRESS,
+      namespace: process.env.TEMPORAL_NAMESPACE,
+      taskQueuePrefix: process.env.TEMPORAL_TASK_QUEUE_PREFIX,
+    });
+    runExecutor = connected.executor;
+    temporalClose = connected.close;
+  } else {
+    runExecutor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace, githubRepository, openai);
+  }
+  const replayService = new WorkflowReplayService(store, runExecutor);
   const ollamaAgents = await store.read((state) => state.workflows.flatMap((workflow) => workflow.agents).flatMap((agent) => {
     const routes = agent.model.routes ?? [];
     const routeAgents = routes.map((route) => ({ ...agent, model: { ...agent.model, ...route } }));
@@ -172,6 +198,7 @@ export async function createApp(
   if (store.close !== undefined) {
     app.addHook('onClose', async () => store.close?.());
   }
+  if (temporalClose !== undefined) app.addHook('onClose', async () => temporalClose?.());
   const retentionTimer = setInterval(() => void events.prune(), 15 * 60 * 1000);
   retentionTimer.unref?.();
   app.addHook('onClose', async () => {
@@ -212,7 +239,7 @@ export async function createApp(
 
   app.get('/api/health', async () => ({
     status: 'ok',
-    executionEngine: 'local-durable-preview',
+    executionEngine: runExecutor instanceof TemporalWorkflowExecutor ? 'temporal' : 'local-durable-preview',
     storage: databaseUrl === undefined ? 'json' : 'postgresql',
     observability: {
       retentionHours,
@@ -632,7 +659,7 @@ export async function createApp(
         return reply.status(404).send({ message: 'Workflow not found.' });
       }
       try {
-        return await executor.start(workflow, selected.artifactId === undefined ? {} : { artifactId: selected.artifactId });
+      return await runExecutor.start(workflow, selected.artifactId === undefined ? {} : { artifactId: selected.artifactId });
       } catch (error) {
         return reply.status(422).send({ message: errorMessage(error) });
       }
@@ -786,7 +813,7 @@ export async function createApp(
         const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
         if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
         const body = (request.body ?? {}) as Record<string, unknown>;
-        return await executor.approve(request.params.id, {
+        return await runExecutor.approve(request.params.id, {
           ...(typeof body.actor === 'string' ? { actor: body.actor } : {}),
           ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
         });
@@ -804,7 +831,7 @@ export async function createApp(
         const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
         if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
         const body = (request.body ?? {}) as Record<string, unknown>;
-        return await executor.deny(request.params.id, {
+        return await runExecutor.deny(request.params.id, {
           ...(typeof body.actor === 'string' ? { actor: body.actor } : {}),
           ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
         });
@@ -822,7 +849,7 @@ export async function createApp(
         const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
         if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
         const body = (request.body ?? {}) as Record<string, unknown>;
-        return await executor.expire(request.params.id, {
+        return await runExecutor.expire(request.params.id, {
           ...(typeof body.actor === 'string' ? { actor: body.actor } : {}),
           ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
         });
@@ -840,7 +867,7 @@ export async function createApp(
         const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
         if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
         const body = (request.body ?? {}) as Record<string, unknown>;
-        return await executor.supersede(request.params.id, {
+        return await runExecutor.supersede(request.params.id, {
           ...(typeof body.actor === 'string' ? { actor: body.actor } : {}),
           ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
         });
@@ -857,7 +884,7 @@ export async function createApp(
       try {
         const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
         if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
-        return await executor.cancel(request.params.id);
+        return await runExecutor.cancel(request.params.id);
       } catch (error) {
         return reply.status(409).send({ message: errorMessage(error) });
       }
@@ -996,6 +1023,6 @@ export async function createApp(
   }
 
   await events.prune();
-  await executor.recover();
+  await runExecutor.recover();
   return app;
 }

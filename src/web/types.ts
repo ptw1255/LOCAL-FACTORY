@@ -8,6 +8,7 @@ export type RunStatus =
   | 'failed'
   | 'timed_out'
   | 'cancelled';
+export type ExecutionEngine = 'local' | 'temporal';
 export type ConnectionStatus = 'healthy' | 'degraded' | 'expired';
 export type ReplayReportStatus = 'passed' | 'mismatch' | 'failed' | 'timed_out';
 
@@ -183,6 +184,10 @@ export interface RunRecord {
   workflowName: string;
   workflowVersion: number;
   traceId: string;
+  executionEngine?: ExecutionEngine;
+  temporalWorkflowId?: string;
+  temporalRunId?: string;
+  temporalTaskQueue?: string;
   status: RunStatus;
   startedAt: string;
   completedAt?: string;

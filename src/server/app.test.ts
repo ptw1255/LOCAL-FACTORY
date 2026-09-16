@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createApp } from './app.js';
 import { defaultWorkUnit } from '../domain/catalog.js';
@@ -65,6 +65,35 @@ describe('platform API', () => {
         stageMetrics: expect.any(Array),
       }),
     );
+  });
+
+  it('selects the Temporal execution plane only when explicitly configured', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-api-'));
+    const temporalStore = new JsonStore(path.join(directory, 'state.json'));
+    const handle = {
+      workflowId: 'factory-pending',
+      firstExecutionRunId: 'temporal-run-api',
+      result: () => new Promise<never>(() => undefined),
+      cancel: vi.fn(async () => undefined),
+      signal: vi.fn(async () => undefined),
+    };
+    const start = vi.fn(async () => handle);
+    const temporalApp = await createApp({
+      store: temporalStore,
+      serveStatic: false,
+      executionEngine: 'temporal',
+      temporalClient: { workflow: { start, getHandle: vi.fn(() => handle) } },
+    });
+    try {
+      const health = await temporalApp.inject({ method: 'GET', url: '/api/health' });
+      expect(health.json<{ executionEngine: string }>().executionEngine).toBe('temporal');
+      const started = await temporalApp.inject({ method: 'POST', url: '/api/workflows/workflow-agent-intake/runs', payload: {} });
+      expect(started.statusCode).toBe(200);
+      expect(started.json<{ executionEngine: string; temporalTaskQueue: string; status: string }>()).toEqual(expect.objectContaining({ executionEngine: 'temporal', temporalTaskQueue: 'agentic-workflows-v1', status: 'running' }));
+      expect(start).toHaveBeenCalledWith('executeWorkflow', expect.objectContaining({ taskQueue: 'agentic-workflows-v1', searchAttributes: expect.objectContaining({ WorkflowId: ['workflow-agent-intake'], WorkflowVersion: ['1'] }) }));
+    } finally {
+      await temporalApp.close();
+    }
   });
 
   it('lists approval records within the requested project scope', async () => {

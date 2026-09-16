@@ -23,6 +23,57 @@ const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
 const APPROVAL_TTL_MS = 30 * 60 * 1_000;
 
+export interface RunCreationOptions {
+  artifactId?: string;
+  replayOfRunId?: string;
+  executionEngine?: 'local' | 'temporal';
+  temporalWorkflowId?: string;
+  temporalRunId?: string;
+  temporalTaskQueue?: string;
+}
+
+/** Build a validated, immutable-definition run record for any execution plane. */
+export function createQueuedRun(workflow: WorkflowDefinition, options: RunCreationOptions = {}): RunRecord {
+  const validation = validateWorkflow(workflow);
+  if (!validation.valid) {
+    const message = validation.issues
+      .filter((issue) => issue.level === 'error')
+      .map((issue) => issue.message)
+      .join(' ');
+    throw new Error(`Workflow is not executable. ${message}`);
+  }
+  const trigger = workflow.nodes.find((node) => node.type === workflow.trigger.type);
+  if (trigger === undefined) throw new Error('The declared workflow trigger node is missing.');
+  const now = new Date().toISOString();
+  return {
+    ...(workflow.tenantId === undefined ? {} : { tenantId: workflow.tenantId }),
+    ...(workflow.projectId === undefined ? {} : { projectId: workflow.projectId }),
+    id: randomUUID(),
+    workflowId: workflow.id,
+    workflowName: workflow.name,
+    workflowVersion: workflow.version,
+    ...(options.artifactId === undefined ? {} : { artifactId: options.artifactId }),
+    ...(options.replayOfRunId === undefined ? {} : { replayOfRunId: options.replayOfRunId }),
+    executionEngine: options.executionEngine ?? 'local',
+    ...(options.temporalWorkflowId === undefined ? {} : { temporalWorkflowId: options.temporalWorkflowId }),
+    ...(options.temporalRunId === undefined ? {} : { temporalRunId: options.temporalRunId }),
+    ...(options.temporalTaskQueue === undefined ? {} : { temporalTaskQueue: options.temporalTaskQueue }),
+    traceId: randomUUID().replaceAll('-', '').slice(0, 32),
+    status: 'queued',
+    startedAt: now,
+    costUsd: 0,
+    humanTouchpoints: 0,
+    workflowDefinition: structuredClone(workflow),
+    completedNodeIds: [],
+    activatedNodeIds: [trigger.id],
+    approvedNodeIds: [],
+    approvedNodeHashes: {},
+    pendingApprovalHashes: {},
+    unitOutputs: {},
+    ciCheckpoints: {},
+  };
+}
+
 export interface AgentToolExecutionContext {
   runId: string;
   nodeId: string;
@@ -95,45 +146,7 @@ export class LocalWorkflowExecutor {
   }
 
   public async start(workflow: WorkflowDefinition, options: { artifactId?: string; replayOfRunId?: string } = {}): Promise<RunRecord> {
-    const validation = validateWorkflow(workflow);
-    if (!validation.valid) {
-      const message = validation.issues
-        .filter((issue) => issue.level === 'error')
-        .map((issue) => issue.message)
-        .join(' ');
-      throw new Error(`Workflow is not executable. ${message}`);
-    }
-
-    const now = new Date().toISOString();
-    const trigger = workflow.nodes.find(
-      (node) => node.type === workflow.trigger.type,
-    );
-    if (trigger === undefined) {
-      throw new Error('The declared workflow trigger node is missing.');
-    }
-    const run: RunRecord = {
-      ...(workflow.tenantId === undefined ? {} : { tenantId: workflow.tenantId }),
-      ...(workflow.projectId === undefined ? {} : { projectId: workflow.projectId }),
-      id: randomUUID(),
-      workflowId: workflow.id,
-      workflowName: workflow.name,
-      workflowVersion: workflow.version,
-      ...(options.artifactId === undefined ? {} : { artifactId: options.artifactId }),
-      ...(options.replayOfRunId === undefined ? {} : { replayOfRunId: options.replayOfRunId }),
-      traceId: randomUUID().replaceAll('-', '').slice(0, 32),
-      status: 'queued',
-      startedAt: now,
-      costUsd: 0,
-      humanTouchpoints: 0,
-      workflowDefinition: structuredClone(workflow),
-      completedNodeIds: [],
-      activatedNodeIds: [trigger.id],
-      approvedNodeIds: [],
-      approvedNodeHashes: {},
-      pendingApprovalHashes: {},
-      unitOutputs: {},
-      ciCheckpoints: {},
-    };
+    const run = createQueuedRun(workflow, { ...options, executionEngine: 'local' });
 
     await this.store.mutate((state) => {
       state.runs.unshift(run);

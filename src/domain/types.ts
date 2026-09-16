@@ -7,6 +7,7 @@ export type RunStatus =
   | 'failed'
   | 'timed_out'
   | 'cancelled';
+export type ExecutionEngine = 'local' | 'temporal';
 export type ConnectionStatus = 'healthy' | 'degraded' | 'expired';
 export type IssueLevel = 'error' | 'warning';
 export type ReplayReportStatus = 'passed' | 'mismatch' | 'failed' | 'timed_out';
@@ -188,6 +189,12 @@ export interface RunRecord {
   artifactId?: string;
   /** Source run when this execution was created by deterministic replay. */
   replayOfRunId?: string;
+  /** Execution plane that owns this run. */
+  executionEngine?: ExecutionEngine;
+  /** Temporal identity used to recover or control a durable execution. */
+  temporalWorkflowId?: string;
+  temporalRunId?: string;
+  temporalTaskQueue?: string;
   traceId: string;
   status: RunStatus;
   startedAt: string;
