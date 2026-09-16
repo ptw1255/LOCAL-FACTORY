@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { createSeedState } from '../domain/seed.js';
-import type { OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
+import type { EvidenceQuery, OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
 import { normalizePlatformState, type PlatformStore, type StateMutation } from './store.js';
 
 export class JsonStore implements PlatformStore {
@@ -48,9 +48,17 @@ export class JsonStore implements PlatformStore {
     });
   }
 
-  public listEvidence(runId?: string): Promise<OperationEvidence[]> {
+  public listEvidence(query?: string | EvidenceQuery): Promise<OperationEvidence[]> {
+    const filter: EvidenceQuery = typeof query === 'string' ? { runId: query } : query ?? {};
     return this.read((state) => state.evidence
-      .filter((entry) => runId === undefined || entry.runId === runId)
+      .filter((entry) => (filter.runId === undefined || entry.runId === filter.runId)
+        && (filter.tenantId === undefined || entry.tenantId === filter.tenantId)
+        && (filter.projectId === undefined || entry.projectId === filter.projectId)
+        && (filter.unitId === undefined || entry.unitId === filter.unitId)
+        && (filter.operation === undefined || entry.operation === filter.operation)
+        && (filter.status === undefined || entry.status === filter.status)
+        && (filter.from === undefined || entry.occurredAt >= filter.from)
+        && (filter.to === undefined || entry.occurredAt <= filter.to))
       .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt)));
   }
 

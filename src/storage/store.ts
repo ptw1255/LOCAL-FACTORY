@@ -1,4 +1,4 @@
-import type { OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
+import type { EvidenceQuery, OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
 import { defaultWorkUnit } from '../domain/catalog.js';
 
 export const DEFAULT_TENANT_ID = 'tenant-local';
@@ -13,7 +13,7 @@ export interface PlatformStore {
   appendEvent(event: RunEvent): Promise<void>;
   listEvents(runId?: string): Promise<RunEvent[]>;
   appendEvidence(evidence: OperationEvidence): Promise<void>;
-  listEvidence(runId?: string): Promise<OperationEvidence[]>;
+  listEvidence(query?: string | EvidenceQuery): Promise<OperationEvidence[]>;
   /** Remove observability records older than the configured retention window. */
   pruneEvents?(before: string): Promise<number>;
   close?(): Promise<void>;

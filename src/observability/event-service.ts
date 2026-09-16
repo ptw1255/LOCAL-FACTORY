@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import type { AgentSpanKind, OperationEvidence, OperationEvidenceStatus, RunEvent } from '../domain/types.js';
+import type { AgentSpanKind, EvidenceQuery, OperationEvidence, OperationEvidenceStatus, RunEvent } from '../domain/types.js';
 import type { PlatformStore } from '../storage/store.js';
 import type { TelemetryExporter } from './otlp-exporter.js';
 import { telemetryResource } from './semconv.js';
@@ -109,8 +109,8 @@ export class EventService {
     return evidence;
   }
 
-  public listEvidence(runId?: string): Promise<OperationEvidence[]> {
-    return this.store.listEvidence(runId);
+  public listEvidence(query?: string | EvidenceQuery): Promise<OperationEvidence[]> {
+    return this.store.listEvidence(query);
   }
 
   public prune(): Promise<number> {
