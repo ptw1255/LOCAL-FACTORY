@@ -26,8 +26,8 @@ const kindSpecSchemas: Record<z.infer<typeof resourceEnvelopeSchema>['kind'], z.
     skills: z.array(z.string().min(1)).max(100).optional(),
     tools: z.array(z.string().min(1)).max(100).optional(),
     model: z.record(z.string(), z.unknown()).optional(),
-    inputSchema: z.record(z.string(), z.unknown()).optional(),
-    outputSchema: z.record(z.string(), z.unknown()).optional(),
+    inputSchema: z.union([z.record(z.string(), z.unknown()), z.string().min(1)]).optional(),
+    outputSchema: z.union([z.record(z.string(), z.unknown()), z.string().min(1)]).optional(),
     boundaries: z.record(z.string(), z.unknown()).optional(),
     limits: z.record(z.string(), z.unknown()).optional(),
     termination: z.record(z.string(), z.unknown()).optional(),
@@ -39,7 +39,7 @@ const kindSpecSchemas: Record<z.infer<typeof resourceEnvelopeSchema>['kind'], z.
     description: z.string().optional(),
     version: z.number().int().positive().optional(),
     trigger: z.string().min(1).optional(),
-    inputSchema: z.record(z.string(), z.unknown()).optional(),
+    inputSchema: z.union([z.record(z.string(), z.unknown()), z.string().min(1)]).optional(),
     steps: z.array(z.record(z.string(), z.unknown())).min(1),
   }).passthrough(),
   WorkUnit: workUnitSchema,
@@ -80,6 +80,24 @@ export interface CompiledResourceFiles {
 }
 
 const forbiddenMetadata = new Set(['createdAt', 'updatedAt', 'status', 'deployment', 'runState']);
+
+const resourcePathPatterns: Record<z.infer<typeof resourceEnvelopeSchema>['kind'], RegExp> = {
+  Project: /^factory\.ya?ml$/,
+  Workflow: /^workflows\/[^/]+\.workflow\.ya?ml$/,
+  Agent: /^agents\/[^/]+\.agent\.ya?ml$/,
+  WorkUnit: /^units\/[^/]+\.unit\.ya?ml$/,
+  Policy: /^policies\/[^/]+\.policy\.ya?ml$/,
+  Connection: /^connections\/[^/]+\.connection\.ya?ml$/,
+  Environment: /^environments\/[^/]+\.environment\.ya?ml$/,
+  Schema: /^schemas\/[^/]+\.schema\.json$/,
+  Canvas: /^canvas\/[^/]+\.canvas\.ya?ml$/,
+};
+
+function assertResourcePath(resource: ResourceFile, kind: z.infer<typeof resourceEnvelopeSchema>['kind']): void {
+  if (!resourcePathPatterns[kind].test(resource.path)) {
+    throw new Error(`${resource.path}: resource kind ${kind} must use its conventional file path.`);
+  }
+}
 
 function assertNoRuntimeMetadata(value: unknown, path = 'document'): void {
   if (Array.isArray(value)) {
@@ -136,6 +154,10 @@ export function parseResourceFile(resource: ResourceFile): z.infer<typeof resour
 /** Compiles one project entrypoint plus typed Agent/Workflow resource files. */
 export function compileResourceFiles(resources: ResourceFile[], scope: { tenantId: string; projectId?: string }): CompiledResourceFiles {
   const envelopes = resources.map(parseResourceFile);
+  envelopes.forEach((resource, index) => {
+    const source = resources[index];
+    if (source !== undefined) assertResourcePath(source, resource.kind);
+  });
   const seen = new Set<string>();
   envelopes.forEach((resource, index) => {
     const identity = `${resource.kind}/${resource.metadata.id}`;
@@ -147,8 +169,32 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
   const projectResource = projectResources[0];
   if (projectResource === undefined) throw new Error('Resource workspace must contain one Project resource.');
   const projectSpec = projectResource.spec;
+  const schemas = new Map(envelopes.filter((resource) => resource.kind === 'Schema').map((resource) => [resource.metadata.id, resource.spec]));
+  const resolveSchema = (value: unknown, owner: string): unknown => {
+    if (typeof value === 'string') {
+      const reference = value.startsWith('$ref:') ? value.slice('$ref:'.length) : undefined;
+      if (reference === undefined) return value;
+      const id = reference.startsWith('Schema/') ? reference.slice('Schema/'.length) : reference;
+      const schema = schemas.get(id);
+      if (schema === undefined) throw new Error(`${owner} references missing Schema/${id}.`);
+      return structuredClone(schema);
+    }
+    if (Array.isArray(value)) return value.map((item) => resolveSchema(item, owner));
+    if (value !== null && typeof value === 'object') {
+      const object = value as Record<string, unknown>;
+      if (typeof object.$ref === 'string') {
+        const id = object.$ref.startsWith('Schema/') ? object.$ref.slice('Schema/'.length) : object.$ref;
+        const schema = schemas.get(id);
+        if (schema === undefined) throw new Error(`${owner} references missing Schema/${id}.`);
+        const { $ref: _ref, ...overrides } = object;
+        return { ...(structuredClone(schema) as Record<string, unknown>), ...(resolveSchema(overrides, owner) as Record<string, unknown>) };
+      }
+      return Object.fromEntries(Object.entries(object).map(([key, child]) => [key, resolveSchema(child, owner)]));
+    }
+    return value;
+  };
   const agents = envelopes.filter((resource) => resource.kind === 'Agent').map((resource) => ({
-    ...(resource.spec as Record<string, unknown>),
+    ...(resolveSchema(resource.spec, `Agent/${resource.metadata.id}`) as Record<string, unknown>),
     id: resource.metadata.id,
     ...(resource.metadata.version === undefined ? {} : { version: resource.metadata.version }),
     ...(resource.metadata.name === undefined ? {} : { name: resource.metadata.name }),
@@ -167,6 +213,7 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
     id: resource.metadata.id,
     ...(resource.metadata.version === undefined ? {} : { version: resource.metadata.version }),
     ...(resource.metadata.name === undefined ? {} : { name: resource.metadata.name }),
+    ...(resource.spec.inputSchema === undefined ? {} : { inputSchema: resolveSchema(resource.spec.inputSchema, `Workflow/${resource.metadata.id}`) }),
     steps: (resource.spec.steps as Array<Record<string, unknown>>).map((step, stepIndex) => {
       let resolved = { ...step };
       if (typeof step.unit === 'string') {
@@ -182,6 +229,30 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
       return resolved;
     }),
   }));
+  for (const resource of envelopes.filter((candidate) => candidate.kind === 'Workflow')) {
+    const steps = resource.spec.steps as Array<Record<string, unknown>>;
+    const stepId = (step: Record<string, unknown>, index: number): string => typeof step.id === 'string' ? step.id : `${String(step.kind ?? step.type ?? 'step')}-${index + 1}`;
+    const ids = new Set(steps.map(stepId));
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const visit = (id: string, chain: string[]): void => {
+      if (visiting.has(id)) throw new Error(`Workflow ${resource.metadata.id} has a reference cycle: ${[...chain, id].join(' -> ')}.`);
+      if (visited.has(id)) return;
+      visiting.add(id);
+      const index = steps.findIndex((step, candidateIndex) => stepId(step, candidateIndex) === id);
+      const dependencies = index < 0 ? undefined : steps[index]?.dependsOn;
+      if (Array.isArray(dependencies)) {
+        for (const dependency of dependencies) {
+          if (typeof dependency !== 'string') continue;
+          if (!ids.has(dependency)) throw new Error(`Workflow ${resource.metadata.id} step ${id} references missing step ${dependency}.`);
+          visit(dependency, [...chain, id]);
+        }
+      }
+      visiting.delete(id);
+      visited.add(id);
+    };
+    for (const id of ids) visit(id, []);
+  }
   for (const resource of envelopes.filter((candidate) => candidate.kind === 'Canvas')) {
     const workflowId = (resource.spec as { workflowId: string }).workflowId;
     if (resolveReference(workflowId, 'Workflow', new Set(workflows.map((workflow) => workflow.id))) === undefined) throw new Error(`Canvas/${resource.metadata.id} references missing Workflow/${workflowId}.`);
