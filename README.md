@@ -273,6 +273,7 @@ The control plane exposes the same workflow for automation and GitOps tooling:
 GET  /api/projects/:projectId/declarative.yaml  # export the project
 POST /api/projects/:projectId/declarative       # replace project config from { source }
 GET  /api/projects/:projectId/artifacts/diff    # compare immutable artifacts with ?from=&to=
+POST /api/projects/:projectId/migrate            # preview by default; write with { dryRun: false }
 ```
 
 Imports are validated and compiled through the same canonical schemas used by the
