@@ -526,6 +526,17 @@ export class LocalWorkflowExecutor {
         const workspace = await this.workspaceForRun(runId);
         const message = typeof node.config.message === 'string' ? node.config.message : '';
         const paths = Array.isArray(node.config.paths) ? node.config.paths.filter((value): value is string => typeof value === 'string') : [];
+        if (node.config.requirePatchArtifact === true) {
+          const patch = inputs.map((input) => {
+            if (input !== null && typeof input === 'object' && 'patch' in input && (input as { patch?: unknown }).patch !== null && typeof (input as { patch?: unknown }).patch === 'object') return (input as { patch?: unknown }).patch;
+            return input;
+          })
+            .find((input): input is { id: string; changedPaths?: unknown[] } => input !== null && typeof input === 'object' && typeof (input as { id?: unknown }).id === 'string' && Array.isArray((input as { changedPaths?: unknown }).changedPaths));
+          if (patch === undefined) throw new Error('Repository commit requires an upstream patch artifact.');
+          const changedPaths = patch.changedPaths?.filter((value): value is string => typeof value === 'string') ?? [];
+          const selectedPaths = paths.length === 0 ? changedPaths : paths;
+          if (selectedPaths.some((path) => !changedPaths.includes(path))) throw new Error('Repository commit paths must be contained in the approved patch artifact.');
+        }
         result = await workspace.commit(message, paths);
         break;
       }
