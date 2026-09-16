@@ -27,8 +27,22 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      vault:
+        image: hashicorp/vault:1.20
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: dev-only-token
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --health-cmd "vault status -address=http://127.0.0.1:8200"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       TEST_DATABASE_URL: postgresql://factory:factory@localhost:5432/factory
+      TEST_VAULT_ADDR: http://localhost:8200
+      TEST_VAULT_TOKEN: dev-only-token
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -41,3 +55,5 @@ jobs:
         run: npm ci
       - name: Typecheck, test, and build
         run: npm run check
+      - name: Coding workflow integration gate
+        run: npm run test:coding-workflow

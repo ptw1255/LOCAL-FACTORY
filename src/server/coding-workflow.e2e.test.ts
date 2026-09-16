@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,14 +10,16 @@ import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 import { GitHubRepositoryClient } from '../repository/github.js';
+import { VaultSecretBroker } from '../connections/vault-secret-broker.js';
 import { JsonStore } from '../storage/json-store.js';
+import { PostgresStore } from '../storage/postgres-store.js';
 import { createApp } from './app.js';
 
-async function waitFor(app: Awaited<ReturnType<typeof createApp>>, runId: string, status: string): Promise<Record<string, unknown>> {
+async function waitFor(app: Awaited<ReturnType<typeof createApp>>, runId: string, status: string, headers?: Record<string, string>): Promise<Record<string, unknown>> {
   const deadline = Date.now() + 3_000;
   let last: Record<string, unknown> | undefined;
   while (Date.now() < deadline) {
-    const payload = app.inject({ method: 'GET', url: `/api/runs/${runId}` }).then((response) => response.json() as Record<string, unknown>);
+    const payload = app.inject({ method: 'GET', url: `/api/runs/${runId}`, ...(headers === undefined ? {} : { headers }) }).then((response) => response.json() as Record<string, unknown>);
     const current = await payload;
     last = current;
     if (current.status === status) return current;
@@ -28,6 +31,10 @@ async function waitFor(app: Awaited<ReturnType<typeof createApp>>, runId: string
 const execFileAsync = (file: string, args: string[], options: { cwd?: string } = {}) => new Promise<void>((resolve, reject) => {
   execFile(file, args, options, (error) => error === null ? resolve() : reject(error));
 });
+
+const integrationDatabaseUrl = process.env.TEST_DATABASE_URL;
+const integrationVaultAddress = process.env.TEST_VAULT_ADDR;
+const integrationVaultToken = process.env.TEST_VAULT_TOKEN ?? 'dev-only-token';
 
 describe('coding workflow API', () => {
   it('executes an isolated mutation, approval, evidence, and terminal path', async () => {
@@ -54,8 +61,13 @@ describe('coding workflow API', () => {
       expect(started.statusCode).toBe(200);
       const runId = (started.json() as { id: string }).id;
       expect((await waitFor(app, runId, 'waiting')).status).toBe('waiting');
-      const waitingEvidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
-      const waitingItems = (waitingEvidence.json() as { items: Array<{ status: string; correlationId?: string; idempotencyKey?: string }> }).items;
+      let waitingItems: Array<{ status: string; correlationId?: string; idempotencyKey?: string }> = [];
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const waitingEvidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
+        waitingItems = (waitingEvidence.json() as { items: Array<{ status: string; correlationId?: string; idempotencyKey?: string }> }).items;
+        if (waitingItems.some((entry) => entry.status === 'waiting' && entry.correlationId !== undefined)) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
       expect(waitingItems.some((entry) => entry.status === 'waiting' && entry.correlationId !== undefined)).toBe(true);
       const approvals = await app.inject({ method: 'GET', url: `/api/approvals?runId=${runId}`, headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' } });
       expect((approvals.json() as { items: Array<{ decision: string; bindingHash: string }> }).items).toEqual([expect.objectContaining({ decision: 'pending', bindingHash: expect.stringMatching(/^[a-f0-9]{64}$/) })]);
@@ -264,5 +276,84 @@ describe('coding workflow API', () => {
       const pushEntries = (pushEvidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items;
       expect(pushEntries.some((entry) => entry.unitId === 'push' && entry.status === 'failed' && entry.metadata?.['repository.policy'] === 'allowedRemotes')).toBe(true);
     } finally { await app.close(); }
+  });
+});
+
+describe.skipIf(integrationDatabaseUrl === undefined || integrationVaultAddress === undefined)('coding workflow PostgreSQL/Vault integration', () => {
+  it('persists the project, artifact, run, telemetry, and Vault reference across app restart', async () => {
+    const projectHeaders = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-e2e-postgres-repo-'));
+    await writeFile(path.join(repoRoot, 'README.md'), 'source');
+    const repositoryWorkspace = await RepositoryWorkspace.open(repoRoot);
+    const store = new PostgresStore(integrationDatabaseUrl!);
+    const vault = new VaultSecretBroker({ address: integrationVaultAddress!, token: integrationVaultToken });
+    const app = await createApp({ store, repositoryWorkspace, secretBroker: vault, serveStatic: false });
+    let projectId: string | undefined;
+    let workflowId: string | undefined;
+    let runId: string | undefined;
+    let artifactId: string | undefined;
+    try {
+      const project = await app.inject({ method: 'POST', url: '/api/projects', headers: projectHeaders, payload: { name: `Postgres/Vault E2E ${randomUUID()}` } });
+      expect(project.statusCode).toBe(200);
+      projectId = project.json<{ id: string }>().id;
+      const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': projectId };
+
+      const files = [
+        ['factory.yaml', 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: project-local\n  version: 1\n  name: Local\nspec: {}'],
+        ['agents/reviewer.agent.yaml', 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: reviewer\n  version: 1\n  name: Reviewer\nspec:\n  purpose: Review\n  instructions: Review changes\n  skills: []\n  tools: []\n  model: { routingAlias: default-safe }'],
+        ['workflows/review.workflow.yaml', 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: review\n  version: 1\n  name: Review\nspec:\n  trigger: manual\n  steps:\n    - id: review\n      kind: agent\n      agent: reviewer'],
+      ] as const;
+      for (const [filePath, content] of files) {
+        expect((await app.inject({ method: 'PUT', url: `/api/projects/${projectId}/files`, headers, payload: { path: filePath, content } })).statusCode).toBe(200);
+      }
+      const compiled = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/compile`, headers, payload: { environment: 'local' } });
+      expect(compiled.statusCode).toBe(200);
+      artifactId = compiled.json<{ id: string }>().id;
+      expect(artifactId).toMatch(/^sha256:/);
+
+      const secret = `integration-secret-${randomUUID()}`;
+      const connection = await app.inject({ method: 'POST', url: '/api/connections', headers, payload: { name: `Vault E2E ${randomUUID()}`, connector: 'OpenAI', environment: 'test', scopes: ['llm:invoke'], secret } });
+      expect(connection.statusCode).toBe(200);
+      const connectionRecord = connection.json<{ secretRef?: string }>();
+      expect(connectionRecord).not.toHaveProperty('secret');
+      expect(connectionRecord.secretRef).toBeTruthy();
+      await expect(vault.get(connectionRecord.secretRef!)).resolves.toBe(secret);
+
+      const cloned = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/workflows`, headers: projectHeaders, payload: { sourceWorkflowId: 'workflow-agent-intake', name: 'Postgres/Vault run' } });
+      expect(cloned.statusCode).toBe(200);
+      workflowId = cloned.json<{ id: string }>().id;
+      const started = await app.inject({ method: 'POST', url: `/api/workflows/${workflowId}/runs`, headers, payload: { input: { request: 'Persist this run' } } });
+      expect(started.statusCode).toBe(200);
+      runId = started.json<{ id: string }>().id;
+      const completed = await waitFor(app, runId, 'succeeded', headers);
+      expect(completed).toEqual(expect.objectContaining({ status: 'succeeded', projectId, tenantId: 'tenant-local', inputHash: expect.any(String) }));
+
+      const events = await app.inject({ method: 'GET', url: `/api/events?runId=${runId}`, headers });
+      expect(events.json<{ items: Array<{ traceId: string; attributes?: Record<string, unknown> }> }>().items.length).toBeGreaterThan(0);
+      expect(events.json<{ items: Array<{ traceId: string }> }>().items.every((event) => event.traceId.length > 0)).toBe(true);
+      const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}`, headers });
+      expect(evidence.json<{ items: Array<{ runId: string; correlationId?: string }> }>().items.some((entry) => entry.runId === runId && entry.correlationId !== undefined)).toBe(true);
+      const fileEvents = await app.inject({ method: 'GET', url: `/api/projects/${projectId}/files/events`, headers });
+      expect(fileEvents.json<{ items: Array<{ type: string; data?: unknown }> }>().items.some((event) => event.type === 'workspace.file.changed')).toBe(true);
+      expect(fileEvents.json<{ items: Array<{ data?: unknown }> }>().items.every((event) => event.data === undefined)).toBe(true);
+    } finally {
+      await app.close();
+    }
+
+    const reopened = new PostgresStore(integrationDatabaseUrl!);
+    try {
+      const persisted = await reopened.read((state) => ({
+        project: projectId === undefined ? undefined : state.projects.find((project) => project.id === projectId),
+        run: runId === undefined ? undefined : state.runs.find((run) => run.id === runId),
+        artifact: artifactId === undefined ? undefined : state.artifacts.find((artifact) => artifact.id === artifactId),
+      }));
+      expect(persisted.project?.id).toBe(projectId);
+      expect(persisted.run).toEqual(expect.objectContaining({ id: runId, status: 'succeeded' }));
+      expect(persisted.artifact).toEqual(expect.objectContaining({ id: artifactId }));
+      await expect(reopened.listEvents(runId)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ runId, projectId })]));
+      await expect(reopened.listEvidence({ runId, tenantId: 'tenant-local', projectId })).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ runId, projectId })]));
+    } finally {
+      await reopened.close();
+    }
   });
 });
