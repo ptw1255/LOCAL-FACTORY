@@ -97,6 +97,20 @@ function inScope(value: { tenantId?: string; projectId?: string }, scope: { tena
   return value.tenantId === scope.tenantId && value.projectId === scope.projectId;
 }
 
+const MAX_PROJECT_FILE_BYTES = 1_000_000;
+const allowedProjectFileExtensions = new Set(['.yaml', '.yml', '.json', '.md', '.txt']);
+
+function projectFilePathError(filePath: string, content?: string): string | undefined {
+  const normalized = filePath.replaceAll('\\', '/');
+  if (normalized.startsWith('/') || normalized.split('/').some((segment) => segment === '..')) return 'File paths must stay within the project workspace.';
+  const base = normalized.split('/').at(-1)?.toLowerCase() ?? '';
+  if (base.startsWith('.env') || base === 'credentials.json' || base === 'secrets.yaml') return 'Secret-bearing files are not allowed in the project workspace.';
+  const extension = base.includes('.') ? `.${base.split('.').at(-1)}` : '';
+  if (!allowedProjectFileExtensions.has(extension)) return 'Only YAML, JSON, Markdown, and text project files are supported.';
+  if (content !== undefined && Buffer.byteLength(content, 'utf8') > MAX_PROJECT_FILE_BYTES) return `Project files must be ${MAX_PROJECT_FILE_BYTES} bytes or smaller.`;
+  return undefined;
+}
+
 function positiveNumber(value: string | undefined, fallback: number): number {
   const parsed = value === undefined ? Number.NaN : Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -441,9 +455,11 @@ export async function createApp(
     async (request, reply) => {
       const scope = scopeFromRequest(request);
       const body = request.body as { path?: unknown; content?: unknown; expectedSha256?: unknown };
-      if (typeof body?.path !== 'string' || typeof body.content !== 'string' || body.path.trim() === '' || body.path.includes('..')) {
-        return reply.status(422).send({ message: 'File path and text content are required; path traversal is not allowed.' });
+      if (typeof body?.path !== 'string' || typeof body.content !== 'string' || body.path.trim() === '') {
+        return reply.status(422).send({ message: 'File path and text content are required.' });
       }
+      const pathError = projectFilePathError(body.path, body.content);
+      if (pathError !== undefined) return reply.status(422).send({ message: pathError });
       const projectExists = await store.read((state) => state.projects.some((project) => project.id === request.params.projectId && project.tenantId === scope.tenantId));
       if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
       const file: ProjectFileRecord = {
@@ -474,7 +490,9 @@ export async function createApp(
   app.patch<{ Params: { projectId: string }; Body: unknown }>('/api/projects/:projectId/files', async (request, reply) => {
     const scope = scopeFromRequest(request);
     const body = request.body as { path?: unknown; newPath?: unknown };
-    if (typeof body?.path !== 'string' || typeof body.newPath !== 'string' || body.path.includes('..') || body.newPath.includes('..') || body.newPath.trim() === '') return reply.status(422).send({ message: 'path and newPath are required; traversal is not allowed.' });
+    if (typeof body?.path !== 'string' || typeof body.newPath !== 'string' || body.newPath.trim() === '') return reply.status(422).send({ message: 'path and newPath are required.' });
+    const newPathError = projectFilePathError(body.newPath);
+    if (newPathError !== undefined) return reply.status(422).send({ message: newPathError });
     const oldPath = body.path;
     const newPath = body.newPath;
     const renamed = await store.mutate((state) => {
