@@ -34,6 +34,7 @@ import { WorkflowReplayService } from '../runtime/replay.js';
 import { TemporalWorkflowExecutor, type TemporalWorkflowClientLike } from '../temporal/executor.js';
 import { HttpOllamaClient } from '../runtime/ollama.js';
 import { OpenAISDKClient } from '../runtime/openai-sdk.js';
+import { OpenAICompatibleClient } from '../runtime/openai-compatible.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 import { GitHubRepositoryClient } from '../repository/github.js';
 import { DeploymentReconciler, type DeploymentRuntimeAdapter } from '../deployment/reconciler.js';
@@ -55,6 +56,7 @@ export interface AppOptions {
   repositoryWorkspace?: RepositoryWorkspace;
   githubRepository?: GitHubRepositoryClient;
   openaiClient?: OpenAIClient;
+  openaiCompatibleClient?: OpenAIClient;
   deploymentAdapter?: DeploymentRuntimeAdapter;
   artifactStore?: ArtifactStore;
   authMode?: AuthMode;
@@ -159,6 +161,7 @@ export async function createApp(
     ? new GitHubRepositoryClient({ owner: process.env.GITHUB_REPOSITORY_OWNER, repo: process.env.GITHUB_REPOSITORY_NAME, ...(process.env.GITHUB_TOKEN === undefined ? {} : { token: process.env.GITHUB_TOKEN }), ...(process.env.GITHUB_SECRET_REF === undefined ? {} : { secretRef: process.env.GITHUB_SECRET_REF, secretBroker }) })
     : undefined);
   const openai = options.openaiClient ?? new OpenAISDKClient({ secretBroker });
+  const openaiCompatible = options.openaiCompatibleClient ?? new OpenAICompatibleClient({ secretBroker });
   const configuredExecutionEngine = options.executionEngine ?? process.env.EXECUTION_ENGINE;
   let temporalClose: (() => Promise<void>) | undefined;
   const executor = configuredExecutionEngine === 'temporal'
@@ -181,7 +184,7 @@ export async function createApp(
     runExecutor = connected.executor;
     temporalClose = connected.close;
   } else {
-    runExecutor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace, githubRepository, openai);
+    runExecutor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace, githubRepository, openai, new Map(), openaiCompatible);
   }
   const replayService = new WorkflowReplayService(store, runExecutor);
   const ollamaAgents = await store.read((state) => state.workflows.flatMap((workflow) => workflow.agents).flatMap((agent) => {

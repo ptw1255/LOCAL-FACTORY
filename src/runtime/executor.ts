@@ -126,6 +126,7 @@ export class LocalWorkflowExecutor {
     private readonly githubRepository?: GitHubRepositoryClient,
     private readonly openai?: OpenAIClient,
     private readonly toolExecutors: ReadonlyMap<string, AgentToolExecutor> = new Map(),
+    private readonly openaiCompatible?: OpenAIClient,
   ) {}
 
   public async recover(): Promise<number> {
@@ -985,6 +986,9 @@ export class LocalWorkflowExecutor {
         } else if (provider === 'openai') {
           if (this.openai === undefined) throw new Error('OpenAI credentials are not configured for this runtime.');
           result = await this.openai.chat({ agent: routeAgent, goal, signal, traceId });
+        } else if (provider === 'openai-compatible' || provider === 'lmstudio' || provider === 'lm-studio' || provider === 'vllm' || provider === 'localai') {
+          if (this.openaiCompatible === undefined) throw new Error(`The ${provider} model adapter is not configured for this runtime.`);
+          result = await this.openaiCompatible.chat({ agent: routeAgent, goal, signal, traceId });
         } else {
           throw new Error(`Unsupported model provider "${provider}".`);
         }

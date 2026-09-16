@@ -64,7 +64,8 @@ export class OpenAIProviderError extends Error {
 }
 
 export interface OpenAIClient {
-  readonly provider?: 'openai';
+  /** Provider identifier emitted in lifecycle telemetry (for example openai or lmstudio). */
+  readonly provider?: string;
   readonly capabilities?: readonly OpenAICapability[];
   chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string }): Promise<OpenAIModelResult>;
 }
