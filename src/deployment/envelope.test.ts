@@ -15,4 +15,14 @@ describe('deployment envelope', () => {
     expect(deploymentEnvelopeSchema.parse(envelope)).toEqual(envelope);
     expect(envelope.spec.desiredState).toBe('live');
   });
+
+  it('rejects runtime or provider fields added to the lean spec', () => {
+    const envelope = toDeploymentEnvelope({
+      id: 'deployment-1', tenantId: 'tenant-local', projectId: 'project-local', workflowId: seedWorkflow.id,
+      environment: 'local', artifactId: 'sha256:artifact', desiredState: 'running', observedState: 'starting',
+      health: 'unknown', trigger: 'manual', triggerStatus: 'inactive', createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:01.000Z', healthyArtifactIds: [], history: [],
+    });
+    expect(() => deploymentEnvelopeSchema.parse({ ...envelope, spec: { ...envelope.spec, replicas: 2 } })).toThrow();
+  });
 });

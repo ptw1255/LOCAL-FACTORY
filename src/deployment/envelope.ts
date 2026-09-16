@@ -11,7 +11,7 @@ export const deploymentEnvelopeSchema = z.object({
     environment: z.string().min(1),
     artifactId: z.string().min(1),
     desiredState: z.enum(['live', 'stopped']),
-  }),
+  }).strict(),
   status: z.object({
     observedState: z.enum(['stopped', 'starting', 'live', 'degraded', 'stopping', 'failed']),
     updatedAt: z.iso.datetime(),
