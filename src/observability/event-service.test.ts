@@ -94,6 +94,16 @@ describe('EventService retention', () => {
     expect(await service.listEvidence({ from: terminal.occurredAt, to: terminal.occurredAt })).toEqual([terminal]);
   });
 
+  it('queries durable evidence by repository revision and pull request metadata', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const service = new EventService(store);
+    await service.recordEvidence({ runId: 'run-1', unitId: 'commit', operation: 'repositoryCommit', status: 'succeeded', metadata: { 'repository.name': 'example/repo', 'repository.revision': 'abc123' } });
+    await service.recordEvidence({ runId: 'run-1', unitId: 'pr', operation: 'repositoryPullRequest', status: 'succeeded', metadata: { 'repository.name': 'example/repo', 'pull_request.number': 42 } });
+    expect((await service.listEvidence({ repository: 'example/repo', commit: 'abc123' })).map((entry) => entry.unitId)).toEqual(['commit']);
+    expect((await service.listEvidence({ repository: 'example/repo', pullRequest: '42' })).map((entry) => entry.unitId)).toEqual(['pr']);
+  });
+
   it('derives stable evidence identity for retry-safe lifecycle writes', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
