@@ -158,6 +158,8 @@ export interface WorkflowDefinition {
   trigger: {
     type: string;
   };
+  /** Optional JSON-Schema subset used to validate input supplied at run time. */
+  inputSchema?: Record<string, unknown>;
   agents: AgentDefinition[];
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
@@ -195,6 +197,13 @@ export interface RunRecord {
   workflowName: string;
   workflowVersion: number;
   artifactId?: string;
+  /** Environment selected for this execution (for example local or staging). */
+  environment?: string;
+  /** Logical deployment that supplied the selected runtime context. */
+  deploymentId?: string;
+  /** Initial trigger payload retained so a recovered run can resume deterministically. */
+  input?: unknown;
+  inputHash?: string;
   /** Source run when this execution was created by deterministic replay. */
   replayOfRunId?: string;
   /** Execution plane that owns this run. */

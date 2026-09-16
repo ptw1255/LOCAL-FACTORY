@@ -21,6 +21,7 @@ export const approveSignal = defineSignal<[string]>('approve');
 export interface TemporalWorkflowInput {
   runId: string;
   definition: WorkflowDefinition;
+  input?: unknown;
 }
 
 export interface TemporalWorkflowResult {
@@ -93,7 +94,8 @@ export async function executeWorkflow(
       sequence: completed.size + 1,
       inputs: input.definition.edges
         .filter((edge) => edge.target === node.id && outputs.has(edge.source))
-        .map((edge) => outputs.get(edge.source)),
+        .map((edge) => outputs.get(edge.source))
+        .concat(completed.size === 0 && node.type === input.definition.trigger.type && input.input !== undefined ? [input.input] : []),
       unit: node.unit,
     });
     completed.add(node.id);

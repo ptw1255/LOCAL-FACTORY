@@ -17,6 +17,7 @@ export interface DeclarativeProjectDocument {
     description?: string;
     version?: number;
     trigger?: string;
+    inputSchema?: Record<string, unknown>;
     steps: Array<Record<string, unknown>>;
   }>;
 }
@@ -52,6 +53,7 @@ const declarativeDocumentSchema = z.object({
     description: z.string().optional(),
     version: z.number().int().positive().optional(),
     trigger: z.string().optional(),
+    inputSchema: z.record(z.string(), z.unknown()).optional(),
     steps: z.array(z.record(z.string(), z.unknown())),
   }).passthrough()).default([]),
 });
@@ -197,6 +199,7 @@ export function parseProjectYaml(source: string, scope: { tenantId: string; proj
       version: definition.version ?? 1,
       status: 'draft',
       trigger: { type: trigger },
+      ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
       agents: structuredClone(agents),
       nodes,
       edges: nodes.slice(0, -1).map((node, index) => ({ id: `edge-${node.id}-${nodes[index + 1]?.id ?? 'end'}`, source: node.id, target: nodes[index + 1]?.id ?? node.id })),
@@ -223,6 +226,7 @@ export function stringifyProjectYaml(project: ProjectRecord, workflows: Workflow
       description: workflow.description,
       version: workflow.version,
       trigger: workflow.trigger.type.replace('Trigger', '').toLowerCase(),
+      ...(workflow.inputSchema === undefined ? {} : { inputSchema: workflow.inputSchema }),
       steps: workflow.nodes.filter((node) => node.type !== workflow.trigger.type).map((node) => ({
         id: node.id,
         name: node.label,

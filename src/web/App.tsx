@@ -28,6 +28,7 @@ import { api } from './api';
 import { Icon, type IconName } from './icons';
 import { WorkflowNodeCard, type CanvasNode } from './WorkflowNodeCard';
 import { defaultWorkUnit } from '../domain/catalog';
+import { validateWorkflowInput } from '../domain/input-schema';
 import type {
   AgentDefinition,
   AgentProposal,
@@ -470,6 +471,10 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<'save' | 'validate' | 'run' | null>(null);
   const [runMode, setRunMode] = useState<'run' | 'dry-run'>('run');
+  const [runEnvironment, setRunEnvironment] = useState('local');
+  const [runInputOpen, setRunInputOpen] = useState(false);
+  const [runInputDraft, setRunInputDraft] = useState('{}');
+  const [runInputError, setRunInputError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: 'success' | 'warning' | 'error'; text: string } | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [configDraft, setConfigDraft] = useState('{}');
@@ -803,7 +808,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     }
   }
 
-  async function runWorkflow() {
+  async function executeRun(input?: unknown) {
     if (workflow === null) return;
     setBusyAction('run');
     setNotice(null);
@@ -813,11 +818,11 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         if (saved === null) return;
       }
       if (runMode === 'dry-run') {
-        const preflight = await api.dryRun(workflow.id);
+        const preflight = await api.dryRun(workflow.id, { environment: runEnvironment, ...(input === undefined ? {} : { input }) });
         setNotice({ tone: 'success', text: `Dry run passed for ${preflight.workflowId} v${preflight.workflowVersion}; no execution was started.` });
         return;
       }
-      const run = await api.startRun(workflow.id);
+      const run = await api.startRun(workflow.id, { environment: runEnvironment, ...(input === undefined ? {} : { input }) });
       window.localStorage.setItem(`factory.onboarding.${projectId}.run`, 'true');
       setHasRun(true);
       sessionStorage.setItem('selectedRunId', run.id);
@@ -827,6 +832,36 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     } finally {
       setBusyAction(null);
     }
+  }
+
+  async function runWorkflow() {
+    if (workflow === null) return;
+    if (workflow.inputSchema !== undefined && Object.keys(workflow.inputSchema).length > 0) {
+      setRunInputDraft('{}');
+      setRunInputError(null);
+      setRunInputOpen(true);
+      return;
+    }
+    await executeRun();
+  }
+
+  async function submitRunInput(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (workflow === null) return;
+    let input: unknown;
+    try {
+      input = JSON.parse(runInputDraft) as unknown;
+    } catch {
+      setRunInputError('Enter valid JSON.');
+      return;
+    }
+    const validationResult = validateWorkflowInput(workflow.inputSchema, input);
+    if (!validationResult.valid) {
+      setRunInputError(validationResult.issues.map((issue) => issue.message).join(' '));
+      return;
+    }
+    setRunInputOpen(false);
+    await executeRun(input);
   }
 
   if (loading && workflow === null) return <LoadingState label="Opening workflow studio" />;
@@ -868,6 +903,12 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
             <option value="run">Run</option>
             <option value="dry-run">Dry run</option>
           </select>
+          <select aria-label="Run environment" className="run-mode-select" disabled={busyAction !== null} onChange={(event) => setRunEnvironment(event.target.value)} value={runEnvironment}>
+            <option value="local">Local</option>
+            <option value="development">Development</option>
+            <option value="staging">Staging</option>
+            <option value="production">Production</option>
+          </select>
           <button className="button primary" disabled={busyAction !== null} onClick={() => void runWorkflow()} type="button">
             <Icon name="play" /> {busyAction === 'run' ? 'Starting…' : runMode === 'dry-run' ? 'Dry run' : 'Run workflow'}
           </button>
@@ -884,6 +925,18 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
           <Icon name={notice.tone === 'success' ? 'check' : 'warning'} />
           <span>{notice.text}</span>
           <button aria-label="Dismiss message" onClick={() => setNotice(null)} type="button"><Icon name="close" /></button>
+        </div>
+      ) : null}
+      {runInputOpen ? (
+        <div className="run-input-backdrop" role="presentation">
+          <form aria-label="Workflow run input" className="run-input-dialog" onSubmit={(event) => void submitRunInput(event)}>
+            <div className="run-input-heading"><div><span className="eyebrow">Run preflight</span><h2>Provide workflow input</h2></div><button aria-label="Close run input" className="icon-button" onClick={() => setRunInputOpen(false)} type="button"><Icon name="close" size={14} /></button></div>
+            <p>Input is validated against the workflow contract before any work unit executes.</p>
+            <pre className="run-input-schema">{JSON.stringify(workflow.inputSchema, null, 2)}</pre>
+            <label className="form-field"><span>Input JSON</span><textarea aria-describedby={runInputError === null ? undefined : 'run-input-error'} className={runInputError === null ? '' : 'invalid'} onChange={(event) => setRunInputDraft(event.target.value)} rows={9} spellCheck={false} value={runInputDraft} /></label>
+            {runInputError === null ? null : <div className="field-error" id="run-input-error" role="alert">{runInputError}</div>}
+            <div className="form-actions"><button className="button ghost" onClick={() => setRunInputOpen(false)} type="button">Cancel</button><button className="button primary" type="submit"><Icon name="play" size={13} /> {runMode === 'dry-run' ? 'Validate dry run' : 'Run workflow'}</button></div>
+          </form>
         </div>
       ) : null}
       {studioMode === 'canvas' ? <div className="studio-workspace">

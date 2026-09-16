@@ -39,6 +39,7 @@ const kindSpecSchemas: Record<z.infer<typeof resourceEnvelopeSchema>['kind'], z.
     description: z.string().optional(),
     version: z.number().int().positive().optional(),
     trigger: z.string().min(1).optional(),
+    inputSchema: z.record(z.string(), z.unknown()).optional(),
     steps: z.array(z.record(z.string(), z.unknown())).min(1),
   }).passthrough(),
   WorkUnit: workUnitSchema,

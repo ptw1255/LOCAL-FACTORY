@@ -111,6 +111,7 @@ export const workflowDefinitionSchema = z.object({
   trigger: z.object({
     type: z.string().min(1),
   }),
+  inputSchema: configSchema.optional(),
   agents: z.array(agentDefinitionSchema),
   nodes: z.array(workflowNodeSchema).min(1),
   edges: z.array(workflowEdgeSchema),

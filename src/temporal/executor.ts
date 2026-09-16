@@ -2,7 +2,7 @@ import { Client, Connection } from '@temporalio/client';
 
 import type { RunRecord, WorkflowDefinition } from '../domain/types.js';
 import type { TemporalWorkflowResult } from './workflows.js';
-import { createQueuedRun } from '../runtime/executor.js';
+import { createQueuedRun, type RunCreationOptions } from '../runtime/executor.js';
 import type { PlatformStore } from '../storage/store.js';
 import type { EventService } from '../observability/event-service.js';
 
@@ -58,7 +58,7 @@ export class TemporalWorkflowExecutor {
     return { executor, close: () => connection.close() };
   }
 
-  public async start(workflow: WorkflowDefinition, options: { artifactId?: string; replayOfRunId?: string } = {}): Promise<RunRecord> {
+  public async start(workflow: WorkflowDefinition, options: RunCreationOptions = {}): Promise<RunRecord> {
     const taskQueue = `${this.taskQueuePrefix}-v${workflow.version}`;
     const run = createQueuedRun(workflow, {
       ...options,
@@ -76,16 +76,16 @@ export class TemporalWorkflowExecutor {
       const handle = await this.options.client.workflow.start('executeWorkflow', {
         workflowId: run.temporalWorkflowId,
         taskQueue,
-        args: [{ runId: run.id, definition: run.workflowDefinition }],
+        args: [{ runId: run.id, definition: run.workflowDefinition, ...(run.input === undefined ? {} : { input: run.input }) }],
         searchAttributes: {
           FactoryId: ['agentic-workflow-factory'],
           WorkflowId: [workflow.id],
           WorkflowVersion: [String(workflow.version)],
-          Environment: [workflow.status],
+          Environment: [run.environment ?? workflow.status],
           Status: ['running'],
           CorrelationId: [run.traceId],
         },
-        memo: { artifactId: run.artifactId ?? '', workflowVersion: workflow.version },
+        memo: { artifactId: run.artifactId ?? '', workflowVersion: workflow.version, environment: run.environment ?? 'local', deploymentId: run.deploymentId ?? '' },
       });
       this.handles.set(run.id, handle);
       await this.options.store.mutate((state) => {

@@ -67,6 +67,22 @@ describe('LocalWorkflowExecutor', () => {
     );
   });
 
+  it('validates and propagates a workflow input through the trigger', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-input-contract';
+    workflow.inputSchema = {
+      type: 'object',
+      required: ['request'],
+      properties: { request: { type: 'string', minLength: 3 } },
+    };
+    const run = await executor.start(workflow, { input: { request: 'Fix login' }, environment: 'staging', deploymentId: 'deployment-input' });
+    expect(run).toEqual(expect.objectContaining({ environment: 'staging', deploymentId: 'deployment-input', input: { request: 'Fix login' }, inputHash: expect.any(String) }));
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
+    const completed = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id));
+    expect(completed?.unitOutputs.trigger).toEqual({ request: 'Fix login' });
+    await expect(executor.start(workflow, { input: { request: 'x' } })).rejects.toThrow('Workflow input is invalid');
+  });
+
   it('executes deterministic evaluator work units and enforces optional thresholds', async () => {
     const workflow = structuredClone(seedWorkflow);
     workflow.id = 'workflow-evaluator';

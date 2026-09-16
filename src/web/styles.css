@@ -656,6 +656,14 @@ kbd { background: #1a2638; border: 1px solid #35445c; border-radius: 4px; box-sh
 .form-intro p { color: var(--muted); font-size: 10px; margin: 0; }
 .connection-form .form-field { margin: 0; }
 .form-actions { display: flex; gap: 8px; grid-column: 1 / -1; justify-content: flex-end; }
+.run-input-backdrop { align-items: center; background: rgba(2, 6, 12, .78); display: flex; inset: 0; justify-content: center; padding: 20px; position: fixed; z-index: 80; }
+.run-input-dialog { background: var(--panel); border: 1px solid var(--border-bright); border-radius: 12px; box-shadow: 0 24px 80px rgba(0, 0, 0, .5); display: grid; gap: 13px; max-width: 620px; padding: 20px; width: 100%; }
+.run-input-heading { align-items: flex-start; display: flex; justify-content: space-between; }
+.run-input-heading h2 { font-size: 18px; margin: 4px 0 0; }
+.run-input-dialog > p { color: var(--muted); font-size: 12px; margin: 0; }
+.run-input-schema { background: #0a101b; border: 1px solid var(--border); border-radius: 7px; color: #9eb3ce; font-size: 10px; margin: 0; max-height: 150px; overflow: auto; padding: 10px; white-space: pre-wrap; }
+.run-input-dialog .form-field { gap: 6px; }
+.run-input-dialog .form-field textarea { min-height: 150px; }
 .form-error { color: var(--red); font-size: 10px; grid-column: 1 / -1; margin: 0; }
 .connection-grid { display: grid; gap: 13px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .deployment-filters { align-items: end; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-wrap: wrap; gap: 12px; margin: 14px 0; padding: 12px 14px; }
