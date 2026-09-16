@@ -208,6 +208,9 @@ export interface OperationEvidence {
   unitId: string;
   operation: string;
   idempotencyKey?: string;
+  actor?: string;
+  source?: string;
+  correlationId?: string;
   attempt: number;
   status: OperationEvidenceStatus;
   occurredAt: string;
