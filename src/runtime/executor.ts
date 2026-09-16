@@ -513,12 +513,13 @@ export class LocalWorkflowExecutor {
       node,
       inputs,
       signal,
-      execute: (executionSignal = signal) => this.executeNodeImplementation(runId, node, executionSignal, inputs),
+      execute: (executionSignal = signal) => this.executeNodeImplementation(runId, traceId, node, executionSignal, inputs),
     });
   }
 
   private async executeNodeImplementation(
     runId: string,
+    traceId: string,
     node: WorkflowNode,
     signal: AbortSignal,
     inputs: unknown[],
@@ -541,7 +542,7 @@ export class LocalWorkflowExecutor {
         result = await this.executeHttp(node, signal);
         break;
       case 'agentLoop':
-        result = await this.executeAgentLoop(runId, node, signal);
+        result = await this.executeAgentLoop(runId, traceId, node, signal);
         break;
       case 'transform':
       case 'output':
@@ -772,6 +773,7 @@ export class LocalWorkflowExecutor {
 
   private async executeAgentLoop(
     runId: string,
+    traceId: string,
     node: WorkflowNode,
     signal: AbortSignal,
   ): Promise<Record<string, unknown>> {
@@ -797,7 +799,7 @@ export class LocalWorkflowExecutor {
       const modelResult = provider === 'ollama'
         ? await this.ollama.chat({ agent, goal, signal })
         : provider === 'openai' && this.openai !== undefined
-          ? await this.openai.chat({ agent, goal, signal, traceId: runId })
+          ? await this.openai.chat({ agent, goal, signal, traceId })
         : undefined;
       if (modelResult !== undefined) {
         lastModelOutput = modelResult.content;

@@ -368,12 +368,17 @@ describe('LocalWorkflowExecutor', () => {
     const agent = workflow.agents[0];
     if (agent === undefined) throw new Error('Seed agent is missing.');
     agent.model = { provider: 'openai', model: 'gpt-5' };
-    const openai = { chat: async () => ({ content: 'hosted result', model: 'gpt-5', promptTokens: 3, completionTokens: 2, requestId: 'req-1' }) };
+    let receivedTraceId: string | undefined;
+    const openai = { chat: async (input: { traceId?: string }) => {
+      receivedTraceId = input.traceId;
+      return { content: 'hosted result', model: 'gpt-5', promptTokens: 3, completionTokens: 2, requestId: 'req-1' };
+    } };
     const hostedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, openai);
     const run = await hostedExecutor.start(workflow);
     await waitFor(async () =>
       (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded',
     );
+    expect(receivedTraceId).toBe(run.traceId);
     const recorded = await events.list(run.id);
     expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'openai', 'llm.request_id': 'req-1' }));
   });
