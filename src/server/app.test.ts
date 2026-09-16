@@ -243,6 +243,12 @@ describe('platform API', () => {
     expect(artifacts.json<{ items: unknown[] }>().items).toHaveLength(1);
   });
 
+  it('exposes deployments through the lean envelope projection', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/deployments?format=envelope', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ items: [] });
+  });
+
   it('pins a run to the selected immutable artifact version', async () => {
     const artifact = await app.inject({ method: 'POST', url: '/api/projects/project-local/compile', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' }, payload: {} });
     // The seeded project has no typed files; an absent artifact is rejected rather than silently followed.
