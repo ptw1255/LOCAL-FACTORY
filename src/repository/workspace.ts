@@ -59,7 +59,11 @@ export class RepositoryWorkspace {
     const target = await import('node:fs/promises').then(({ mkdtemp }) => mkdtemp(path.join(os.tmpdir(), `factory-run-${safeRunId}-`)));
     await cp(this.root, target, {
       recursive: true,
-      filter: (source) => !source.split(path.sep).some((segment) => segment === 'node_modules'),
+      filter: (source) => {
+        const segments = source.split(path.sep);
+        if (segments.some((segment) => segment === 'node_modules')) return false;
+        return !isSensitiveRunFile(path.basename(source));
+      },
     });
     return new RepositoryWorkspace(await realpath(target), true, true);
   }
@@ -326,4 +330,11 @@ export class RepositoryWorkspace {
     if (resolved !== this.root && !resolved.startsWith(`${this.root}${path.sep}`)) throw new Error('Repository path escapes the workspace boundary.');
     return resolved;
   }
+}
+
+function isSensitiveRunFile(name: string): boolean {
+  const normalized = name.toLowerCase();
+  if (normalized === '.env' || (normalized.startsWith('.env.') && !['.env.example', '.env.template'].includes(normalized))) return true;
+  if (/^(id_(rsa|dsa|ecdsa|ed25519)|credentials|service-account)/.test(normalized)) return true;
+  return ['.pem', '.key', '.p12', '.pfx', '.jks'].some((extension) => normalized.endsWith(extension));
 }

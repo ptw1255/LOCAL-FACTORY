@@ -103,6 +103,22 @@ describe('RepositoryWorkspace', () => {
     await expect(run.applyMutations([{ operation: 'create', path: 'linked/new.txt', content: 'nope' }])).rejects.toThrow(/symbolic link/);
   });
 
+  it('excludes local secret files from run clones while retaining safe templates', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-repo-secret-files-'));
+    await writeFile(path.join(root, '.env'), 'API_KEY=secret');
+    await writeFile(path.join(root, '.env.local'), 'API_KEY=secret');
+    await writeFile(path.join(root, '.env.example'), 'API_KEY=replace-me');
+    await writeFile(path.join(root, 'server.pem'), 'private key');
+    await writeFile(path.join(root, 'README.md'), 'safe');
+    const run = await (await RepositoryWorkspace.open(root)).cloneForRun('secret-filter');
+    await expect(run.read('.env')).rejects.toThrow();
+    await expect(run.read('.env.local')).rejects.toThrow();
+    await expect(run.read('server.pem')).rejects.toThrow();
+    await expect(run.read('.env.example')).resolves.toBe('API_KEY=replace-me');
+    await expect(run.read('README.md')).resolves.toBe('safe');
+    await run.dispose();
+  });
+
   it('creates a branch and commits only declared changed paths', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-git-'));
     await execFileAsync('git', ['init', '-b', 'main'], { cwd: root });
