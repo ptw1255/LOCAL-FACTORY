@@ -41,7 +41,9 @@ export class PlatformTemporalObservabilitySink implements TemporalObservabilityS
   public constructor(private readonly store: PlatformStore) {}
 
   public async record(lifecycle: TemporalActivityLifecycle): Promise<void> {
-    const identity = `${lifecycle.idempotencyKey}:${lifecycle.status}`;
+    // Keep duplicate delivery of one Temporal attempt idempotent while
+    // retaining separate evidence for later retry attempts.
+    const identity = `${lifecycle.idempotencyKey}:${lifecycle.status}:attempt:${lifecycle.attempt}`;
     const evidence: OperationEvidence = {
       id: deterministicUuid(`temporal:evidence:${identity}`),
       ...(lifecycle.tenantId === undefined ? {} : { tenantId: lifecycle.tenantId }),
