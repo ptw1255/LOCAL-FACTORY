@@ -1185,17 +1185,21 @@ function RunsView() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [observeTab, setObserveTab] = useState<ObserveTab>('runs');
+  const [retentionHours, setRetentionHours] = useState(48);
+  const [evidenceRetentionHours, setEvidenceRetentionHours] = useState<number | null>(null);
 
   const loadRuns = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     setError(null);
     try {
-      const response = await api.runs();
+      const [response, health] = await Promise.all([api.runs(), api.health()]);
       const sorted = [...response.items].sort(
         (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
       );
       setRuns(sorted);
       setSelectedRunId((current) => current ?? sorted[0]?.id ?? null);
+      setRetentionHours(health.observability.retentionHours);
+      setEvidenceRetentionHours(health.observability.evidenceRetentionHours);
     } catch (loadError) {
       setError(errorText(loadError));
     } finally {
@@ -1205,9 +1209,13 @@ function RunsView() {
 
   useEffect(() => {
     void loadRuns();
+  }, [loadRuns]);
+
+  useEffect(() => {
+    if (!runs.some((run) => ['queued', 'running', 'waiting'].includes(run.status))) return undefined;
     const timer = window.setInterval(() => void loadRuns(true), 5_000);
     return () => window.clearInterval(timer);
-  }, [loadRuns]);
+  }, [loadRuns, runs]);
 
   useEffect(() => {
     if (selectedRunId === null) {
@@ -1273,6 +1281,7 @@ function RunsView() {
       <AppHeader eyebrow="Observability" title="Observe">
         <button className="button secondary" onClick={() => void loadRuns()} type="button"><Icon name="refresh" /> Refresh</button>
       </AppHeader>
+      <section className="observe-retention" aria-label="Telemetry retention policy"><Icon name="clock" size={15} /><span><strong>Telemetry retention:</strong> {retentionHours} hours. Durable operation evidence is retained {evidenceRetentionHours === null ? 'independently of telemetry policy' : `for ${evidenceRetentionHours} hours`}.</span></section>
       <section className="summary-strip">
         <div><span>All runs</span><strong>{runs.length}</strong></div>
         <div><span>Active now</span><strong>{activeRuns}</strong></div>

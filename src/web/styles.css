@@ -285,6 +285,9 @@ h1, h2, h3, p { margin-top: 0; }
 .observe-tabs { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 4px; margin: 18px 0; }
 .observe-tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--subtle); cursor: pointer; font: inherit; font-size: 12px; padding: 8px 12px; }
 .observe-tabs button:hover, .observe-tabs button.active { border-bottom-color: var(--accent); color: var(--text); }
+.observe-retention { align-items: center; background: #101c2c; border: 1px solid #263b57; border-radius: 8px; color: var(--muted); display: flex; font-size: 10px; gap: 8px; margin: 14px 0; padding: 10px 12px; }
+.observe-retention svg { color: var(--blue); flex: 0 0 auto; }
+.observe-retention strong { color: var(--text); }
 .deployment-create-form { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 18px 0; padding: 16px; }
 .deployment-create-form label { color: var(--subtle); display: block; font-size: 11px; margin-bottom: 6px; }
 .deployment-create-form input, .deployment-create-form select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; padding: 8px 10px; width: 100%; }
