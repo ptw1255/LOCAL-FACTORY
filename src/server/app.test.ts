@@ -393,6 +393,7 @@ describe('platform API', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).not.toHaveProperty('secret');
+    expect(JSON.stringify(await store.read((state) => state.connections))).not.toContain('must-not-be-persisted');
   });
 
   it('preserves immutable workflow versions after a save', async () => {
