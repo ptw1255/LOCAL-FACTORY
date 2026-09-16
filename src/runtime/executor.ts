@@ -13,6 +13,7 @@ import type { PlatformStore } from '../storage/store.js';
 import { HttpOllamaClient, type OllamaClient } from './ollama.js';
 import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
 import type { RepositoryWorkspace } from '../repository/workspace.js';
+import { RepositoryMutationError } from '../repository/workspace.js';
 import { RepositoryCiError, type GitHubRepositoryClient } from '../repository/github.js';
 import type { OpenAIClient } from './openai.js';
 
@@ -401,7 +402,11 @@ export class LocalWorkflowExecutor {
             status: controller.signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && error.code === 'WORK_UNIT_TIMED_OUT' ? 'timed_out' : 'failed',
             idempotencyKey: `${unitEvidenceKey}:failed`,
             error: error instanceof Error ? error.message : 'Unknown unit failure.',
-            metadata: error instanceof RepositoryCiError ? this.operationMetadata(error.result) : undefined,
+            metadata: error instanceof RepositoryCiError
+              ? this.operationMetadata(error.result)
+              : error instanceof RepositoryMutationError
+                ? this.operationMetadata(error)
+                : undefined,
           });
           await this.events.emit(runId, 'unit.failed', `${nextNode.label} unit failed.`, {
             nodeId: nextNode.id,
@@ -914,6 +919,8 @@ export class LocalWorkflowExecutor {
     if (typeof value.state === 'string') metadata['pull_request.state'] = value.state;
     if (typeof value.ref === 'string') metadata['ci.ref'] = value.ref;
     if (typeof value.status === 'string') metadata['ci.status'] = value.status;
+    if (typeof value.transactionId === 'string') metadata['operation.transaction_id'] = value.transactionId;
+    if (typeof value.rolledBack === 'boolean') metadata['mutation.rolled_back'] = value.rolledBack;
     if (Array.isArray(value.required)) metadata['ci.required_count'] = value.required.length;
     if (Array.isArray(value.failures)) metadata['ci.failure_count'] = value.failures.length;
     if (Array.isArray(value.failures)) {

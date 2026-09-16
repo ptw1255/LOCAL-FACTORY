@@ -182,8 +182,17 @@ export class RepositoryWorkspace {
       for (const [relativePath, content] of originals) {
         const target = this.safePath(relativePath);
         try {
-          if (content === undefined) await unlink(target);
-          else { await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, content); }
+          if (content === undefined) {
+            try {
+              await unlink(target);
+            } catch (rollbackError) {
+              // An originally absent path is already in the desired state.
+              if ((rollbackError as NodeJS.ErrnoException).code !== 'ENOENT') throw rollbackError;
+            }
+          } else {
+            await mkdir(path.dirname(target), { recursive: true });
+            await writeFile(target, content);
+          }
         } catch { rollbackComplete = false; }
       }
       throw new RepositoryMutationError(error instanceof Error ? error.message : 'Repository mutation failed.', transactionId, rollbackComplete);
