@@ -825,7 +825,9 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       // Keep the migration/YAML serializer out of the initial IDE bundle; the
       // compatibility canvas path is loaded only when a canvas save occurs.
       const { renderCanvasResource } = await import('../declarative/migration');
-      await api.saveProjectFile(projectId, `canvas/${saved.id}.canvas.yaml`, renderCanvasResource(saved));
+      const canvasPath = `canvas/${saved.id}.canvas.yaml`;
+      const currentCanvas = await api.projectFile(projectId, canvasPath).catch(() => undefined);
+      await api.saveProjectFile(projectId, canvasPath, renderCanvasResource(saved), currentCanvas?.sha256);
       setWorkflow(saved);
       setYamlSource((await api.declarativeYaml(projectId)).trim());
       setYamlDirty(false);
