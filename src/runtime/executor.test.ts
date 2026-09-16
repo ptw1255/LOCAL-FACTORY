@@ -116,6 +116,22 @@ describe('LocalWorkflowExecutor', () => {
     expect(approval).toEqual(expect.objectContaining({ decision: 'approved', bindingHash: expect.stringMatching(/^[a-f0-9]{64}$/) }));
   });
 
+  it('rejects approval after the protected operation changes', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const prepare = workflow.nodes.find((node) => node.id === 'prepare');
+    if (prepare === undefined) throw new Error('Seed prepare node is missing.');
+    prepare.config = { value: 'original', requiresApproval: true };
+    const run = await executor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'waiting');
+    await store.mutate((state) => {
+      const current = state.runs.find((candidate) => candidate.id === run.id);
+      const node = current?.workflowDefinition.nodes.find((candidate) => candidate.id === 'prepare');
+      if (node !== undefined) node.config.value = 'changed-after-review';
+    });
+    await expect(executor.approve(run.id)).rejects.toThrow('operation changed');
+    await executor.cancel(run.id);
+  });
+
   it('records denial as a terminal approval decision', async () => {
     const workflow = structuredClone(seedWorkflow);
     const output = workflow.nodes.find((node) => node.id === 'output');
