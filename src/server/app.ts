@@ -28,6 +28,7 @@ import { defaultFactoryManifest } from '../factory/manifest.js';
 import { calculateFactoryMetrics } from '../factory/metrics.js';
 import { EventService } from '../observability/event-service.js';
 import { compileResourceFiles } from '../declarative/resources.js';
+import { planResourceMigration } from '../declarative/migration.js';
 import { computeArtifactId, diffArtifacts } from '../declarative/artifact.js';
 import { parseProjectYaml, stringifyProjectYaml } from '../declarative/yaml.js';
 import { CompositeTelemetryExporter, OtlpHttpExporter } from '../observability/otlp-exporter.js';
@@ -694,6 +695,80 @@ export async function createApp(
         return artifact;
       } catch (error) {
         return reply.status(422).send({ message: errorMessage(error), diagnostics: errorDiagnostics(error) });
+      }
+    },
+  );
+
+  app.post<{ Params: { projectId: string }; Body: unknown }>(
+    '/api/projects/:projectId/migrate',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      const source = await store.read((state) => {
+        const project = state.projects.find((candidate) => candidate.id === request.params.projectId && candidate.tenantId === scope.tenantId);
+        if (project === undefined) return undefined;
+        return { project, workflows: state.workflows.filter((workflow) => workflow.projectId === project.id && workflow.tenantId === scope.tenantId) };
+      });
+      if (source === undefined) return reply.status(404).send({ message: 'Project not found.' });
+      const plan = planResourceMigration(source.project, source.workflows);
+      const body = (request.body ?? {}) as { dryRun?: unknown };
+      if (body.dryRun !== false) return { dryRun: true, plan };
+      const existing = (await workspaceListing(scope)).files;
+      const current = new Map(existing.map((file) => [file.path, file]));
+      const changed = plan.files.filter((candidate) => current.get(candidate.path)?.content !== candidate.source);
+      const backup: Array<{ path: string; trashId?: string }> = [];
+      try {
+        if (projectWorkspace !== undefined) {
+          for (const candidate of changed) {
+            const prior = current.get(candidate.path);
+            if (prior !== undefined) {
+              const removed = await projectWorkspace.remove(scope, candidate.path);
+              if (removed !== undefined) backup.push({ path: candidate.path, trashId: removed.trashId });
+            }
+            const saved = await projectWorkspace.save(scope, candidate.path, candidate.source);
+            if (saved.file === undefined) throw new Error(`Migration could not write ${candidate.path}.`);
+            await emitWorkspaceFileEvent(scope, prior === undefined ? 'created' : 'updated', saved.file.path, saved.file.sha256);
+          }
+        } else {
+          const now = new Date().toISOString();
+          const records = changed.map((candidate): ProjectFileRecord => ({
+            tenantId: scope.tenantId,
+            projectId: scope.projectId,
+            path: candidate.path,
+            content: candidate.source,
+            sha256: createHash('sha256').update(candidate.source).digest('hex'),
+            updatedAt: now,
+          }));
+          const backups = changed.flatMap((candidate) => {
+            const prior = current.get(candidate.path);
+            return prior === undefined ? [] : [{ ...prior, trashId: `trash-${randomUUID()}`, deletedAt: now } satisfies DeletedProjectFileRecord];
+          });
+          await store.mutate((state) => {
+            state.deletedFiles.unshift(...backups);
+            for (const record of records) {
+              const index = state.files.findIndex((file) => file.tenantId === scope.tenantId && file.projectId === scope.projectId && file.path === record.path);
+              if (index < 0) state.files.push(record);
+              else state.files[index] = record;
+            }
+          });
+          backup.push(...backups.map((item) => ({ path: item.path, trashId: item.trashId })));
+          for (const record of records) await emitWorkspaceFileEvent(scope, current.has(record.path) ? 'updated' : 'created', record.path, record.sha256);
+        }
+        return { dryRun: false, migrated: true, changedPaths: changed.map((candidate) => candidate.path), backup, plan };
+      } catch (error) {
+        if (projectWorkspace !== undefined) {
+          // Roll back changed generated files before restoring their trash
+          // entries so a partial migration never replaces the usable source.
+          for (const candidate of [...changed].reverse()) {
+            const currentFile = await projectWorkspace.read(scope, candidate.path).catch(() => undefined);
+            if (currentFile !== undefined && currentFile.content !== current.get(candidate.path)?.content) {
+              await projectWorkspace.remove(scope, candidate.path).catch(() => undefined);
+            }
+          }
+          for (const item of [...backup].reverse()) {
+            if (item.trashId !== undefined) await projectWorkspace.restore(scope, item.trashId).catch(() => undefined);
+          }
+        }
+        return reply.status(422).send({ message: `Migration failed: ${errorMessage(error)}`, plan, backup });
       }
     },
   );

@@ -253,6 +253,22 @@ describe('platform API', () => {
     expect(diff.json<{ changedSources: unknown[]; changedWorkflows: unknown[] }>().changedWorkflows).toEqual([]);
   });
 
+  it('previews and idempotently migrates aggregate workflow records into resource files', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const preview = await app.inject({ method: 'POST', url: '/api/projects/project-local/migrate', headers, payload: {} });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json<{ dryRun: boolean; plan: { files: Array<{ path: string }> } }>().dryRun).toBe(true);
+    expect(preview.json<{ plan: { files: Array<{ path: string }> } }>().plan.files.map((file) => file.path)).toContain('factory.yaml');
+    const migrated = await app.inject({ method: 'POST', url: '/api/projects/project-local/migrate', headers, payload: { dryRun: false } });
+    expect(migrated.statusCode).toBe(200);
+    expect(migrated.json<{ migrated: boolean; changedPaths: string[] }>().migrated).toBe(true);
+    const again = await app.inject({ method: 'POST', url: '/api/projects/project-local/migrate', headers, payload: { dryRun: false } });
+    expect(again.statusCode).toBe(200);
+    expect(again.json<{ changedPaths: string[] }>().changedPaths).toEqual([]);
+    const listing = await app.inject({ method: 'GET', url: '/api/projects/project-local/files', headers });
+    expect(listing.json<{ items: Array<{ path: string }> }>().items.some((file) => file.path === 'factory.yaml')).toBe(true);
+  });
+
   it('rejects stale file writes with optimistic hash concurrency', async () => {
     const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
     const created = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'concurrent.yaml', content: 'one' } });
