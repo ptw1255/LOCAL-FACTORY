@@ -1226,8 +1226,16 @@ function OperationalTree({
     setBusy(true);
     setError(null);
     try {
-      const response = await api.importDeclarativeYaml(projectId, source);
-      onSourceImported(response.workflows, source);
+      const selectedFile = files.find((file) => file.path === selectedPath);
+      const isResourceFile = selectedPath === 'factory.yaml' || selectedPath.endsWith('.workflow.yaml') || selectedPath.endsWith('.agent.yaml') || selectedPath.endsWith('.unit.yaml');
+      if (isResourceFile) {
+        await api.saveProjectFile(projectId, selectedPath, source, selectedFile?.sha256);
+        const compiled = await api.compileProject(projectId);
+        onSourceImported(compiled.workflows, source);
+      } else {
+        const response = await api.importDeclarativeYaml(projectId, source);
+        onSourceImported(response.workflows, source);
+      }
       setProblems([]);
     } catch (applyError) {
       setError(errorText(applyError));

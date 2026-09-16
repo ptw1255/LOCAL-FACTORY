@@ -440,7 +440,7 @@ export async function createApp(
     '/api/projects/:projectId/files',
     async (request, reply) => {
       const scope = scopeFromRequest(request);
-      const body = request.body as { path?: unknown; content?: unknown };
+      const body = request.body as { path?: unknown; content?: unknown; expectedSha256?: unknown };
       if (typeof body?.path !== 'string' || typeof body.content !== 'string' || body.path.trim() === '' || body.path.includes('..')) {
         return reply.status(422).send({ message: 'File path and text content are required; path traversal is not allowed.' });
       }
@@ -454,10 +454,19 @@ export async function createApp(
         sha256: createHash('sha256').update(body.content).digest('hex'),
         updatedAt: new Date().toISOString(),
       };
-      await store.mutate((state) => {
+      const saved = await store.mutate((state) => {
         const index = state.files.findIndex((candidate) => candidate.projectId === file.projectId && candidate.tenantId === file.tenantId && candidate.path === file.path);
-        if (index < 0) state.files.push(file); else state.files[index] = file;
+        if (index < 0) {
+          state.files.push(file);
+          return true;
+        }
+        const current = state.files[index];
+        const expectedSha256 = typeof body.expectedSha256 === 'string' ? body.expectedSha256 : typeof request.headers['if-match'] === 'string' ? request.headers['if-match'].replace(/^\"|\"$/g, '') : undefined;
+        if (expectedSha256 !== undefined && current?.sha256 !== expectedSha256) return false;
+        state.files[index] = file;
+        return true;
       });
+      if (!saved) return reply.status(409).send({ message: 'File changed since it was loaded; refresh before saving.' });
       return file;
     },
   );
