@@ -27,6 +27,7 @@ import { defaultFactoryManifest } from '../factory/manifest.js';
 import { calculateFactoryMetrics } from '../factory/metrics.js';
 import { EventService } from '../observability/event-service.js';
 import { compileResourceFiles } from '../declarative/resources.js';
+import { computeArtifactId } from '../declarative/artifact.js';
 import { parseProjectYaml, stringifyProjectYaml } from '../declarative/yaml.js';
 import { CompositeTelemetryExporter, OtlpHttpExporter } from '../observability/otlp-exporter.js';
 import { LocalWorkflowExecutor } from '../runtime/executor.js';
@@ -504,8 +505,8 @@ export async function createApp(
       try {
         const compiled = compileResourceFiles(files.map((file) => ({ path: file.path, source: file.content })), { tenantId: scope.tenantId, projectId: request.params.projectId });
         const sources = files.map((file) => ({ path: file.path, sha256: file.sha256 }));
-        const digest = createHash('sha256').update(JSON.stringify({ environment, sources, workflows: compiled.workflows })).digest('hex');
-        const artifact: ArtifactRecord = { tenantId: scope.tenantId, projectId: request.params.projectId, id: `sha256:${digest}`, environment, compilerVersion: '0.1.0', sources, workflows: compiled.workflows, createdAt: new Date().toISOString() };
+        const compilerVersion = '0.1.0';
+        const artifact: ArtifactRecord = { tenantId: scope.tenantId, projectId: request.params.projectId, id: computeArtifactId({ environment, compilerVersion, sources, workflows: compiled.workflows }), environment, compilerVersion, sources, workflows: compiled.workflows, createdAt: new Date().toISOString() };
         await store.mutate((state) => {
           if (!state.artifacts.some((candidate) => candidate.id === artifact.id && candidate.projectId === artifact.projectId && candidate.tenantId === artifact.tenantId)) state.artifacts.push(artifact);
         });
