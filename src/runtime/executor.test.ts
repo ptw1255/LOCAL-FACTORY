@@ -215,6 +215,35 @@ describe('LocalWorkflowExecutor', () => {
     await expect(repository.read('.factory-run-marker')).rejects.toThrow();
   });
 
+  it('rejects repository commits when approved patch content drifts', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'mutate', type: 'repositoryMutation', label: 'Approved edit', position: { x: 180, y: 0 }, config: { capabilities: ['repository.write'], operations: [{ operation: 'replace', path: 'README.md', content: 'approved' }] }, unit: defaultWorkUnit('repositoryMutation') },
+      { id: 'patch', type: 'repositoryPatch', label: 'Capture patch', position: { x: 360, y: 0 }, config: {}, unit: defaultWorkUnit('repositoryPatch') },
+      { id: 'drift', type: 'repositoryMutation', label: 'Unapproved edit', position: { x: 540, y: 0 }, config: { capabilities: ['repository.write'], operations: [{ operation: 'replace', path: 'README.md', content: 'drifted' }] }, unit: defaultWorkUnit('repositoryMutation') },
+      { id: 'commit', type: 'repositoryCommit', label: 'Commit', position: { x: 720, y: 0 }, config: { message: 'Commit approved patch', paths: ['README.md'], requirePatchArtifact: true }, unit: defaultWorkUnit('repositoryCommit') },
+    ];
+    workflow.edges = workflow.nodes.slice(0, -1).map((node, index) => ({ id: `${node.id}-${workflow.nodes[index + 1]?.id}`, source: node.id, target: workflow.nodes[index + 1]?.id ?? node.id }));
+    workflow.edges.push({ id: 'patch-commit', source: 'patch', target: 'commit' });
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-commit-drift-'));
+    const { execFile } = await import('node:child_process');
+    const exec = (args: string[]) => new Promise<void>((resolve, reject) => execFile('git', args, { cwd: root }, (error) => error === null ? resolve() : reject(error)));
+    await exec(['init', '-b', 'main']);
+    await exec(['config', 'user.email', 'factory@example.test']);
+    await exec(['config', 'user.name', 'Factory Test']);
+    await writeFile(path.join(root, 'README.md'), 'source');
+    await exec(['add', 'README.md']);
+    await exec(['commit', '-m', 'initial']);
+    const source = await (await import('../repository/workspace.js')).RepositoryWorkspace.open(root);
+    const isolatedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, source);
+    const run = await isolatedExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    const failed = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id));
+    expect(failed?.error).toContain('exactly one unambiguous upstream patch artifact');
+  });
+
   it('fails closed when repository mutation capability is not declared', async () => {
     const workflow = structuredClone(seedWorkflow);
     const prepare = workflow.nodes.find((node) => node.id === 'prepare');

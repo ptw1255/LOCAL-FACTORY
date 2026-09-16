@@ -72,6 +72,7 @@ describe('RepositoryWorkspace', () => {
     expect(transaction.results).toHaveLength(1);
     expect(transaction.patch.id).toMatch(/^sha256:/);
     expect(transaction.patch.changedPaths).toContain('README.md');
+    expect(transaction.patch.files).toEqual([{ path: 'README.md', sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }]);
     expect(transaction.rolledBack).toBe(false);
   });
 
