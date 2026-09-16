@@ -52,6 +52,7 @@ import type {
 const TENANT_STORAGE_KEY = 'factory.tenantId';
 const PROJECT_STORAGE_KEY = 'factory.projectId';
 const STUDIO_MODE_STORAGE_PREFIX = 'factory.studioMode.';
+const BOTTOM_PANEL_STORAGE_PREFIX = 'factory.bottomPanel.';
 
 const nodeTypes = { workflow: WorkflowNodeCard };
 const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName }> = {
@@ -72,6 +73,15 @@ function readView(): ViewId {
 function readStudioMode(projectId: string): 'files' | 'tree' | 'canvas' {
   const value = window.localStorage.getItem(`${STUDIO_MODE_STORAGE_PREFIX}${projectId}`);
   return value === 'tree' || value === 'canvas' ? value : 'files';
+}
+
+function readBottomPanelState(projectId: string): { open: boolean; tab: 'problems' | 'output' } {
+  const value = window.localStorage.getItem(`${BOTTOM_PANEL_STORAGE_PREFIX}${projectId}`);
+  if (value === null) return { open: true, tab: 'problems' };
+  try {
+    const parsed = JSON.parse(value) as { open?: unknown; tab?: unknown };
+    return { open: parsed.open !== false, tab: parsed.tab === 'output' ? 'output' : 'problems' };
+  } catch { return { open: true, tab: 'problems' }; }
 }
 
 function formatDate(value?: string): string {
@@ -1042,6 +1052,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         dirty={yamlDirty}
         onDirtyChange={setYamlDirty}
         onCanvas={() => setStudioMode('canvas')}
+        onObserve={() => onNavigate('observe')}
         onSourceChange={(value) => { setYamlSource(value); setYamlDirty(true); }}
         onSourceLoaded={(value) => { setYamlSource(value); setYamlDirty(false); }}
         onSourceImported={(nextWorkflows, source) => {
@@ -1072,6 +1083,7 @@ function OperationalTree({
   mode,
   onModeChange,
   onCanvas,
+  onObserve,
   projectId,
   dirty,
   onDirtyChange,
@@ -1084,6 +1096,7 @@ function OperationalTree({
   mode: 'files' | 'tree';
   onModeChange: (mode: 'files' | 'tree' | 'canvas') => void;
   onCanvas: () => void;
+  onObserve: () => void;
   projectId: string;
   dirty: boolean;
   onDirtyChange: (dirty: boolean) => void;
@@ -1098,6 +1111,15 @@ function OperationalTree({
   const [selectedPath, setSelectedPath] = useState('project.yaml');
   const [fileSearch, setFileSearch] = useState('');
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
+  const [bottomPanelState] = useState(() => readBottomPanelState(projectId));
+  const [bottomTab, setBottomTab] = useState<'problems' | 'output'>(bottomPanelState.tab);
+  const [bottomOpen, setBottomOpen] = useState(bottomPanelState.open);
+  const [recentRuns, setRecentRuns] = useState<RunRecord[]>([]);
+  const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
+
+  useEffect(() => {
+    window.localStorage.setItem(`${BOTTOM_PANEL_STORAGE_PREFIX}${projectId}`, JSON.stringify({ open: bottomOpen, tab: bottomTab }));
+  }, [bottomOpen, bottomTab, projectId]);
 
   useEffect(() => {
     void api.projectFiles(projectId).then((response) => {
@@ -1106,6 +1128,25 @@ function OperationalTree({
         setSelectedPath(response.items[0]?.path ?? 'project.yaml');
       }
     }).catch(() => setFiles([]));
+  }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadRunOutput = async (): Promise<void> => {
+      try {
+        const response = await api.runs();
+        if (cancelled) return;
+        const runs = response.items.filter((run) => run.projectId === projectId).slice(0, 5);
+        setRecentRuns(runs);
+        const latest = runs[0];
+        if (latest !== undefined) setRunEvents((await api.events(latest.id)).items.slice(-40));
+      } catch {
+        if (!cancelled) { setRecentRuns([]); setRunEvents([]); }
+      }
+    };
+    void loadRunOutput();
+    const interval = window.setInterval(() => void loadRunOutput(), 2_000);
+    return () => { cancelled = true; window.clearInterval(interval); };
   }, [projectId]);
 
   async function selectFile(file: ProjectFileRecord) {
@@ -1196,7 +1237,10 @@ function OperationalTree({
         <div className="ide-editor-heading"><div><span className="eyebrow">Declarative source</span><h2>Project definition</h2><p>Author the loop in YAML. Apply compiles it into the runtime model.</p></div><div className="ide-editor-actions"><span className={dirty ? 'ide-dirty' : 'ide-clean'}>{dirty ? 'Unsaved changes' : 'Synced'}</span><button className="button primary" disabled={!dirty || busy} onClick={() => void applyYaml()} type="button"><Icon name="save" size={14} /> {busy ? 'Applying…' : 'Apply YAML'}</button><button className="icon-button" onClick={onCanvas} title="Open canvas compatibility view" type="button"><Icon name="studio" size={15} /></button></div></div>
         <div className="yaml-editor-wrap"><Editor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => onSourceChange(value ?? '')} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} /></div>
         {error === null ? <small className="ide-hint">Review the compiled tree on the right, then apply the file when it is ready. Invalid definitions never replace the active runtime.</small> : <div className="ide-error"><Icon name="warning" size={14} /> {error}</div>}
-        <div className="ide-bottom-panel"><div className="ide-bottom-tabs"><strong>Problems</strong><span>Run Output</span><span className={error === null ? 'panel-count clean' : 'panel-count'}>{error === null ? 0 : 1}</span></div><div className="ide-bottom-content">{error === null ? <span>No problems detected in the current source.</span> : <span className="field-error">{error}</span>}</div></div>
+        <div className={`ide-bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`}>
+          <div className="ide-bottom-tabs"><button className={bottomTab === 'problems' ? 'active' : ''} onClick={() => { setBottomTab('problems'); setBottomOpen(true); }} type="button">Problems <span className={error === null ? 'panel-count clean' : 'panel-count'}>{error === null ? 0 : 1}</span></button><button className={bottomTab === 'output' ? 'active' : ''} onClick={() => { setBottomTab('output'); setBottomOpen(true); }} type="button">Run Output <span className="panel-count clean">{recentRuns.length}</span></button><button aria-label={bottomOpen ? 'Collapse bottom panel' : 'Expand bottom panel'} className="bottom-panel-toggle" onClick={() => setBottomOpen((value) => !value)} type="button">{bottomOpen ? '⌄' : '⌃'}</button></div>
+          {bottomOpen ? <div className="ide-bottom-content">{bottomTab === 'problems' ? (error === null ? <span>No problems detected in the current source.</span> : <button className="ide-problem" onClick={() => setBottomTab('problems')} type="button"><span className="field-error">{error}</span></button>) : <div className="ide-run-output">{recentRuns.length === 0 ? <span>No runs for this project yet.</span> : <>{recentRuns.slice(0, 1).map((run) => <div className="ide-run-summary" key={run.id}><StatusBadge status={run.status} /><span>{run.workflowName} · {formatDate(run.startedAt)}</span><button className="text-button" onClick={onObserve} type="button">Open Observe <Icon name="chevron" size={12} /></button></div>)}<ul>{runEvents.map((event) => <li key={event.id}><StatusBadge status={event.severityText ?? event.signal} /><span>{event.message}</span><time>{formatDate(event.timestamp)}</time></li>)}</ul></>}</div>}</div> : null}
+        </div>
       </section>
       <section className="operational-tree-panel ide-tree-panel">
         <div className="operational-heading"><div><span className="eyebrow">Operational tree</span><h2>{workflow.name}</h2><p>{workflow.description || 'Declarative workflow definition'}</p></div><span className="status-badge status-draft">v{workflow.version}</span></div>
