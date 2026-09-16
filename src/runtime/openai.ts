@@ -196,7 +196,7 @@ export class HttpOpenAIClient implements OpenAIClient {
       for (const record of records) {
         const data = record.split(/\r?\n/).find((line) => line.startsWith('data:'))?.slice(5).trim();
         if (data === undefined || data === '[DONE]') continue;
-        let event: { type?: unknown; delta?: unknown; item_id?: unknown; item?: { id?: unknown; type?: unknown; call_id?: unknown; name?: unknown; arguments?: unknown }; response?: { model?: unknown; status?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown } } };
+        let event: { type?: unknown; delta?: unknown; arguments?: unknown; item_id?: unknown; item?: { id?: unknown; type?: unknown; call_id?: unknown; name?: unknown; arguments?: unknown }; response?: { model?: unknown; status?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown } } };
         try { event = JSON.parse(data) as typeof event; } catch { continue; }
         if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') content += event.delta;
         if (event.type === 'response.refusal.delta') refused = true;
@@ -209,9 +209,9 @@ export class HttpOpenAIClient implements OpenAIClient {
           const tool = streamedTools.get(event.item_id);
           if (tool !== undefined) tool.arguments += event.delta;
         }
-        if (event.type === 'response.function_call_arguments.done' && typeof event.item_id === 'string' && typeof event.delta === 'string') {
+        if (event.type === 'response.function_call_arguments.done' && typeof event.item_id === 'string' && typeof event.arguments === 'string') {
           const tool = streamedTools.get(event.item_id);
-          if (tool !== undefined) tool.arguments = event.delta;
+          if (tool !== undefined) tool.arguments = event.arguments;
         }
         if (typeof event.response?.model === 'string') model = event.response.model;
         if (typeof event.response?.status === 'string') finishReason = event.response.status;

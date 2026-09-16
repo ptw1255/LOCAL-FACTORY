@@ -75,7 +75,7 @@ describe('HttpOpenAIClient', () => {
       start(controller) {
         controller.enqueue(encoder.encode('data: {"type":"response.output_item.added","item":{"id":"item_1","type":"function_call","call_id":"call_1","name":"repo.check"}}\n\n'));
         controller.enqueue(encoder.encode('data: {"type":"response.function_call_arguments.delta","item_id":"item_1","delta":"{\\"command\\":\\"npm "}\n\n'));
-        controller.enqueue(encoder.encode('data: {"type":"response.function_call_arguments.delta","item_id":"item_1","delta":"test\\"}"}\n\n'));
+        controller.enqueue(encoder.encode('data: {"type":"response.function_call_arguments.done","item_id":"item_1","arguments":"{\\"command\\":\\"npm test\\"}"}\n\n'));
         controller.enqueue(encoder.encode('data: {"type":"response.completed"}\n\n'));
         controller.close();
       },
