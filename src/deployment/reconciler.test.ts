@@ -151,4 +151,22 @@ describe('DeploymentReconciler', () => {
     expect(started).toMatchObject({ observedState: 'live', health: 'healthy' });
     expect(calls).toBe(3);
   });
+
+  it('only rolls back to a previously observed healthy artifact', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const artifacts = await store.mutate((state) => {
+      const values = ['one', 'two', 'never-healthy'].map((suffix) => ({ id: `sha256:artifact-${suffix}`, tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() }));
+      state.artifacts.push(...values);
+      return values;
+    });
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const reconciler = new DeploymentReconciler(store);
+    const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'rollback-health', artifactId: artifacts[0]!.id, trigger: 'manual' });
+    await reconciler.action(deployment.id, scope, 'start');
+    await reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifacts[1]!.id });
+    const rolledBack = await reconciler.action(deployment.id, scope, 'rollback', { artifactId: artifacts[0]!.id });
+    expect(rolledBack.artifactId).toBe(artifacts[0]!.id);
+    expect(rolledBack.healthyArtifactIds).toEqual(expect.arrayContaining([artifacts[0]!.id, artifacts[1]!.id]));
+    await expect(reconciler.action(deployment.id, scope, 'rollback', { artifactId: artifacts[2]!.id })).rejects.toThrow('prior healthy artifact');
+  });
 });

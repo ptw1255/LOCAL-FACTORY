@@ -87,6 +87,7 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
   }
   for (const deployment of state.deployments) {
     deployment.triggerStatus ??= deployment.desiredState === 'running' ? 'active' : 'inactive';
+    deployment.healthyArtifactIds ??= [];
   }
   return state;
 }
