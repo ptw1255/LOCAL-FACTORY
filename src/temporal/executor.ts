@@ -128,8 +128,12 @@ export class TemporalWorkflowExecutor {
     const handle = this.handleFor(run);
     const node = run.workflowDefinition.nodes.find((candidate) => candidate.type === 'approval' && !run.completedNodeIds.includes(candidate.id));
     if (node === undefined) throw new Error('No approval node is waiting.');
+    if (run.approvedNodeIds.includes(node.id)) return run;
     await handle.signal('approve', node.id);
-    return this.updateRun(runId, (target) => { target.status = 'running'; target.approvedNodeIds.push(node.id); });
+    return this.updateRun(runId, (target) => {
+      target.status = 'running';
+      if (!target.approvedNodeIds.includes(node.id)) target.approvedNodeIds.push(node.id);
+    }, 'approval.received', 'Human approval received.');
   }
 
   public async cancel(runId: string): Promise<RunRecord> {

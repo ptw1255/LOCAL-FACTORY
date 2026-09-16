@@ -122,4 +122,28 @@ describe('TemporalWorkflowExecutor', () => {
     const terminalEvents = (await events.list(run.id)).filter((event) => ['run.cancelled', 'run.failed'].includes(event.type));
     expect(terminalEvents.map((event) => event.type)).toEqual(['run.failed']);
   });
+
+  it('records a correlated approval event and ignores repeated approval delivery', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-approve-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-approve');
+    const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-temporal-approve';
+    const approval = workflow.nodes.find((candidate) => candidate.id === 'prepare');
+    if (approval === undefined) throw new Error('Prepare node is missing.');
+    approval.type = 'approval';
+    approval.unit = { kind: 'human', version: 1, inputSchema: 'any', outputSchema: 'any', timeoutMs: 60_000, retryAttempts: 1, idempotencyKey: 'approval:v1' };
+    const run = await executor.start(workflow);
+
+    await executor.approve(run.id);
+    await executor.approve(run.id);
+
+    expect(handle.signal).toHaveBeenCalledOnce();
+    const approved = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id));
+    expect(approved?.approvedNodeIds).toEqual(['prepare']);
+    expect((await events.list(run.id)).filter((event) => event.type === 'approval.received')).toHaveLength(1);
+  });
 });
