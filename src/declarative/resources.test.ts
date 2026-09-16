@@ -16,4 +16,11 @@ describe('typed resource files', () => {
     expect(() => parseResourceFile({ path: 'agent.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: a\n  status: live\nspec: {}' })).toThrow(/runtime state/);
     expect(() => parseResourceFile({ path: 'agent.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: a\nspec:\n  apiKey: secret-value' })).toThrow(/secret reference/);
   });
+
+  it('anchors unknown work-unit diagnostics to the authored workflow file', () => {
+    expect(() => compileResourceFiles([
+      { path: 'factory.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: demo\n  name: Demo\nspec: {}' },
+      { path: 'workflows/review.workflow.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: review\n  name: Review\nspec:\n  trigger: manual\n  steps:\n    - id: invalid\n      type: code\n      unit:\n        kind: unsupported\n        version: 1\n        inputSchema: any\n        outputSchema: any\n        timeoutMs: 1000\n        retryAttempts: 1' },
+    ], { tenantId: 'tenant-local' })).toThrow(/workflows\/review\.workflow\.yaml:.*invalid/i);
+  });
 });

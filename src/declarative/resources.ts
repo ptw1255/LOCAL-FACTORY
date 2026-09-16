@@ -76,5 +76,16 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
     agents,
     workflows,
   };
-  return parseProjectYaml(JSON.stringify(source), scope);
+  try {
+    return parseProjectYaml(JSON.stringify(source), scope);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'resource compilation failed';
+    // Preserve the authored file as the diagnostic anchor while the aggregate
+    // compiler is still the compatibility path for legacy project documents.
+    const sourcePath = resources.find((resource) => resource.path.includes('.workflow.') || resource.path.endsWith('workflow.yaml'))?.path
+      ?? resources.find((resource) => resource.path.includes('.agent.') || resource.path.endsWith('agent.yaml'))?.path
+      ?? resources.find((resource) => parseResourceFile(resource).kind === 'Project')?.path
+      ?? 'project.yaml';
+    throw new Error(`${sourcePath}: ${message}`);
+  }
 }
