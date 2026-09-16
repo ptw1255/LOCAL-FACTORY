@@ -33,6 +33,7 @@ export class DeploymentReconciler {
         observedState: 'stopped',
         health: 'unknown',
         trigger: input.trigger,
+        triggerStatus: 'inactive',
         createdAt: now,
         updatedAt: now,
         history: [],
@@ -64,6 +65,7 @@ export class DeploymentReconciler {
         // container/cloud adapter can replace this section with an async reconcile loop.
         deployment.observedState = deployment.desiredState === 'running' ? 'live' : 'stopped';
         deployment.health = deployment.observedState === 'live' ? 'healthy' : 'unknown';
+        deployment.triggerStatus = deployment.desiredState === 'running' ? 'active' : 'inactive';
         deployment.updatedAt = now;
         const transition: DeploymentTransition = {
           id: randomUUID(), action, actor, occurredAt: now,
@@ -94,8 +96,23 @@ export class DeploymentReconciler {
       const now = new Date();
       this.acquireLease(deployment, now.toISOString());
       try {
-        if (deployment.desiredState === 'running' && deployment.observedState !== 'live') { deployment.observedState = 'live'; deployment.health = 'healthy'; }
-        if (deployment.desiredState === 'stopped' && deployment.observedState !== 'stopped') { deployment.observedState = 'stopped'; deployment.health = 'unknown'; }
+        const previousObserved = deployment.observedState;
+        const targetObserved = deployment.desiredState === 'running' ? 'live' : 'stopped';
+        if (previousObserved !== targetObserved) {
+          deployment.observedState = targetObserved;
+          deployment.health = targetObserved === 'live' ? 'healthy' : 'unknown';
+          deployment.history.unshift({
+            id: randomUUID(),
+            action: targetObserved === 'live' ? 'start' : 'stop',
+            actor: 'reconciler',
+            occurredAt: now.toISOString(),
+            fromArtifactId: deployment.artifactId,
+            toArtifactId: deployment.artifactId,
+            outcome: 'succeeded',
+            reason: 'Desired state reconciled.',
+          });
+        }
+        deployment.triggerStatus = deployment.desiredState === 'running' ? 'active' : 'inactive';
         deployment.updatedAt = now.toISOString();
       } finally {
         delete deployment.lease;

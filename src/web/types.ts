@@ -219,6 +219,7 @@ export interface DeploymentRecord {
   observedState: 'unknown' | 'starting' | 'live' | 'stopping' | 'degraded' | 'failed' | 'stopped';
   health: 'healthy' | 'degraded' | 'unknown';
   trigger: string;
+  triggerStatus: 'active' | 'inactive' | 'unknown';
   createdAt: string;
   updatedAt: string;
   lease?: { ownerId: string; expiresAt: string };
