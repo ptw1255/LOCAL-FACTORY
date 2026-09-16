@@ -18,6 +18,18 @@ import type { OpenAIClient } from './openai.js';
 const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
 
+export interface AgentToolExecutionContext {
+  runId: string;
+  nodeId: string;
+  agentId: string;
+  callId: string;
+  name: string;
+  arguments: unknown;
+  signal: AbortSignal;
+}
+
+export type AgentToolExecutor = (context: AgentToolExecutionContext) => Promise<unknown> | unknown;
+
 function sleep(durationMs: number, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -52,6 +64,7 @@ export class LocalWorkflowExecutor {
     private readonly repositoryWorkspace?: RepositoryWorkspace,
     private readonly githubRepository?: GitHubRepositoryClient,
     private readonly openai?: OpenAIClient,
+    private readonly toolExecutors: ReadonlyMap<string, AgentToolExecutor> = new Map(),
   ) {}
 
   public async recover(): Promise<number> {
@@ -578,7 +591,57 @@ export class LocalWorkflowExecutor {
         : provider === 'openai' && this.openai !== undefined
           ? await this.openai.chat({ agent, goal, signal, traceId: runId })
         : undefined;
-      if (modelResult !== undefined) lastModelOutput = modelResult.content;
+      if (modelResult !== undefined) {
+        lastModelOutput = modelResult.content;
+        const toolCalls = 'toolCalls' in modelResult && Array.isArray(modelResult.toolCalls)
+          ? modelResult.toolCalls as Array<{ callId: string; name: string; arguments: string }>
+          : [];
+        if (toolCalls.length > 0) {
+          for (const call of toolCalls) {
+            const argumentsHash = createHash('sha256').update(call.arguments).digest('hex');
+            await this.events.emit(runId, 'agent.tool.requested', `Agent requested tool ${call.name}.`, {
+              nodeId: node.id,
+              signal: 'trace',
+              spanKind: 'tool',
+              attributes: {
+                'openinference.span.kind': 'TOOL',
+                'tool.name': call.name,
+                'tool.call_id': call.callId,
+                'tool.arguments_hash': argumentsHash,
+              },
+            });
+            if (!agent.tools.includes(call.name)) {
+              await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', status: 'failed', error: `Agent requested undeclared tool "${call.name}".` });
+              await this.events.emit(runId, 'agent.tool.rejected', `Agent requested undeclared tool ${call.name}.`, {
+                nodeId: node.id,
+                severityText: 'ERROR',
+                attributes: { 'tool.name': call.name, 'tool.call_id': call.callId, 'tool.arguments_hash': argumentsHash },
+              });
+              throw new Error(`Agent "${agent.id}" requested undeclared tool "${call.name}".`);
+            }
+            const executor = this.toolExecutors.get(call.name);
+            if (executor === undefined) {
+              await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', status: 'failed', error: `No executor registered for declared tool "${call.name}".` });
+              throw new Error(`No executor registered for declared tool "${call.name}".`);
+            }
+            let parsedArguments: unknown;
+            try {
+              parsedArguments = JSON.parse(call.arguments) as unknown;
+            } catch {
+              throw new Error(`Tool "${call.name}" returned invalid JSON arguments.`);
+            }
+            await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', status: 'started', input: { name: call.name, callId: call.callId, argumentsHash } });
+            const toolResult = await executor({ runId, nodeId: node.id, agentId: agent.id, callId: call.callId, name: call.name, arguments: parsedArguments, signal });
+            await this.events.recordEvidence({ runId, unitId: node.id, operation: 'agent.tool', status: 'succeeded', output: { name: call.name, callId: call.callId, resultHash: createHash('sha256').update(JSON.stringify(toolResult) ?? 'undefined').digest('hex') } });
+            await this.events.emit(runId, 'agent.tool.completed', `Agent tool ${call.name} completed.`, {
+              nodeId: node.id,
+              signal: 'trace',
+              spanKind: 'tool',
+              attributes: { 'openinference.span.kind': 'TOOL', 'tool.name': call.name, 'tool.call_id': call.callId },
+            });
+          }
+        }
+      }
       await this.events.emit(
         runId,
         'agent.iteration',

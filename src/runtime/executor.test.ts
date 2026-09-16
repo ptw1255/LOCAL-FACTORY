@@ -166,6 +166,44 @@ describe('LocalWorkflowExecutor', () => {
     expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'openai', 'llm.request_id': 'req-1' }));
   });
 
+  it('executes only declared and registered agent tools with correlated lifecycle evidence', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agent === undefined || agentNode === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider: 'openai', model: 'gpt-5' };
+    agent.tools = ['repo.check'];
+    agentNode.config.maxIterations = 1;
+    const openai = { chat: async () => ({ content: '', model: 'gpt-5', toolCalls: [{ callId: 'call-1', name: 'repo.check', arguments: '{"command":"npm test"}' }] }) };
+    const toolExecutors = new Map([['repo.check', async (context: { arguments: unknown; signal: AbortSignal }) => {
+      context.signal.throwIfAborted();
+      return { passed: true };
+    }]]);
+    const toolExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, openai, toolExecutors);
+    const run = await toolExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
+    const recorded = await events.list(run.id);
+    expect(recorded.some((event) => event.type === 'agent.tool.requested')).toBe(true);
+    expect(recorded.some((event) => event.type === 'agent.tool.completed')).toBe(true);
+    expect((await events.listEvidence(run.id)).filter((evidence) => evidence.operation === 'agent.tool' && evidence.status === 'succeeded')).toHaveLength(1);
+  });
+
+  it('fails closed when an agent requests an undeclared tool', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agent === undefined || agentNode === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider: 'openai', model: 'gpt-5' };
+    agentNode.config.maxIterations = 1;
+    const openai = { chat: async () => ({ content: '', model: 'gpt-5', toolCalls: [{ callId: 'call-1', name: 'repo.write', arguments: '{}' }] }) };
+    const toolExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, openai, new Map());
+    const run = await toolExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    const recorded = await events.list(run.id);
+    expect(recorded.some((event) => event.type === 'agent.tool.rejected')).toBe(true);
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.error).toContain('undeclared tool');
+  });
+
   it('does not execute nodes unreachable from the declared trigger', async () => {
     const workflow = structuredClone(seedWorkflow);
     workflow.nodes.push({
