@@ -16,6 +16,8 @@ describe('GitHubRepositoryClient', () => {
     const client = new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher });
     const result = await client.waitForChecks({ ref: 'abc123', required: ['test'], intervalMs: 10, timeoutMs: 200 });
     expect(result.status).toBe('success');
+    expect(result.required).toEqual(['test']);
+    expect(result.failures).toEqual([]);
     expect(result.checks[0]).toMatchObject({ name: 'test', conclusion: 'success' });
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
@@ -25,5 +27,11 @@ describe('GitHubRepositoryClient', () => {
     const result = await new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher }).createOrGetPullRequest({ title: 'What', body: 'Why', head: 'feature', base: 'main' });
     expect(result.number).toBe(7);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns bounded failure summaries for required checks', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ check_runs: [{ name: 'lint', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/example/repo/actions/runs/2', output: { text: 'line 1 failed' } }] }), { status: 200 }));
+    const result = await new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher }).waitForChecks({ ref: 'def456', required: ['lint'], intervalMs: 10, timeoutMs: 200 });
+    expect(result).toMatchObject({ status: 'failure', required: ['lint'], failures: [{ name: 'lint', conclusion: 'failure', url: 'https://github.com/example/repo/actions/runs/2', summary: 'line 1 failed' }] });
   });
 });
