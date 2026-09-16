@@ -43,3 +43,30 @@ export function artifactDigestInput(artifact: Pick<ArtifactRecord, 'environment'
     workflows: artifact.workflows,
   };
 }
+
+export interface ArtifactDiff {
+  fromArtifactId: string;
+  toArtifactId: string;
+  changedSources: Array<{ path: string; fromSha256?: string; toSha256?: string }>;
+  addedWorkflows: string[];
+  removedWorkflows: string[];
+  changedWorkflows: string[];
+}
+
+/** Compare two immutable artifacts without exposing runtime timestamps. */
+export function diffArtifacts(from: Pick<ArtifactRecord, 'id' | 'sources' | 'workflows'>, to: Pick<ArtifactRecord, 'id' | 'sources' | 'workflows'>): ArtifactDiff {
+  const fromSources = new Map(from.sources.map((source) => [source.path, source.sha256]));
+  const toSources = new Map(to.sources.map((source) => [source.path, source.sha256]));
+  const changedSources = [...new Set([...fromSources.keys(), ...toSources.keys()])]
+    .sort()
+    .filter((path) => fromSources.get(path) !== toSources.get(path))
+    .map((path) => ({ path, ...(fromSources.get(path) === undefined ? {} : { fromSha256: fromSources.get(path) }), ...(toSources.get(path) === undefined ? {} : { toSha256: toSources.get(path) }) }));
+  const fromWorkflows = new Map(from.workflows.map((workflow) => [workflow.id, workflow]));
+  const toWorkflows = new Map(to.workflows.map((workflow) => [workflow.id, workflow]));
+  const addedWorkflows = [...toWorkflows.keys()].filter((id) => !fromWorkflows.has(id)).sort();
+  const removedWorkflows = [...fromWorkflows.keys()].filter((id) => !toWorkflows.has(id)).sort();
+  const changedWorkflows = [...toWorkflows.keys()]
+    .filter((id) => fromWorkflows.has(id) && JSON.stringify(canonicalize(fromWorkflows.get(id))) !== JSON.stringify(canonicalize(toWorkflows.get(id))))
+    .sort();
+  return { fromArtifactId: from.id, toArtifactId: to.id, changedSources, addedWorkflows, removedWorkflows, changedWorkflows };
+}
