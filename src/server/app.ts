@@ -699,6 +699,14 @@ export async function createApp(
     };
   });
 
+  app.get<{ Querystring: { runId?: string } }>('/api/approvals', async (request) => {
+    const scope = scopeFromRequest(request);
+    return {
+      items: await store.read((state) => state.approvals.filter((approval) =>
+        (request.query.runId === undefined || approval.runId === request.query.runId) && inScope(approval, scope))),
+    };
+  });
+
   app.get<{
     Querystring: { runId?: string; signal?: 'log' | 'trace' | 'metric' };
   }>('/api/telemetry', async (request) => {

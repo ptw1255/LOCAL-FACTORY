@@ -30,6 +30,7 @@ import { defaultWorkUnit } from '../domain/catalog';
 import type {
   AgentDefinition,
   AgentProposal,
+  ApprovalRecord,
   ArtifactRecord,
   ConnectionRecord,
   FactoryMetrics,
@@ -1175,6 +1176,7 @@ function RunsView() {
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [evidence, setEvidence] = useState<OperationEvidence[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -1212,12 +1214,13 @@ function RunsView() {
       setSelectedRun(null);
       setEvents([]);
       setEvidence([]);
+      setApprovals([]);
       return;
     }
     sessionStorage.setItem('selectedRunId', selectedRunId);
     setDetailLoading(true);
-    Promise.all([api.run(selectedRunId), api.events(selectedRunId), api.evidence(selectedRunId)])
-      .then(([run, eventResponse, evidenceResponse]) => {
+    Promise.all([api.run(selectedRunId), api.events(selectedRunId), api.evidence(selectedRunId), api.approvals(selectedRunId)])
+      .then(([run, eventResponse, evidenceResponse, approvalResponse]) => {
         setSelectedRun(run);
         setEvents(
           [...eventResponse.items].sort(
@@ -1225,6 +1228,7 @@ function RunsView() {
           ),
         );
         setEvidence([...evidenceResponse.items].sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()));
+        setApprovals(approvalResponse.items);
       })
       .catch((detailError: unknown) => setError(errorText(detailError)))
       .finally(() => setDetailLoading(false));
@@ -1335,6 +1339,7 @@ function RunsView() {
                 </header>
                 {actionError !== null ? <div className="run-error" role="alert"><Icon name="warning" /><div><strong>Action failed</strong><span>{actionError}</span></div></div> : null}
                 {selectedRun.error !== undefined ? <div className="run-error" role="alert"><Icon name="warning" /><div><strong>Run failed</strong><span>{selectedRun.error}</span></div></div> : null}
+                {approvals.length === 0 ? null : <section className="approval-summary"><div className="timeline-heading"><div><span className="eyebrow">Authorization</span><h3>Approval records</h3></div><span className="count-pill">{approvals.length}</span></div>{approvals.map((approval) => <div className="approval-record" key={approval.id}><strong>{approval.operation} · {approval.nodeId}</strong><StatusBadge status={approval.decision} /><span>Requested {formatDate(approval.requestedAt)} · expires {formatDate(approval.expiresAt)}</span><code>Binding {approval.bindingHash}</code>{approval.reason === undefined ? null : <small>{approval.reason}</small>}</div>)}</section>}
                 <nav aria-label="Observe detail views" className="observe-tabs">
                   {(['runs', 'logs', 'traces', 'metrics'] as const).map((tab) => (
                     <button aria-selected={observeTab === tab} className={observeTab === tab ? 'active' : ''} key={tab} onClick={() => setObserveTab(tab)} role="tab" type="button">
