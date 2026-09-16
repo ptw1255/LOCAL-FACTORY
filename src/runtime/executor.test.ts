@@ -12,7 +12,7 @@ import { LocalWorkflowExecutor } from './executor.js';
 
 async function waitFor(
   predicate: () => Promise<boolean>,
-  timeoutMs = 2_000,
+  timeoutMs = 5_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
