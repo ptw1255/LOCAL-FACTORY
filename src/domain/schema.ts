@@ -33,6 +33,16 @@ export const agentDefinitionSchema = z.object({
       digest: z.string().min(1).optional(),
       timeoutMs: z.number().int().positive().max(3_600_000).optional(),
     }).optional(),
+    routes: z.array(z.object({
+      provider: z.string().trim().min(1),
+      model: z.string().trim().min(1).optional(),
+      endpoint: z.url().optional(),
+      secretRef: z.string().trim().min(1).optional(),
+    })).max(8).optional(),
+    routing: z.object({
+      strategy: z.enum(['single', 'fallback']),
+      maxAttempts: z.number().int().positive().max(8).optional(),
+    }).optional(),
   }),
   inputSchema: configSchema,
   outputSchema: configSchema,

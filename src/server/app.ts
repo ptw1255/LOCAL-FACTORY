@@ -142,7 +142,11 @@ export async function createApp(
     : undefined);
   const openai = options.openaiClient ?? new OpenAISDKClient({ secretBroker });
   const executor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace, githubRepository, openai);
-  const ollamaAgents = await store.read((state) => state.workflows.flatMap((workflow) => workflow.agents));
+  const ollamaAgents = await store.read((state) => state.workflows.flatMap((workflow) => workflow.agents).flatMap((agent) => {
+    const routes = agent.model.routes ?? [];
+    const routeAgents = routes.map((route) => ({ ...agent, model: { ...agent.model, ...route } }));
+    return [agent, ...routeAgents];
+  }));
   if (ollamaAgents.some((agent) => agent.model.provider?.toLowerCase() === 'ollama' && agent.model.provisioning?.mode === 'pull-on-start')) {
     void ollama.provision(ollamaAgents).catch((error: unknown) => app.log.warn({ error }, 'Ollama model provisioning did not complete; execution will retry on demand.'));
   }

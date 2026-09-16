@@ -2,9 +2,15 @@ import type { AgentDefinition } from '../domain/types.js';
 
 export interface OllamaClient {
   ensureModel(input: { agent: AgentDefinition; signal: AbortSignal }): Promise<void>;
-  chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal }): Promise<{
-    content: string; promptTokens?: number; completionTokens?: number; model: string; requestId?: string;
-  }>;
+  chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal }): Promise<OllamaModelResult>;
+}
+
+export interface OllamaModelResult {
+  content: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  model: string;
+  requestId?: string;
 }
 
 export interface OllamaClientOptions { baseUrl?: string; fetcher?: typeof fetch }
@@ -18,9 +24,7 @@ export class HttpOllamaClient implements OllamaClient {
     this.baseUrl = (options.baseUrl ?? process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434').replace(/\/$/, '');
     this.fetcher = options.fetcher ?? fetch;
   }
-  public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal }): Promise<{
-    content: string; promptTokens?: number; completionTokens?: number; model: string; requestId?: string;
-  }> {
+  public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal }): Promise<OllamaModelResult> {
     const model = input.agent.model.model;
     if (model === undefined) throw new Error(`Ollama agent "${input.agent.id}" must declare model.model.`);
     await this.ensureModel(input);

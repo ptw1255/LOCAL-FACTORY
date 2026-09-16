@@ -19,6 +19,14 @@ agents:
     model:
       provider: openai
       model: gpt-test
+      routing:
+        strategy: fallback
+        maxAttempts: 2
+      routes:
+        - provider: openai
+          model: gpt-test
+        - provider: ollama
+          model: llama3.2
     boundaries:
       allowedConnections: []
       allowedRepositories: []
@@ -91,6 +99,11 @@ describe('declarative project YAML', () => {
       'agentLoop',
     ]);
     expect(parsed.workflows[0]?.agents[0]?.model.model).toBe('gpt-test');
+    expect(parsed.workflows[0]?.agents[0]?.model.routing).toEqual({ strategy: 'fallback', maxAttempts: 2 });
+    expect(parsed.workflows[0]?.agents[0]?.model.routes).toEqual([
+      { provider: 'openai', model: 'gpt-test' },
+      { provider: 'ollama', model: 'llama3.2' },
+    ]);
   });
 
   it('round-trips runtime definitions back to source YAML', () => {

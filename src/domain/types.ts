@@ -90,6 +90,19 @@ export interface WorkUnitEnvelope<T = unknown> {
   contentHash: string;
 }
 
+/** A provider route declared by an agent box. Credentials are referenced, never embedded. */
+export interface AgentModelRoute {
+  provider: string;
+  model?: string;
+  endpoint?: string;
+  secretRef?: string;
+}
+
+export interface AgentModelRouting {
+  strategy: 'single' | 'fallback';
+  maxAttempts?: number;
+}
+
 /** A versioned, policy-bound agent "box" owned by its workflow definition. */
 export interface AgentDefinition {
   id: string;
@@ -99,7 +112,7 @@ export interface AgentDefinition {
   instructions: string;
   skills: string[];
   tools: string[];
-  model: { provider?: string; model?: string; routingAlias?: string; endpoint?: string; secretRef?: string; streaming?: boolean; pricing?: { promptPer1kUsd: number; completionPer1kUsd: number }; provisioning?: { mode: 'never' | 'pull-on-start' | 'baked'; digest?: string; timeoutMs?: number } };
+  model: { provider?: string; model?: string; routingAlias?: string; endpoint?: string; secretRef?: string; streaming?: boolean; pricing?: { promptPer1kUsd: number; completionPer1kUsd: number }; provisioning?: { mode: 'never' | 'pull-on-start' | 'baked'; digest?: string; timeoutMs?: number }; routes?: AgentModelRoute[]; routing?: AgentModelRouting };
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
   boundaries: {

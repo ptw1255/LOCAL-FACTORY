@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type {
   ApprovalRecord,
+  AgentDefinition,
+  AgentModelRoute,
   RunRecord,
   WorkflowDefinition,
   WorkflowEdge,
@@ -10,12 +12,12 @@ import type {
 import { validateWorkflow } from '../domain/validator.js';
 import type { EventService } from '../observability/event-service.js';
 import type { PlatformStore } from '../storage/store.js';
-import { HttpOllamaClient, type OllamaClient } from './ollama.js';
+import { HttpOllamaClient, type OllamaClient, type OllamaModelResult } from './ollama.js';
 import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
 import type { RepositoryWorkspace } from '../repository/workspace.js';
 import { RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryConflictError, RepositoryMutationError, RepositoryPolicyError } from '../repository/workspace.js';
 import { RepositoryCiError, type GitHubRepositoryClient } from '../repository/github.js';
-import type { OpenAIClient } from './openai.js';
+import type { OpenAIClient, OpenAIModelResult } from './openai.js';
 
 const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
@@ -795,12 +797,9 @@ export class LocalWorkflowExecutor {
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       signal.throwIfAborted();
       const goal = typeof node.config.goal === 'string' ? node.config.goal : 'Complete the task.';
-      const provider = agent.model.provider?.toLowerCase();
-      const modelResult = provider === 'ollama'
-        ? await this.ollama.chat({ agent, goal, signal })
-        : provider === 'openai' && this.openai !== undefined
-          ? await this.openai.chat({ agent, goal, signal, traceId })
-        : undefined;
+      const invocation = await this.invokeModel(runId, traceId, node.id, agent, goal, signal);
+      const modelResult = invocation?.result;
+      const provider = invocation?.provider ?? agent.model.provider?.toLowerCase();
       if (modelResult !== undefined) {
         lastModelOutput = modelResult.content;
         const toolCalls = 'toolCalls' in modelResult && Array.isArray(modelResult.toolCalls)
@@ -926,6 +925,75 @@ export class LocalWorkflowExecutor {
       outcome: 'bounded-completion',
       ...(lastModelOutput === undefined ? {} : { output: lastModelOutput }),
     };
+  }
+
+  private async invokeModel(
+    runId: string,
+    traceId: string,
+    nodeId: string,
+    agent: AgentDefinition,
+    goal: string,
+    signal: AbortSignal,
+  ): Promise<{ provider: string; result: OpenAIModelResult | OllamaModelResult } | undefined> {
+    const declaredRoutes = agent.model.routes ?? [];
+    const routes: Array<AgentModelRoute | undefined> = declaredRoutes.length === 0
+      ? [undefined]
+      : declaredRoutes;
+    const strategy = agent.model.routing?.strategy ?? (declaredRoutes.length > 1 ? 'fallback' : 'single');
+    const maxAttempts = Math.min(routes.length, agent.model.routing?.maxAttempts ?? routes.length);
+    for (let index = 0; index < maxAttempts; index += 1) {
+      const route = routes[index];
+      const routeAgent = route === undefined
+        ? agent
+        : (() => {
+            const { routes: _routes, routing: _routing, ...baseModel } = agent.model;
+            return { ...agent, model: { ...baseModel, ...route } };
+          })();
+      const provider = routeAgent.model.provider?.trim().toLowerCase();
+      if (provider === undefined || provider === '') {
+        if (declaredRoutes.length === 0) return undefined;
+        throw new Error(`Agent "${agent.id}" provider route ${index + 1} is missing a provider.`);
+      }
+      try {
+        let result: OpenAIModelResult | OllamaModelResult;
+        if (provider === 'ollama') {
+          result = await this.ollama.chat({ agent: routeAgent, goal, signal });
+        } else if (provider === 'openai') {
+          if (this.openai === undefined) throw new Error('OpenAI credentials are not configured for this runtime.');
+          result = await this.openai.chat({ agent: routeAgent, goal, signal, traceId });
+        } else {
+          throw new Error(`Unsupported model provider "${provider}".`);
+        }
+        if (index > 0) {
+          await this.events.emit(runId, 'llm.route.selected', `Model fallback route ${provider} selected.`, {
+            nodeId,
+            signal: 'trace',
+            spanKind: 'llm',
+            attributes: {
+              'llm.route.provider': provider,
+              'llm.route.index': index,
+              'llm.route.strategy': strategy,
+            },
+          });
+        }
+        return { provider, result };
+      } catch (error) {
+        if (signal.aborted) throw error;
+        if (strategy !== 'fallback' || index + 1 >= maxAttempts) throw error;
+        await this.events.emit(runId, 'llm.route.failed', `Model route ${provider} failed; trying the next route.`, {
+          nodeId,
+          signal: 'trace',
+          spanKind: 'llm',
+          severityText: 'WARN',
+          attributes: {
+            'llm.route.provider': provider,
+            'llm.route.index': index,
+            'llm.route.strategy': strategy,
+          },
+        });
+      }
+    }
+    throw new Error(`Agent "${agent.id}" did not produce a model result.`);
   }
 
   private async workspaceForRun(runId: string): Promise<RepositoryWorkspace> {
