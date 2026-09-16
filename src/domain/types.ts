@@ -271,6 +271,7 @@ export interface DeploymentRecord {
   observedState: DeploymentObservedState;
   health: 'healthy' | 'degraded' | 'unknown';
   trigger: string;
+  triggerStatus: 'active' | 'inactive' | 'unknown';
   createdAt: string;
   updatedAt: string;
   lease?: { ownerId: string; expiresAt: string };

@@ -82,5 +82,8 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
     proposal.tenantId ??= proposal.workflow.tenantId ?? tenantId;
     proposal.projectId ??= proposal.workflow.projectId ?? projectId;
   }
+  for (const deployment of state.deployments) {
+    deployment.triggerStatus ??= deployment.desiredState === 'running' ? 'active' : 'inactive';
+  }
   return state;
 }

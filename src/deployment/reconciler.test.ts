@@ -49,4 +49,24 @@ describe('DeploymentReconciler', () => {
     });
     await expect(reconciler.reconcile(deployment.id, { tenantId: 'tenant-local', projectId: 'project-local' })).rejects.toThrow('currently reconciled');
   });
+
+  it('records a durable transition when reconciliation repairs drift', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-drift', tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const reconciler = new DeploymentReconciler(store);
+    const deployment = await reconciler.create({ scope: { tenantId: 'tenant-local', projectId: 'project-local' }, workflowId: seedWorkflow.id, environment: 'drift', artifactId: artifact.id, trigger: 'schedule' });
+    await store.mutate((state) => {
+      const target = state.deployments.find((candidate) => candidate.id === deployment.id);
+      if (target === undefined) throw new Error('Deployment missing.');
+      target.desiredState = 'running';
+      target.observedState = 'starting';
+    });
+    const reconciled = await reconciler.reconcile(deployment.id, { tenantId: 'tenant-local', projectId: 'project-local' });
+    expect(reconciled).toMatchObject({ observedState: 'live', health: 'healthy', triggerStatus: 'active' });
+    expect(reconciled.history[0]).toEqual(expect.objectContaining({ action: 'start', actor: 'reconciler', outcome: 'succeeded' }));
+  });
 });

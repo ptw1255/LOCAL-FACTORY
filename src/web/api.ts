@@ -144,6 +144,8 @@ export const api = {
   deployments: () => request<ItemsResponse<DeploymentRecord>>('/api/deployments'),
   deploymentAction: (id: string, action: DeploymentRecord['history'][number]['action'], artifactId?: string) =>
     request<DeploymentRecord>(`/api/deployments/${encodeURIComponent(id)}/action`, { method: 'POST', body: JSON.stringify({ action, ...(artifactId === undefined ? {} : { artifactId }) }) }),
+  reconcileDeployment: (id: string) =>
+    request<DeploymentRecord>(`/api/deployments/${encodeURIComponent(id)}/reconcile`, { method: 'POST', body: '{}' }),
   createDeployment: (input: { workflowId: string; environment: string; artifactId: string; trigger: string }) =>
     request<DeploymentRecord>('/api/deployments', { method: 'POST', body: JSON.stringify(input) }),
 };
