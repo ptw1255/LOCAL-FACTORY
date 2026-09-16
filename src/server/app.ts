@@ -28,7 +28,7 @@ import { defaultFactoryManifest } from '../factory/manifest.js';
 import { calculateFactoryMetrics } from '../factory/metrics.js';
 import { EventService } from '../observability/event-service.js';
 import { compileResourceFiles } from '../declarative/resources.js';
-import { computeArtifactId } from '../declarative/artifact.js';
+import { computeArtifactId, diffArtifacts } from '../declarative/artifact.js';
 import { parseProjectYaml, stringifyProjectYaml } from '../declarative/yaml.js';
 import { CompositeTelemetryExporter, OtlpHttpExporter } from '../observability/otlp-exporter.js';
 import { LocalWorkflowExecutor } from '../runtime/executor.js';
@@ -702,6 +702,24 @@ export async function createApp(
     const scope = scopeFromRequest(request);
     return { items: await store.read((state) => state.artifacts.filter((artifact) => artifact.projectId === request.params.projectId && artifact.tenantId === scope.tenantId)) };
   });
+
+  app.get<{ Params: { projectId: string }; Querystring: { from?: string; to?: string } }>(
+    '/api/projects/:projectId/artifacts/diff',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      if (typeof request.query.from !== 'string' || typeof request.query.to !== 'string' || request.query.from.trim() === '' || request.query.to.trim() === '') {
+        return reply.status(422).send({ message: 'from and to artifact IDs are required.' });
+      }
+      const result = await store.read((state) => {
+        const artifacts = state.artifacts.filter((artifact) => artifact.projectId === request.params.projectId && artifact.tenantId === scope.tenantId);
+        const from = artifacts.find((artifact) => artifact.id === request.query.from);
+        const to = artifacts.find((artifact) => artifact.id === request.query.to);
+        return from === undefined || to === undefined ? undefined : diffArtifacts(from, to);
+      });
+      if (result === undefined) return reply.status(404).send({ message: 'One or both artifacts were not found.' });
+      return result;
+    },
+  );
 
   app.get('/api/workflows', async (request) => {
     const scope = scopeFromRequest(request);

@@ -246,6 +246,11 @@ describe('platform API', () => {
     expect(compiledAgain.json<{ id: string }>().id).toBe(compiled.json<{ id: string }>().id);
     const artifacts = await app.inject({ method: 'GET', url: '/api/projects/project-local/artifacts', headers });
     expect(artifacts.json<{ items: unknown[] }>().items).toHaveLength(1);
+    const artifactId = compiled.json<{ id: string }>().id;
+    const diff = await app.inject({ method: 'GET', url: `/api/projects/project-local/artifacts/diff?from=${encodeURIComponent(artifactId)}&to=${encodeURIComponent(artifactId)}`, headers });
+    expect(diff.statusCode).toBe(200);
+    expect(diff.json<{ changedSources: unknown[]; changedWorkflows: unknown[] }>().changedSources).toEqual([]);
+    expect(diff.json<{ changedSources: unknown[]; changedWorkflows: unknown[] }>().changedWorkflows).toEqual([]);
   });
 
   it('rejects stale file writes with optimistic hash concurrency', async () => {
