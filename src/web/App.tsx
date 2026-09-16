@@ -464,6 +464,7 @@ function workflowToCanvas(
       ...edge,
       type: 'smoothstep',
       animated: false,
+      ...(edge.condition === undefined ? {} : { label: edge.condition }),
       style: { stroke: '#6b7f9f', strokeWidth: 1.6 },
       selected: false,
     })),
@@ -538,6 +539,19 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const sourceSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const [studioMode, setStudioMode] = useState<'files' | 'tree' | 'canvas'>(() => readStudioMode(projectId));
 
+  async function hydrateCanvasProjection(candidate: WorkflowDefinition): Promise<WorkflowDefinition> {
+    try {
+      const file = await api.projectFile(projectId, `canvas/${candidate.id}.canvas.yaml`);
+      if (file.content === undefined) return candidate;
+      const { applyCanvasResource } = await import('../declarative/migration');
+      return applyCanvasResource(candidate, file.content);
+    } catch {
+      // Canvas files are a compatibility projection; a missing or unavailable
+      // projection must not prevent authoring the workflow source itself.
+      return candidate;
+    }
+  }
+
   useEffect(() => {
     window.localStorage.setItem(`${STUDIO_MODE_STORAGE_PREFIX}${projectId}`, studioMode);
   }, [projectId, studioMode]);
@@ -557,7 +571,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       setYamlSource(yamlResponse);
       setArtifacts(artifactResponse.items);
       setYamlDirty(false);
-      const first = workflowResponse.items[0] ?? null;
+      const first = workflowResponse.items[0] === undefined ? null : await hydrateCanvasProjection(workflowResponse.items[0]);
       setWorkflow(first);
       if (first !== null) {
         const canvas = workflowToCanvas(first, catalogResponse.items);
@@ -674,7 +688,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     setLoading(true);
     setError(null);
     try {
-      const next = await api.workflow(id);
+      const next = await hydrateCanvasProjection(await api.workflow(id));
       const canvas = workflowToCanvas(next, catalog);
       setWorkflow(next);
       setNodes(canvas.nodes);
