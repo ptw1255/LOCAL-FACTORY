@@ -1386,6 +1386,8 @@ function RunsView() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [workflowFilter, setWorkflowFilter] = useState('all');
+  const [timeFilterHours, setTimeFilterHours] = useState(48);
   const [observeTab, setObserveTab] = useState<ObserveTab>('runs');
   const [retentionHours, setRetentionHours] = useState(48);
   const [evidenceRetentionHours, setEvidenceRetentionHours] = useState<number | null>(null);
@@ -1402,6 +1404,7 @@ function RunsView() {
       setRuns(sorted);
       setSelectedRunId((current) => current ?? sorted[0]?.id ?? null);
       setRetentionHours(health.observability.retentionHours);
+      setTimeFilterHours((current) => current === 48 ? health.observability.retentionHours : current);
       setEvidenceRetentionHours(health.observability.evidenceRetentionHours);
       setPhoenixUiUrl(health.observability.phoenixConfigured ? health.observability.phoenixUiUrl : null);
     } catch (loadError) {
@@ -1448,7 +1451,9 @@ function RunsView() {
 
   const filteredRuns = runs.filter((run) => {
     const matchesQuery = `${run.workflowName} ${run.id}`.toLowerCase().includes(query.toLowerCase());
-    return matchesQuery && (statusFilter === 'all' || run.status === statusFilter);
+    const matchesWorkflow = workflowFilter === 'all' || run.workflowId === workflowFilter;
+    const matchesTime = timeFilterHours <= 0 || new Date(run.startedAt).getTime() >= Date.now() - timeFilterHours * 60 * 60 * 1000;
+    return matchesQuery && matchesWorkflow && matchesTime && (statusFilter === 'all' || run.status === statusFilter);
   });
 
   const activeRuns = runs.filter((run) => ['queued', 'running', 'waiting'].includes(run.status)).length;
@@ -1503,6 +1508,15 @@ function RunsView() {
           <section className="runs-list-panel">
             <div className="list-tools">
               <label className="search-field"><span className="sr-only">Search runs</span><Icon name="search" /><input onChange={(event) => setQuery(event.target.value)} placeholder="Search runs" type="search" value={query} /></label>
+              <select aria-label="Filter by workflow" onChange={(event) => setWorkflowFilter(event.target.value)} value={workflowFilter}>
+                <option value="all">All workflows</option>
+                {[...new Map(runs.map((run) => [run.workflowId, run.workflowName])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+              <select aria-label="Filter by time window" onChange={(event) => setTimeFilterHours(Number(event.target.value))} value={timeFilterHours}>
+                <option value={24}>Last 24 hours</option>
+                <option value={48}>Last 48 hours</option>
+                <option value={0}>All retained runs</option>
+              </select>
               <select aria-label="Filter by status" onChange={(event) => setStatusFilter(event.target.value)} value={statusFilter}>
                 <option value="all">All statuses</option>
                 <option value="running">Running</option>
