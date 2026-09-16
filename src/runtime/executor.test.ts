@@ -135,6 +135,26 @@ describe('LocalWorkflowExecutor', () => {
     expect(denied.approval).toEqual(expect.objectContaining({ decision: 'denied', actor: 'test-operator', reason: 'Not ready.' }));
   });
 
+  it('marks pending approval cancelled when the waiting run is cancelled', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const output = workflow.nodes.find((node) => node.id === 'output');
+    if (output === undefined) throw new Error('Seed output node is missing.');
+    workflow.nodes.splice(workflow.nodes.indexOf(output), 0, {
+      id: 'approval-cancel', type: 'approval', label: 'Cancel approval', position: { x: 1_020, y: 180 }, config: {}, unit: defaultWorkUnit('approval'),
+    });
+    const incoming = workflow.edges.find((edge) => edge.target === 'output');
+    if (incoming === undefined) throw new Error('Seed output edge is missing.');
+    incoming.target = 'approval-cancel';
+    workflow.edges.push({ id: 'approval-cancel-output', source: 'approval-cancel', target: 'output' });
+    const run = await executor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'waiting');
+    await executor.cancel(run.id);
+    const cancelled = await store.read((state) => ({ run: state.runs.find((candidate) => candidate.id === run.id), approval: state.approvals.find((candidate) => candidate.runId === run.id) }));
+    expect(cancelled.run?.status).toBe('cancelled');
+    expect(cancelled.approval).toEqual(expect.objectContaining({ decision: 'cancelled', decidedAt: expect.any(String) }));
+    expect((await events.list(run.id)).some((event) => event.type === 'approval.cancelled')).toBe(true);
+  });
+
   it('runs deterministic code units before downstream work', async () => {
     const workflow = structuredClone(seedWorkflow);
     const prepare = workflow.nodes.find((node) => node.id === 'prepare');
