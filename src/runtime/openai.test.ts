@@ -66,6 +66,22 @@ describe('HttpOpenAIClient', () => {
     await expect(new HttpOpenAIClient({ apiKey: 'key', fetcher: refusalFetcher }).chat({ agent: { ...agent, model: { provider: 'openai', model: 'gpt-5', streaming: true } }, goal: 'refusal', signal: new AbortController().signal })).rejects.toMatchObject({ code: 'refusal', retryable: false });
   });
 
+  it('normalizes streamed function-call arguments into tool calls', async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"type":"response.output_item.added","item":{"id":"item_1","type":"function_call","call_id":"call_1","name":"repo.check"}}\n\n'));
+        controller.enqueue(encoder.encode('data: {"type":"response.function_call_arguments.delta","item_id":"item_1","delta":"{\\"command\\":\\"npm "}\n\n'));
+        controller.enqueue(encoder.encode('data: {"type":"response.function_call_arguments.delta","item_id":"item_1","delta":"test\\"}"}\n\n'));
+        controller.enqueue(encoder.encode('data: {"type":"response.completed"}\n\n'));
+        controller.close();
+      },
+    });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(stream, { status: 200 }));
+    const result = await new HttpOpenAIClient({ apiKey: 'key', fetcher }).chat({ agent: { ...agent, model: { provider: 'openai', model: 'gpt-5', streaming: true } }, goal: 'tool', signal: new AbortController().signal });
+    expect(result.toolCalls).toEqual([{ callId: 'call_1', name: 'repo.check', arguments: '{"command":"npm test"}' }]);
+  });
+
   it('classifies provider failures without exposing credentials', async () => {
     const configuredAgent = { ...agent, model: { provider: 'openai', model: 'gpt-5' } };
     const cases = [

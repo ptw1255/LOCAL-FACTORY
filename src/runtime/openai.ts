@@ -152,6 +152,7 @@ export class HttpOpenAIClient implements OpenAIClient {
     let completionTokens: number | undefined;
     let completed = false;
     let refused = false;
+    const streamedTools = new Map<string, { callId: string; name: string; arguments: string }>();
     const consume = (chunk: string): void => {
       buffer += chunk;
       const records = buffer.split(/\r?\n\r?\n/);
@@ -159,11 +160,23 @@ export class HttpOpenAIClient implements OpenAIClient {
       for (const record of records) {
         const data = record.split(/\r?\n/).find((line) => line.startsWith('data:'))?.slice(5).trim();
         if (data === undefined || data === '[DONE]') continue;
-        let event: { type?: unknown; delta?: unknown; response?: { model?: unknown; status?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown } } };
+        let event: { type?: unknown; delta?: unknown; item_id?: unknown; item?: { id?: unknown; type?: unknown; call_id?: unknown; name?: unknown; arguments?: unknown }; response?: { model?: unknown; status?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown } } };
         try { event = JSON.parse(data) as typeof event; } catch { continue; }
         if (event.type === 'response.output_text.delta' && typeof event.delta === 'string') content += event.delta;
         if (event.type === 'response.refusal.delta') refused = true;
         if (event.type === 'response.completed') completed = true;
+        if (event.type === 'response.output_item.added' && event.item?.type === 'function_call' && typeof event.item.call_id === 'string' && typeof event.item.name === 'string') {
+          const key = typeof event.item.id === 'string' ? event.item.id : event.item.call_id;
+          streamedTools.set(key, { callId: event.item.call_id, name: event.item.name, arguments: typeof event.item.arguments === 'string' ? event.item.arguments : '' });
+        }
+        if (event.type === 'response.function_call_arguments.delta' && typeof event.delta === 'string' && typeof event.item_id === 'string') {
+          const tool = streamedTools.get(event.item_id);
+          if (tool !== undefined) tool.arguments += event.delta;
+        }
+        if (event.type === 'response.function_call_arguments.done' && typeof event.item_id === 'string' && typeof event.delta === 'string') {
+          const tool = streamedTools.get(event.item_id);
+          if (tool !== undefined) tool.arguments = event.delta;
+        }
         if (typeof event.response?.model === 'string') model = event.response.model;
         if (typeof event.response?.status === 'string') finishReason = event.response.status;
         if (typeof event.response?.usage?.input_tokens === 'number') promptTokens = event.response.usage.input_tokens;
@@ -184,6 +197,7 @@ export class HttpOpenAIClient implements OpenAIClient {
       ...(promptTokens === undefined ? {} : { promptTokens }),
       ...(completionTokens === undefined ? {} : { completionTokens }),
       ...(finishReason === undefined ? {} : { finishReason }),
+      ...(streamedTools.size === 0 ? {} : { toolCalls: [...streamedTools.values()] }),
       ...(promptTokens !== undefined && completionTokens !== undefined && pricing !== undefined ? { estimatedCostUsd: Number(((promptTokens / 1_000) * pricing.promptPer1kUsd + (completionTokens / 1_000) * pricing.completionPer1kUsd).toFixed(6)) } : {}),
       ...(response.headers.get('x-request-id') === null ? {} : { requestId: response.headers.get('x-request-id')! }),
     };
