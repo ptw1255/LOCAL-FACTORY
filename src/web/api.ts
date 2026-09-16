@@ -6,6 +6,7 @@ import type {
   NodeCatalogItem,
   RunEvent,
   OperationEvidence,
+  ApprovalRecord,
   DeploymentRecord,
   RunRecord,
   ProjectRecord,
@@ -124,6 +125,8 @@ export const api = {
     request<ItemsResponse<RunEvent>>(`/api/events?runId=${encodeURIComponent(runId)}`),
   evidence: (runId: string) =>
     request<ItemsResponse<OperationEvidence>>(`/api/evidence?runId=${encodeURIComponent(runId)}`),
+  approvals: (runId: string) =>
+    request<ItemsResponse<ApprovalRecord>>(`/api/approvals?runId=${encodeURIComponent(runId)}`),
   telemetry: (runId: string, signal?: 'log' | 'trace' | 'metric') =>
     request<ItemsResponse<RunEvent> & { resource: Record<string, string> }>(
       `/api/telemetry?runId=${encodeURIComponent(runId)}${signal === undefined ? '' : `&signal=${signal}`}`,

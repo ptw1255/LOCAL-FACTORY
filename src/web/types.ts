@@ -84,6 +84,22 @@ export interface OperationEvidence {
   metadata?: Record<string, string | number | boolean>;
 }
 
+export interface ApprovalRecord {
+  id: string;
+  tenantId?: string;
+  projectId?: string;
+  runId: string;
+  nodeId: string;
+  operation: string;
+  bindingHash: string;
+  decision: 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled' | 'superseded';
+  requestedAt: string;
+  expiresAt: string;
+  actor?: string;
+  reason?: string;
+  decidedAt?: string;
+}
+
 export interface AgentDefinition {
   id: string;
   version: number;

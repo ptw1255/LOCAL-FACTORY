@@ -5,14 +5,17 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createApp } from './app.js';
+import { JsonStore } from '../storage/json-store.js';
 
 describe('platform API', () => {
   let app: Awaited<ReturnType<typeof createApp>>;
+  let store: JsonStore;
 
   beforeEach(async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-api-'));
+    store = new JsonStore(path.join(directory, 'state.json'));
     app = await createApp({
-      dataFile: path.join(directory, 'state.json'),
+      store,
       serveStatic: false,
       secretBroker: {
         put: async () => undefined,
@@ -49,6 +52,17 @@ describe('platform API', () => {
         stageMetrics: expect.any(Array),
       }),
     );
+  });
+
+  it('lists approval records within the requested project scope', async () => {
+    await store.mutate((state) => {
+      state.approvals.push({ id: 'approval-api-test', tenantId: 'tenant-local', projectId: 'project-local', runId: 'run-api-test', nodeId: 'push', operation: 'repositoryPush', bindingHash: 'a'.repeat(64), decision: 'pending', requestedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() });
+    });
+    const response = await app.inject({ method: 'GET', url: '/api/approvals?runId=run-api-test', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ items: Array<{ id: string; bindingHash: string }> }>().items).toEqual([expect.objectContaining({ id: 'approval-api-test', bindingHash: 'a'.repeat(64) })]);
+    const crossProject = await app.inject({ method: 'GET', url: '/api/approvals?runId=run-api-test', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'other-project' } });
+    expect(crossProject.json<{ items: unknown[] }>().items).toHaveLength(0);
   });
 
   it('creates projects and scopes workflow reads by project header', async () => {

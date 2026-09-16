@@ -234,6 +234,10 @@ h1, h2, h3, p { margin-top: 0; }
 .evidence-detail-body code { color: #b7c8df; font-size: 9px; word-break: break-all; }
 .evidence-detail-body pre { margin: 0; white-space: pre-wrap; }
 .evidence-detail-body a { align-items: center; color: var(--blue); display: inline-flex; gap: 4px; }
+.approval-summary { margin-top: 22px; }
+.approval-record { background: #101a29; border: 1px solid var(--border); border-radius: 7px; display: grid; gap: 5px; margin-top: 8px; padding: 10px 12px; }
+.approval-record code { color: var(--subtle); font-size: 9px; overflow-wrap: anywhere; }
+.approval-record span, .approval-record small { color: var(--subtle); font-size: 10px; }
 
 /* Studio */
 .studio-page { height: 100vh; min-height: 680px; overflow: hidden; position: relative; }
