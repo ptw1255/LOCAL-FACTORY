@@ -1,8 +1,8 @@
 export interface PullRequestInput { title: string; body: string; head: string; base: string }
-export interface PullRequest { number: number; url: string; head: string; base: string; state: string }
+export interface PullRequest { number: number; url: string; head: string; base: string; state: string; requestId?: string }
 export interface CheckRunSummary { name: string; status: string; conclusion: string | null; url?: string; summary?: string }
 export interface CiFailure { name: string; conclusion: string | null; url?: string; summary?: string }
-export interface CiResult { ref: string; status: 'success' | 'failure' | 'pending' | 'cancelled' | 'timed_out'; checks: CheckRunSummary[]; required: string[]; failures: CiFailure[] }
+export interface CiResult { ref: string; status: 'success' | 'failure' | 'pending' | 'cancelled' | 'timed_out'; checks: CheckRunSummary[]; required: string[]; failures: CiFailure[]; requestId?: string }
 export interface CiPollUpdate { checks: CheckRunSummary[]; status: 'pending' | 'success' | 'failure' | 'timed_out'; }
 export class GitHubApiError extends Error {
   public readonly code = 'GITHUB_API_ERROR';
@@ -28,7 +28,8 @@ export class GitHubRepositoryClient {
     if (!response.ok) throw new Error(`GitHub pull request creation failed with status ${response.status}.`);
     const body = await response.json() as { number?: unknown; html_url?: unknown; head?: { ref?: unknown }; base?: { ref?: unknown }; state?: unknown };
     if (typeof body.number !== 'number' || typeof body.html_url !== 'string') throw new Error('GitHub response did not contain pull request metadata.');
-    return { number: body.number, url: body.html_url, head: typeof body.head?.ref === 'string' ? body.head.ref : input.head, base: typeof body.base?.ref === 'string' ? body.base.ref : input.base, state: typeof body.state === 'string' ? body.state : 'open' };
+    const requestId = response.headers.get('x-github-request-id');
+    return { number: body.number, url: body.html_url, head: typeof body.head?.ref === 'string' ? body.head.ref : input.head, base: typeof body.base?.ref === 'string' ? body.base.ref : input.base, state: typeof body.state === 'string' ? body.state : 'open', ...(requestId === null ? {} : { requestId }) };
   }
 
   public async listOpenPullRequests(input: { head: string; base: string }): Promise<PullRequest[]> {
@@ -37,8 +38,9 @@ export class GitHubRepositoryClient {
     });
     if (!response.ok) throw new Error(`GitHub pull request lookup failed with status ${response.status}.`);
     const body = await response.json() as Array<{ number?: unknown; html_url?: unknown; head?: { ref?: unknown }; base?: { ref?: unknown }; state?: unknown }>;
+    const requestId = response.headers.get('x-github-request-id');
     return body.flatMap((candidate) => typeof candidate.number === 'number' && typeof candidate.html_url === 'string'
-      ? [{ number: candidate.number, url: candidate.html_url, head: typeof candidate.head?.ref === 'string' ? candidate.head.ref : input.head, base: typeof candidate.base?.ref === 'string' ? candidate.base.ref : input.base, state: typeof candidate.state === 'string' ? candidate.state : 'open' }]
+      ? [{ number: candidate.number, url: candidate.html_url, head: typeof candidate.head?.ref === 'string' ? candidate.head.ref : input.head, base: typeof candidate.base?.ref === 'string' ? candidate.base.ref : input.base, state: typeof candidate.state === 'string' ? candidate.state : 'open', ...(requestId === null ? {} : { requestId }) }]
       : []);
   }
 
@@ -56,6 +58,7 @@ export class GitHubRepositoryClient {
       const retryAfterMs = retryAfter === null ? undefined : Math.max(0, Number(retryAfter) * 1_000);
       throw new GitHubApiError(`GitHub check-run lookup failed with status ${response.status}.`, response.status, Number.isFinite(retryAfterMs) ? retryAfterMs : undefined);
     }
+    this.lastRequestId = response.headers.get('x-github-request-id') ?? undefined;
     const body = await response.json() as { check_runs?: Array<{ name?: unknown; status?: unknown; conclusion?: unknown; html_url?: unknown; output?: { text?: unknown } }> };
     return (body.check_runs ?? []).flatMap((candidate) => typeof candidate.name === 'string' && typeof candidate.status === 'string'
       ? [{ name: candidate.name, status: candidate.status, conclusion: typeof candidate.conclusion === 'string' ? candidate.conclusion : null, ...(typeof candidate.html_url === 'string' ? { url: candidate.html_url } : {}), ...(typeof candidate.output?.text === 'string' && candidate.output.text !== '' ? { summary: candidate.output.text.slice(0, 2_000) } : {}) }]
@@ -87,9 +90,10 @@ export class GitHubRepositoryClient {
       const failed = selected.some((check) => check.status === 'completed' && !['success', 'skipped', 'neutral'].includes(check.conclusion ?? ''));
       const complete = !missingRequired && selected.length > 0 && selected.every((check) => check.status === 'completed');
       const failures = selected.filter((check) => check.status === 'completed' && !['success', 'skipped', 'neutral'].includes(check.conclusion ?? '')).map((check) => ({ name: check.name, conclusion: check.conclusion, ...(check.url === undefined ? {} : { url: check.url }), ...(check.summary === undefined ? {} : { summary: check.summary }) }));
-      if (failed) { await input.onPoll?.({ checks, status: 'failure' }); return { ref: input.ref, status: 'failure', checks, required, failures }; }
-      if (complete) { await input.onPoll?.({ checks, status: 'success' }); return { ref: input.ref, status: 'success', checks, required, failures }; }
-      if (Date.now() >= deadline) { await input.onPoll?.({ checks, status: 'timed_out' }); return { ref: input.ref, status: 'timed_out', checks, required, failures }; }
+      const requestId = this.lastRequestId;
+      if (failed) { await input.onPoll?.({ checks, status: 'failure' }); return { ref: input.ref, status: 'failure', checks, required, failures, ...(requestId === undefined ? {} : { requestId }) }; }
+      if (complete) { await input.onPoll?.({ checks, status: 'success' }); return { ref: input.ref, status: 'success', checks, required, failures, ...(requestId === undefined ? {} : { requestId }) }; }
+      if (Date.now() >= deadline) { await input.onPoll?.({ checks, status: 'timed_out' }); return { ref: input.ref, status: 'timed_out', checks, required, failures, ...(requestId === undefined ? {} : { requestId }) }; }
       await input.onPoll?.({ checks, status: 'pending' });
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(resolve, Math.min(Math.max(10, input.intervalMs ?? 2_000), Math.max(1, deadline - Date.now())));
@@ -107,5 +111,7 @@ export class GitHubRepositoryClient {
     if (token === undefined || token.trim() === '') throw new Error('GitHub credentials are not configured.');
     return { accept: 'application/vnd.github+json', authorization: `Bearer ${token}`, 'x-github-api-version': '2022-11-28' };
   }
+
+  private lastRequestId: string | undefined;
 }
 import type { SecretBroker } from '../connections/secret-broker.js';

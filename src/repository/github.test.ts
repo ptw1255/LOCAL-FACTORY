@@ -3,9 +3,9 @@ import { GitHubRepositoryClient } from './github.js';
 
 describe('GitHubRepositoryClient', () => {
   it('creates a pull request without exposing the token in the payload', async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ number: 7, html_url: 'https://github.com/example/repo/pull/7', head: { ref: 'feature' }, base: { ref: 'main' }, state: 'open' }), { status: 201 }));
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ number: 7, html_url: 'https://github.com/example/repo/pull/7', head: { ref: 'feature' }, base: { ref: 'main' }, state: 'open' }), { status: 201, headers: { 'x-github-request-id': 'req-pr-7' } }));
     const result = await new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher }).createPullRequest({ title: 'What', body: 'Why', head: 'feature', base: 'main' });
-    expect(result).toMatchObject({ number: 7, head: 'feature', base: 'main' });
+    expect(result).toMatchObject({ number: 7, head: 'feature', base: 'main', requestId: 'req-pr-7' });
     expect(String(fetcher.mock.calls[0]?.[1]?.body)).not.toContain('secret-token');
   });
 
@@ -20,13 +20,14 @@ describe('GitHubRepositoryClient', () => {
   it('polls check runs into a normalized terminal result', async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'queued', conclusion: null }] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'completed', conclusion: 'success', html_url: 'https://github.com/example/repo/actions/runs/1' }] }), { status: 200 }));
+      .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'completed', conclusion: 'success', html_url: 'https://github.com/example/repo/actions/runs/1' }] }), { status: 200, headers: { 'x-github-request-id': 'req-ci-1' } }));
     const client = new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher });
     const result = await client.waitForChecks({ ref: 'abc123', required: ['test'], intervalMs: 10, timeoutMs: 200 });
     expect(result.status).toBe('success');
     expect(result.required).toEqual(['test']);
     expect(result.failures).toEqual([]);
     expect(result.checks[0]).toMatchObject({ name: 'test', conclusion: 'success' });
+    expect(result.requestId).toBe('req-ci-1');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
