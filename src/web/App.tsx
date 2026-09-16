@@ -928,6 +928,9 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     <div className="studio-page">
       <div className="studio-toolbar">
         <div className="workflow-title-area">
+          <button className="button primary" disabled={busyAction !== null} onClick={() => void runWorkflow()} title="Run workflow" type="button">
+            <Icon name="play" size={13} /> {busyAction === 'run' ? 'Starting…' : runMode === 'dry-run' ? 'Dry run' : 'Run'}
+          </button>
           <div className="breadcrumb"><span>Workflows</span><Icon name="chevron" size={13} /></div>
           <select
             aria-label="Select workflow"
@@ -957,9 +960,6 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
             <option value="staging">Staging</option>
             <option value="production">Production</option>
           </select>
-          <button className="button primary" disabled={busyAction !== null} onClick={() => void runWorkflow()} type="button">
-            <Icon name="play" /> {busyAction === 'run' ? 'Starting…' : runMode === 'dry-run' ? 'Dry run' : 'Run workflow'}
-          </button>
         </div>
       </div>
       <div className="workspace-command-strip"><span><Icon name="code" size={14} /> Source is the workflow definition</span><span className="workspace-command-hint"><kbd>⌘</kbd><kbd>S</kbd> save · <kbd>⌘</kbd><kbd>↵</kbd> run</span></div>
