@@ -413,6 +413,26 @@ describe('LocalWorkflowExecutor', () => {
     expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'openai', 'llm.request_id': 'req-1' }));
   });
 
+  it('routes local OpenAI-compatible agents and preserves the declared provider in telemetry', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    if (agent === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider: 'lmstudio', model: 'qwen2.5-coder-7b' };
+    let receivedTraceId: string | undefined;
+    const compatible = { provider: 'lmstudio', chat: async (input: { traceId?: string }) => {
+      receivedTraceId = input.traceId;
+      return { content: 'local result', model: 'qwen2.5-coder-7b', promptTokens: 2, completionTokens: 1, requestId: 'local-1' };
+    } };
+    const compatibleExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, undefined, new Map(), compatible);
+    const run = await compatibleExecutor.start(workflow);
+    await waitFor(async () =>
+      (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded',
+    );
+    expect(receivedTraceId).toBe(run.traceId);
+    const recorded = await events.list(run.id);
+    expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'lmstudio', 'llm.request_id': 'local-1' }));
+  });
+
   it('uses a bounded fallback route when the primary provider is unavailable', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];

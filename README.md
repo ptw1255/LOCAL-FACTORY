@@ -83,6 +83,26 @@ OLLAMA_BASE_URL=http://ollama:11434 docker compose --profile ollama up --build
 docker compose --profile ollama exec ollama ollama pull llama3.2
 ```
 
+### Local OpenAI-compatible servers
+
+LM Studio, vLLM, and LocalAI can be used through the same provider-neutral route
+contract. Set the endpoint to the server's OpenAI-compatible `/v1` URL and use
+`provider: lmstudio` (or `openai-compatible`, `vllm`, or `localai`):
+
+```yaml
+model:
+  provider: lmstudio
+  model: qwen2.5-coder-7b-instruct
+  endpoint: http://host.docker.internal:1234/v1
+```
+
+The runtime calls `/chat/completions`, supports bounded retries, tool declarations,
+structured-output hints, streaming, usage metadata, and request correlation. API
+keys are optional for local servers; when needed, set `LM_STUDIO_API_KEY` or use
+the agent's Vault-backed `secretRef`. In Compose, the endpoint defaults to
+`OPENAI_COMPATIBLE_BASE_URL` and then `LM_STUDIO_BASE_URL` (otherwise
+`http://host.docker.internal:1234/v1` inside Docker).
+
 With `pull-on-start`, the app checks `/api/tags` during startup and pulls the model
 when it is missing. It retries provisioning on the first run if Ollama was not yet
 ready. `never` (the default) requires the model to already exist; `baked` is reserved
