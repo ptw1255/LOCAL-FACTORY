@@ -140,8 +140,7 @@ async function executeNodeImplementation(
     case 'condition':
       return input.config.result === true;
     case 'agentLoop': {
-      const maxIterations = typeof input.config.maxIterations === 'number' ? input.config.maxIterations : 1;
-      return { iterations: maxIterations, outcome: 'bounded-completion' };
+      throw new Error('Temporal agentLoop activity adapter is not available; use the local execution plane until provider parity is configured.');
     }
     case 'code': {
       const operation = typeof input.config.operation === 'string' ? input.config.operation : 'identity';
@@ -156,7 +155,16 @@ async function executeNodeImplementation(
         default: throw new Error(`Unsupported deterministic code operation "${operation}".`);
       }
     }
-    default:
+    case 'manualTrigger':
+    case 'scheduleTrigger':
+    case 'webhookTrigger':
+      return true;
+    case 'transform':
+    case 'output':
       return input.config.value ?? true;
+    case 'notification':
+      return { emitted: true, channel: input.config.channel ?? 'default' };
+    default:
+      throw new Error(`Temporal activity adapter does not support node type "${input.nodeType}".`);
   }
 }
