@@ -189,6 +189,7 @@ export class DeploymentReconciler {
 
   public async reconcile(id: string, scope: DeploymentScope): Promise<DeploymentRecord> {
     let transitionError: unknown;
+    let transitionToRecord: DeploymentTransition | undefined;
     const result = await this.store.mutate(async (state) => {
       const deployment = state.deployments.find((candidate) => candidate.id === id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
       if (deployment === undefined) throw new Error('Deployment not found.');
@@ -202,9 +203,7 @@ export class DeploymentReconciler {
         const observation = await this.observeWithRetry(deployment);
         const targetObserved = observation.observedState;
         if (previousObserved !== targetObserved) {
-          deployment.observedState = targetObserved;
-          deployment.health = observation.health;
-          deployment.history.unshift({
+          const transition: DeploymentTransition = {
             id: randomUUID(),
             action: targetObserved === 'live' ? 'start' : 'stop',
             actor: 'reconciler',
@@ -213,7 +212,11 @@ export class DeploymentReconciler {
             toArtifactId: deployment.artifactId,
             outcome: 'succeeded',
             reason: 'Desired state reconciled.',
-          });
+          };
+          deployment.observedState = targetObserved;
+          deployment.health = observation.health;
+          deployment.history.unshift(transition);
+          transitionToRecord = transition;
         }
         deployment.health = observation.health;
         deployment.triggerStatus = observation.triggerStatus;
@@ -228,7 +231,7 @@ export class DeploymentReconciler {
         deployment.updatedAt = now.toISOString();
         const last = deployment.history[0];
         if (last?.outcome !== 'failed' || last.reason !== message) {
-          deployment.history.unshift({
+          const transition: DeploymentTransition = {
             id: randomUUID(),
             action: deployment.desiredState === 'running' ? 'start' : 'stop',
             actor: 'reconciler',
@@ -237,7 +240,9 @@ export class DeploymentReconciler {
             toArtifactId: deployment.artifactId,
             outcome: 'failed',
             reason: message,
-          });
+          };
+          deployment.history.unshift(transition);
+          transitionToRecord = transition;
         }
         transitionError = error;
       } finally {
@@ -245,6 +250,7 @@ export class DeploymentReconciler {
       }
       return deployment;
     });
+    if (transitionToRecord !== undefined && this.events !== undefined) await this.recordTransition(id, scope, result, transitionToRecord, transitionError);
     if (transitionError !== undefined) throw transitionError;
     return result;
   }

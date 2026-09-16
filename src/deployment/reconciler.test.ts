@@ -93,7 +93,8 @@ describe('DeploymentReconciler', () => {
       state.artifacts.push(value);
       return value;
     });
-    const reconciler = new DeploymentReconciler(store);
+    const events = new EventService(store);
+    const reconciler = new DeploymentReconciler(store, 30_000, undefined, 3, events);
     const deployment = await reconciler.create({ scope: { tenantId: 'tenant-local', projectId: 'project-local' }, workflowId: seedWorkflow.id, environment: 'drift', artifactId: artifact.id, trigger: 'schedule' });
     await store.mutate((state) => {
       const target = state.deployments.find((candidate) => candidate.id === deployment.id);
@@ -104,6 +105,8 @@ describe('DeploymentReconciler', () => {
     const reconciled = await reconciler.reconcile(deployment.id, { tenantId: 'tenant-local', projectId: 'project-local' });
     expect(reconciled).toMatchObject({ observedState: 'live', health: 'healthy', triggerStatus: 'active' });
     expect(reconciled.history[0]).toEqual(expect.objectContaining({ action: 'start', actor: 'reconciler', outcome: 'succeeded' }));
+    await expect(events.listEvidence({ deploymentId: deployment.id })).resolves.toEqual([expect.objectContaining({ operation: 'deployment.start', status: 'succeeded', source: 'deployment-reconciler' })]);
+    await expect(events.list(`deployment:${deployment.id}`)).resolves.toEqual([expect.objectContaining({ type: 'deployment.transition', signal: 'trace' })]);
   });
 
   it('records rejected artifact transitions as failed history', async () => {
@@ -160,10 +163,12 @@ describe('DeploymentReconciler', () => {
       state.artifacts.push(value);
       return value;
     });
-    const failing = new DeploymentReconciler(store, 30_000, { observe: () => { throw new Error('Runtime adapter unavailable.'); } });
+    const events = new EventService(store);
+    const failing = new DeploymentReconciler(store, 30_000, { observe: () => { throw new Error('Runtime adapter unavailable.'); } }, 3, events);
     const second = await failing.create({ scope, workflowId: seedWorkflow.id, environment: 'adapter-error', artifactId: healthyArtifact.id, trigger: 'manual' });
     await expect(failing.reconcile(second.id, scope)).rejects.toThrow('Runtime adapter unavailable.');
     expect((await failing.list(scope)).find((candidate) => candidate.id === second.id)).toEqual(expect.objectContaining({ observedState: 'failed', health: 'degraded', lastError: 'Runtime adapter unavailable.' }));
+    await expect(events.listEvidence({ deploymentId: second.id })).resolves.toEqual([expect.objectContaining({ operation: 'deployment.stop', status: 'failed', error: 'Runtime adapter unavailable.' })]);
   });
 
   it('recovers transient health adapter failures within the retry bound', async () => {
