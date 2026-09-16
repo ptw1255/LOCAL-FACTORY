@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { RepositoryConflictError, RepositoryPolicyError, RepositoryWorkspace } from './workspace.js';
 
 const execFileAsync = (file: string, args: string[], options: { cwd?: string } = {}) => new Promise<void>((resolve, reject) => {
@@ -34,6 +34,20 @@ describe('RepositoryWorkspace', () => {
     await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node -e "setTimeout(() => {}, 1000)"' } }));
     const result = await (await RepositoryWorkspace.open(root)).runCheck('npm run typecheck', 20);
     expect(result).toMatchObject({ command: 'npm run typecheck', timedOut: true, exitCode: expect.any(Number) });
+  });
+
+  it('does not expose factory credentials to repository check processes', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-check-environment-'));
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node -e "process.stdout.write(process.env.FACTORY_CHECK_SECRET ?? \'missing\')"' } }));
+    vi.stubEnv('FACTORY_CHECK_SECRET', 'must-not-leak');
+    try {
+      const result = await (await RepositoryWorkspace.open(root)).runCheck('npm run typecheck');
+      expect(result.exitCode).toBe(0);
+      expect(result.output).toContain('missing');
+      expect(result.output).not.toContain('must-not-leak');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('cancels an in-flight allow-listed check through its abort signal', async () => {
