@@ -104,4 +104,29 @@ describe('DeploymentReconciler', () => {
     const reconciled = await reconciler.reconcile(deployment.id, { tenantId: 'tenant-local', projectId: 'project-local' });
     expect(reconciled).toMatchObject({ observedState: 'degraded', health: 'degraded', lastError: 'Health probe failed.' });
   });
+
+  it('records reconciliation failures for stale artifacts and adapter errors', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-stale', tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const reconciler = new DeploymentReconciler(store);
+    const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'stale', artifactId: artifact.id, trigger: 'manual' });
+    await store.mutate((state) => { state.artifacts = state.artifacts.filter((candidate) => candidate.id !== artifact.id); });
+    await expect(reconciler.reconcile(deployment.id, scope)).rejects.toThrow('no longer available');
+    expect((await reconciler.list(scope))[0]).toEqual(expect.objectContaining({ observedState: 'failed', health: 'degraded', lastError: 'Deployment artifact is no longer available for this project.' }));
+
+    const healthyArtifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-adapter-error', tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const failing = new DeploymentReconciler(store, 30_000, { observe: () => { throw new Error('Runtime adapter unavailable.'); } });
+    const second = await failing.create({ scope, workflowId: seedWorkflow.id, environment: 'adapter-error', artifactId: healthyArtifact.id, trigger: 'manual' });
+    await expect(failing.reconcile(second.id, scope)).rejects.toThrow('Runtime adapter unavailable.');
+    expect((await failing.list(scope)).find((candidate) => candidate.id === second.id)).toEqual(expect.objectContaining({ observedState: 'failed', health: 'degraded', lastError: 'Runtime adapter unavailable.' }));
+  });
 });
