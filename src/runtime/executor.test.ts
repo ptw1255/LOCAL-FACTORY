@@ -501,6 +501,18 @@ describe('LocalWorkflowExecutor', () => {
     expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'ollama', 'llm.model_name': 'llama3.2' }));
   });
 
+  it('fails closed when a route requires capabilities its provider does not expose', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    if (agent === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { routes: [{ provider: 'ollama', model: 'llama3.2', capabilities: ['tools'], adapterVersion: 'ollama-v1' }] };
+    const ollama = { ensureModel: async () => undefined, chat: async () => ({ content: 'unexpected', model: 'llama3.2' }) };
+    const routedExecutor = new LocalWorkflowExecutor(store, events, ollama);
+    const run = await routedExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.error).toMatch(/required capabilities: tools/i);
+  });
+
   it('gates tool-capable agents on the declared before-tools approval policy', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];

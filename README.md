@@ -116,7 +116,10 @@ policies.
 An agent can declare a bounded list of provider routes. `fallback` tries each route in
 order and records route failures/selections in the same run trace; `single` uses only
 the first route. Each route may override the provider, model, endpoint, or Vault
-secret reference while inheriting the rest of the agent policy:
+secret reference while inheriting the rest of the agent policy. Routes may also
+declare required adapter capabilities (`text`, `structured_output`, `streaming`,
+`tools`, `usage`, `request_ids`) and an `adapterVersion`; a route fails closed when
+the selected adapter cannot satisfy those requirements:
 
 ```yaml
 model:
@@ -130,6 +133,8 @@ model:
     - provider: ollama
       model: llama3.2
       endpoint: http://host.docker.internal:11434
+      capabilities: [text, usage]
+      adapterVersion: ollama-v1
 ```
 
 Routing is bounded to eight declared attempts and does not expose API keys in YAML,

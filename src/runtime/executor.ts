@@ -934,6 +934,7 @@ export class LocalWorkflowExecutor {
             ...(invocation === undefined ? {} : {
               'llm.route.index': invocation.routeIndex,
               'llm.route.strategy': invocation.routingStrategy,
+              ...(invocation.adapterVersion === undefined ? {} : { 'llm.adapter.version': invocation.adapterVersion }),
             }),
           },
           ...(agent.observability.captureInputs
@@ -953,6 +954,7 @@ export class LocalWorkflowExecutor {
             ...(invocation === undefined ? {} : {
               'llm.route.index': invocation.routeIndex,
               'llm.route.strategy': invocation.routingStrategy,
+              ...(invocation.adapterVersion === undefined ? {} : { 'llm.adapter.version': invocation.adapterVersion }),
             }),
             ...(modelResult.requestId === undefined ? {} : { 'llm.request_id': modelResult.requestId }),
             ...(modelResult.promptTokens === undefined ? {} : { 'llm.token_count.prompt': modelResult.promptTokens }),
@@ -1007,7 +1009,7 @@ export class LocalWorkflowExecutor {
     agent: AgentDefinition,
     goal: string,
     signal: AbortSignal,
-  ): Promise<{ provider: string; result: OpenAIModelResult | OllamaModelResult; routeIndex: number; routingStrategy: 'single' | 'fallback' } | undefined> {
+  ): Promise<{ provider: string; result: OpenAIModelResult | OllamaModelResult; routeIndex: number; routingStrategy: 'single' | 'fallback'; adapterVersion?: string } | undefined> {
     const declaredRoutes = agent.model.routes ?? [];
     const routes: Array<AgentModelRoute | undefined> = declaredRoutes.length === 0
       ? [undefined]
@@ -1030,6 +1032,14 @@ export class LocalWorkflowExecutor {
       try {
         let result: OpenAIModelResult | OllamaModelResult;
         const registered = this.providerClients.get(provider);
+        const requiredCapabilities = routeAgent.model.capabilities ?? [];
+        if (requiredCapabilities.length > 0) {
+          const supportedCapabilities = provider === 'ollama'
+            ? ['text', 'usage']
+            : registered?.capabilities ?? (provider === 'openai' ? this.openai?.capabilities : this.openaiCompatible?.capabilities) ?? [];
+          const missing = requiredCapabilities.filter((capability) => !supportedCapabilities.includes(capability));
+          if (missing.length > 0) throw new Error(`Provider "${provider}" does not support required capabilities: ${missing.join(', ')}.`);
+        }
         if (registered !== undefined) {
           result = await registered.chat({ agent: routeAgent, goal, signal, traceId });
         } else if (provider === 'ollama') {
@@ -1055,7 +1065,7 @@ export class LocalWorkflowExecutor {
             },
           });
         }
-        return { provider, result, routeIndex: index, routingStrategy: strategy };
+        return { provider, result, routeIndex: index, routingStrategy: strategy, ...(routeAgent.model.adapterVersion === undefined ? {} : { adapterVersion: routeAgent.model.adapterVersion }) };
       } catch (error) {
         if (signal.aborted) throw error;
         if (strategy !== 'fallback' || index + 1 >= maxAttempts) throw error;
