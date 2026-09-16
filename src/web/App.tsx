@@ -808,6 +808,10 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     setNotice(null);
     try {
       const saved = await api.saveWorkflow(canvasToWorkflow(workflow, nodes, edges));
+      // Keep the migration/YAML serializer out of the initial IDE bundle; the
+      // compatibility canvas path is loaded only when a canvas save occurs.
+      const { renderCanvasResource } = await import('../declarative/migration');
+      await api.saveProjectFile(projectId, `canvas/${saved.id}.canvas.yaml`, renderCanvasResource(saved));
       setWorkflow(saved);
       setYamlSource((await api.declarativeYaml(projectId)).trim());
       setYamlDirty(false);
