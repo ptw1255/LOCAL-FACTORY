@@ -84,6 +84,7 @@ export function createQueuedRun(workflow: WorkflowDefinition, options: RunCreati
     approvedNodeHashes: {},
     pendingApprovalHashes: {},
     unitOutputs: {},
+    agentCheckpoints: {},
     ciCheckpoints: {},
   };
 }
@@ -904,8 +905,12 @@ export class LocalWorkflowExecutor {
       typeof node.config.maxIterations === 'number'
         ? Math.min(node.config.maxIterations, agent.limits.maxIterations)
         : agent.limits.maxIterations;
+    const checkpoint = await this.store.read((state) => state.runs.find((candidate) => candidate.id === runId)?.agentCheckpoints?.[node.id]);
+    const firstIteration = checkpoint === undefined
+      ? 1
+      : Math.min(Math.max(1, checkpoint.nextIteration), maxIterations + 1);
     let lastModelOutput: string | undefined;
-    for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+    for (let iteration = firstIteration; iteration <= maxIterations; iteration += 1) {
       signal.throwIfAborted();
       const goal = typeof node.config.goal === 'string' ? node.config.goal : 'Complete the task.';
       const invocation = await this.invokeModel(runId, traceId, node.id, agent, goal, signal);
@@ -1034,6 +1039,34 @@ export class LocalWorkflowExecutor {
           'metric.value': iterationCost,
           'agent.id': agent.id,
           'agent.version': agent.version,
+        },
+      });
+      const outputHash = modelResult === undefined
+        ? checkpoint?.outputHash
+        : createHash('sha256').update(modelResult.content).digest('hex');
+      await this.store.mutate((state) => {
+        const run = state.runs.find((candidate) => candidate.id === runId);
+        if (run === undefined) return;
+        run.agentCheckpoints ??= {};
+        run.agentCheckpoints[node.id] = {
+          nextIteration: iteration + 1,
+          maxIterations,
+          ...(outputHash === undefined ? {} : { outputHash }),
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      await this.events.emit(runId, 'agent.checkpoint.saved', `Agent checkpoint saved after iteration ${iteration}.`, {
+        nodeId: node.id,
+        signal: 'trace',
+        spanKind: 'agent',
+        attributes: {
+          'openinference.span.kind': 'AGENT',
+          'agent.id': agent.id,
+          'agent.version': agent.version,
+          'agent.iteration': iteration,
+          'agent.next_iteration': iteration + 1,
+          'agent.max_iterations': maxIterations,
+          ...(outputHash === undefined ? {} : { 'agent.output_hash': outputHash }),
         },
       });
       if (!continued) {
@@ -1296,6 +1329,7 @@ export class LocalWorkflowExecutor {
         run.completedNodeIds.push(node.id);
       }
       run.unitOutputs[node.id] = persistedResult;
+      delete run.agentCheckpoints?.[node.id];
       delete run.ciCheckpoints[node.id];
       for (const edge of workflow.edges.filter(
         (candidate) =>

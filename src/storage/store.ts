@@ -80,6 +80,7 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
     run.tenantId ??= run.workflowDefinition.tenantId ?? tenantId;
     run.projectId ??= run.workflowDefinition.projectId ?? projectId;
     run.unitOutputs ??= {};
+    run.agentCheckpoints ??= {};
     run.approvedNodeHashes ??= {};
     run.pendingApprovalHashes ??= {};
     run.ciCheckpoints ??= {};

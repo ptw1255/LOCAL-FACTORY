@@ -9,7 +9,7 @@ import { defaultWorkUnit } from '../domain/catalog.js';
 import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
 import { FileArtifactStore } from '../storage/artifact-store.js';
-import { LocalWorkflowExecutor } from './executor.js';
+import { createQueuedRun, LocalWorkflowExecutor } from './executor.js';
 import { OpenAIProviderError } from './openai.js';
 import type { GitHubRepositoryClient } from '../repository/github.js';
 
@@ -588,6 +588,37 @@ describe('LocalWorkflowExecutor', () => {
     const output = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.unitOutputs.agent as { output?: string } | undefined);
     expect(output?.output).toContain('[openai]\nprimary perspective');
     expect(output?.output).toContain('[gemini]\nsecond perspective');
+  });
+
+  it('resumes an agent loop from its persisted iteration checkpoint after restart', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agentNode = workflow.nodes.find((node) => node.id === 'agent');
+    if (agentNode === undefined) throw new Error('Agent node is missing.');
+    agentNode.config.maxIterations = 3;
+    const agent = workflow.agents[0];
+    if (agent === undefined) throw new Error('Agent definition is missing.');
+    agent.model = { provider: 'openai', model: 'test-model' };
+    const run = createQueuedRun(workflow);
+    run.status = 'running';
+    run.completedNodeIds = ['trigger', 'prepare'];
+    run.activatedNodeIds = workflow.nodes.map((node) => node.id);
+    run.unitOutputs = { trigger: true, prepare: 'Validated product request' };
+    run.agentCheckpoints = {
+      agent: { nextIteration: 2, maxIterations: 3, outputHash: 'a'.repeat(64), updatedAt: new Date().toISOString() },
+    };
+    await store.mutate((state) => { state.runs.push(run); });
+    const outputs: string[] = [];
+    const restarted = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, {
+      chat: async () => {
+        outputs.push('called');
+        return { content: `resumed-${outputs.length}`, model: 'test-model' };
+      },
+    });
+    expect(await restarted.recover()).toBe(1);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.status)) === 'succeeded');
+    expect(outputs).toHaveLength(2);
+    expect((await events.list(run.id)).filter((event) => event.type === 'agent.iteration').map((event) => event.attributes?.['agent.iteration'])).toEqual([2, 3]);
+    expect(await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.agentCheckpoints)).toEqual({});
   });
 
   it('fails closed when a route requires capabilities its provider does not expose', async () => {

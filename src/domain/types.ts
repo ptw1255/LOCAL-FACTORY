@@ -238,8 +238,18 @@ export interface RunRecord {
   approvedNodeHashes: Record<string, string>;
   pendingApprovalHashes: Record<string, string>;
   unitOutputs: Record<string, unknown>;
+  /** Payload-free progress marker used to resume an agent loop after restart. */
+  agentCheckpoints?: Record<string, AgentIterationCheckpoint>;
   /** Durable checkpoint for a repository CI observer that may outlive a process. */
   ciCheckpoints: Record<string, CiCheckpoint>;
+}
+
+export interface AgentIterationCheckpoint {
+  /** The next iteration that must be invoked for this node. */
+  nextIteration: number;
+  maxIterations: number;
+  outputHash?: string;
+  updatedAt: string;
 }
 
 /** Durable, payload-free comparison result for a replay attempt. */
