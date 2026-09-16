@@ -1286,6 +1286,7 @@ function RunsView() {
                 <option value="waiting">Waiting</option>
                 <option value="succeeded">Succeeded</option>
                 <option value="failed">Failed</option>
+                <option value="timed_out">Timed out</option>
                 <option value="cancelled">Cancelled</option>
               </select>
             </div>
