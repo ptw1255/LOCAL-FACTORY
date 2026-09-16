@@ -31,7 +31,7 @@ import { parseProjectYaml, stringifyProjectYaml } from '../declarative/yaml.js';
 import { CompositeTelemetryExporter, OtlpHttpExporter } from '../observability/otlp-exporter.js';
 import { LocalWorkflowExecutor } from '../runtime/executor.js';
 import { HttpOllamaClient } from '../runtime/ollama.js';
-import { HttpOpenAIClient } from '../runtime/openai.js';
+import { OpenAISDKClient } from '../runtime/openai-sdk.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 import { GitHubRepositoryClient } from '../repository/github.js';
 import { DeploymentReconciler, type DeploymentRuntimeAdapter } from '../deployment/reconciler.js';
@@ -131,7 +131,7 @@ export async function createApp(
   const githubRepository = options.githubRepository ?? (process.env.GITHUB_REPOSITORY_OWNER !== undefined && process.env.GITHUB_REPOSITORY_NAME !== undefined && (process.env.GITHUB_TOKEN !== undefined || process.env.GITHUB_SECRET_REF !== undefined)
     ? new GitHubRepositoryClient({ owner: process.env.GITHUB_REPOSITORY_OWNER, repo: process.env.GITHUB_REPOSITORY_NAME, ...(process.env.GITHUB_TOKEN === undefined ? {} : { token: process.env.GITHUB_TOKEN }), ...(process.env.GITHUB_SECRET_REF === undefined ? {} : { secretRef: process.env.GITHUB_SECRET_REF, secretBroker }) })
     : undefined);
-  const openai = options.openaiClient ?? new HttpOpenAIClient({ secretBroker });
+  const openai = options.openaiClient ?? new OpenAISDKClient({ secretBroker });
   const executor = new LocalWorkflowExecutor(store, events, ollama, undefined, repositoryWorkspace, githubRepository, openai);
   const ollamaAgents = await store.read((state) => state.workflows.flatMap((workflow) => workflow.agents));
   if (ollamaAgents.some((agent) => agent.model.provider?.toLowerCase() === 'ollama' && agent.model.provisioning?.mode === 'pull-on-start')) {

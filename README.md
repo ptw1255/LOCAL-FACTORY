@@ -75,7 +75,7 @@ policies.
 ### OpenAI Responses API
 
 Hosted agent boxes use the provider-neutral runtime with a server-side Responses API
-adapter. Keep the key in Vault and reference only its connection path from YAML:
+ official OpenAI Node SDK Responses adapter. Keep the key in Vault and reference only its connection path from YAML:
 
 ```yaml
 model:
@@ -93,10 +93,13 @@ vault kv put secret/connections/openai value="$OPENAI_API_KEY"
 npm run server
 ```
 
-The adapter defaults to `store: false`, bounds retries and request duration, and
-normalizes text, streaming, tool calls, usage, finish state, request IDs, and typed
-provider failures. Prompt/output capture remains opt-in in the agent observability
-policy. An external smoke test is intentionally opt-in and never runs in default CI:
+The default runtime adapter is the official `openai` Node SDK (`maxRetries: 0`, so
+the workflow dispatcher owns retry policy) and defaults to `store: false`. It
+normalizes text, structured output, streaming, tool calls, usage, finish state,
+request IDs, and typed provider failures. Prompt/output capture remains opt-in in
+the agent observability policy. The lower-level HTTP adapter remains available for
+compatibility and deterministic transport tests. An external smoke test is
+intentionally opt-in and never runs in default CI:
 
 ```bash
 OPENAI_SMOKE=1 OPENAI_API_KEY=… npm run test -- --run src/runtime/openai.smoke.test.ts
