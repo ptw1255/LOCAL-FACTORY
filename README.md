@@ -177,6 +177,19 @@ intentionally opt-in and never runs in default CI:
 OPENAI_SMOKE=1 OPENAI_API_KEY=… npm run test -- --run src/runtime/openai.smoke.test.ts
 ```
 
+The same opt-in boundary covers the other provider adapters. These tests never
+run in the default suite and read credentials only from the process environment:
+
+```bash
+ANTHROPIC_SMOKE=1 ANTHROPIC_API_KEY=… npm run test -- --run src/runtime/provider.smoke.test.ts
+GEMINI_SMOKE=1 GEMINI_API_KEY=… npm run test -- --run src/runtime/provider.smoke.test.ts
+OLLAMA_SMOKE=1 OLLAMA_MODEL=llama3.2 npm run test -- --run src/runtime/provider.smoke.test.ts
+LOCAL_MODEL_SMOKE=1 LOCAL_MODEL_BASE_URL=http://127.0.0.1:1234/v1 LOCAL_MODEL_NAME=qwen2.5-coder-7b npm run test -- --run src/runtime/provider.smoke.test.ts
+```
+
+Smoke tests assert only that a provider returns non-empty normalized text and a
+model identity; prompts and outputs are not persisted by the test harness.
+
 ### Local repository checks
 
 Set `REPOSITORY_WORKSPACE` to expose the bounded repository API. Only `npm test`,
