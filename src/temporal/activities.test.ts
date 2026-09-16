@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { WorkUnitTimeoutError } from '../runtime/work-unit-dispatcher.js';
-import { configureTemporalObservabilitySink, executeNodeActivity, TemporalActivityUnsupportedError } from './activities.js';
+import { configureTemporalObservabilitySink, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
 
 describe('Temporal node activities', () => {
   it('executes deterministic nodes through the WorkUnit contract', async () => {
@@ -155,5 +155,23 @@ describe('Temporal node activities', () => {
       config: { durationMs: 50 },
       unit: { ...defaultWorkUnit('wait'), timeoutMs: 5 },
     })).rejects.toBeInstanceOf(WorkUnitTimeoutError);
+  });
+
+  it('propagates and then detaches Temporal cancellation listeners', () => {
+    const source = new AbortController();
+    const target = new AbortController();
+    const unlink = linkTemporalCancellation(target, source.signal);
+    const reason = new Error('worker shutdown');
+    source.abort(reason);
+    expect(target.signal.aborted).toBe(true);
+    expect(target.signal.reason).toBe(reason);
+
+    unlink();
+    const secondSource = new AbortController();
+    const secondTarget = new AbortController();
+    const unlinkSecond = linkTemporalCancellation(secondTarget, secondSource.signal);
+    unlinkSecond();
+    secondSource.abort(new Error('late shutdown'));
+    expect(secondTarget.signal.aborted).toBe(false);
   });
 });
