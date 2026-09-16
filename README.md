@@ -242,6 +242,17 @@ The repository includes a complete example at
 [`examples/code-review-loop.yaml`](examples/code-review-loop.yaml). Validate or
 inspect any project definition with the local CLI:
 
+The file-backed format uses `factory.yaml` as the Project entrypoint and keeps
+resources independently reviewable: `workflows/*.workflow.yaml`,
+`agents/*.agent.yaml`, `units/*.unit.yaml`, `policies/*.policy.yaml`,
+`connections/*.connection.yaml`, `environments/*.environment.yaml`,
+`schemas/*.schema.json`, and `canvas/*.canvas.yaml`. Every file uses the same
+`apiVersion`, `kind`, `metadata.id`, `metadata.version`, and `spec` envelope.
+References resolve by stable `Kind/id`, so renaming or moving a file does not
+change identity. Environment values merge from the project defaults, then the
+selected environment resource, then workflow-local overrides; later layers
+win and secret values are rejected at every layer (use Vault `secretRef`).
+
 ```bash
 npm run factory -- validate examples/code-review-loop.yaml
 npm run factory -- plan examples/code-review-loop.yaml

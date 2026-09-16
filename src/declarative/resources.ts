@@ -7,7 +7,7 @@ import type { ProjectRecord, WorkflowDefinition } from '../domain/types.js';
 
 export const resourceEnvelopeSchema = z.object({
   apiVersion: z.literal('factory.agentic/v1'),
-  kind: z.enum(['Project', 'Workflow', 'Agent', 'WorkUnit']),
+  kind: z.enum(['Project', 'Workflow', 'Agent', 'WorkUnit', 'Policy', 'Connection', 'Environment', 'Schema', 'Canvas']),
   metadata: z.object({
     id: z.string().min(1),
     version: z.number().int().positive(),
@@ -43,6 +43,32 @@ const kindSpecSchemas: Record<z.infer<typeof resourceEnvelopeSchema>['kind'], z.
     steps: z.array(z.record(z.string(), z.unknown())).min(1),
   }).passthrough(),
   WorkUnit: workUnitSchema,
+  Policy: z.object({
+    rules: z.array(z.record(z.string(), z.unknown())).optional(),
+  }).passthrough(),
+  Connection: z.object({
+    connector: z.string().min(1),
+    environment: z.string().min(1),
+    scopes: z.array(z.string().min(1)).max(100).optional(),
+    secretRef: z.string().min(1).optional(),
+  }).passthrough(),
+  Environment: z.object({
+    name: z.string().min(1),
+    overrides: z.record(z.string(), z.unknown()).optional(),
+    variables: z.record(z.string(), z.unknown()).optional(),
+  }).passthrough(),
+  // JSON Schema documents are intentionally permissive beyond their optional
+  // type field so schemas can use draft-specific keywords without a runtime
+  // compiler release for every keyword.
+  Schema: z.object({ type: z.string().min(1).optional() }).passthrough(),
+  Canvas: z.object({
+    workflowId: z.string().min(1),
+    nodes: z.array(z.object({
+      id: z.string().min(1),
+      position: z.object({ x: z.number().finite(), y: z.number().finite() }),
+    }).passthrough()).optional(),
+    edges: z.array(z.object({ source: z.string().min(1), target: z.string().min(1) }).passthrough()).optional(),
+  }).passthrough(),
 };
 
 export interface ResourceFile { path: string; source: string }
@@ -50,6 +76,7 @@ export interface ResourceFile { path: string; source: string }
 export interface CompiledResourceFiles {
   project: ProjectRecord;
   workflows: WorkflowDefinition[];
+  resources: Array<z.infer<typeof resourceEnvelopeSchema>>;
 }
 
 const forbiddenMetadata = new Set(['createdAt', 'updatedAt', 'status', 'deployment', 'runState']);
@@ -115,7 +142,9 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
     if (seen.has(identity)) throw new Error(`${resources[index]?.path ?? 'resource'}:1: duplicate resource identity ${identity}`);
     seen.add(identity);
   });
-  const projectResource = envelopes.find((resource) => resource.kind === 'Project');
+  const projectResources = envelopes.filter((resource) => resource.kind === 'Project');
+  if (projectResources.length !== 1) throw new Error(`Resource workspace must contain exactly one Project resource; found ${projectResources.length}.`);
+  const projectResource = projectResources[0];
   if (projectResource === undefined) throw new Error('Resource workspace must contain one Project resource.');
   const projectSpec = projectResource.spec;
   const agents = envelopes.filter((resource) => resource.kind === 'Agent').map((resource) => ({
@@ -125,18 +154,38 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
     ...(resource.metadata.name === undefined ? {} : { name: resource.metadata.name }),
   }));
   const workUnits = new Map(envelopes.filter((resource) => resource.kind === 'WorkUnit').map((resource) => [resource.metadata.id, resource.spec]));
+  const workUnitIds = new Set(workUnits.keys());
+  const agentIds = new Set(envelopes.filter((resource) => resource.kind === 'Agent').map((resource) => resource.metadata.id));
+  const policyIds = new Set(envelopes.filter((resource) => resource.kind === 'Policy').map((resource) => resource.metadata.id));
+  const connectionIds = new Set(envelopes.filter((resource) => resource.kind === 'Connection').map((resource) => resource.metadata.id));
+  const resolveReference = (value: string, kind: string, ids: Set<string>): string | undefined => {
+    const id = value.startsWith(`${kind}/`) ? value.slice(kind.length + 1) : value;
+    return ids.has(id) ? id : undefined;
+  };
   const workflows = envelopes.filter((resource) => resource.kind === 'Workflow').map((resource) => ({
     ...(resource.spec as Record<string, unknown>),
     id: resource.metadata.id,
     ...(resource.metadata.version === undefined ? {} : { version: resource.metadata.version }),
     ...(resource.metadata.name === undefined ? {} : { name: resource.metadata.name }),
-    steps: (resource.spec.steps as Array<Record<string, unknown>>).map((step) => {
-      if (typeof step.unit !== 'string') return step;
-      const unit = workUnits.get(step.unit);
-      if (unit === undefined) throw new Error(`Workflow references missing WorkUnit/${step.unit}.`);
-      return { ...step, unit };
+    steps: (resource.spec.steps as Array<Record<string, unknown>>).map((step, stepIndex) => {
+      let resolved = { ...step };
+      if (typeof step.unit === 'string') {
+        const unitId = resolveReference(step.unit, 'WorkUnit', workUnitIds);
+        if (unitId === undefined) throw new Error(`Workflow ${resource.metadata.id} step ${String(step.id ?? stepIndex + 1)} references missing WorkUnit/${step.unit}.`);
+        const unit = workUnits.get(unitId);
+        if (unit === undefined) throw new Error(`Workflow references missing WorkUnit/${step.unit}.`);
+        resolved = { ...resolved, unit };
+      }
+      if (typeof step.agent === 'string' && resolveReference(step.agent, 'Agent', agentIds) === undefined) throw new Error(`Workflow ${resource.metadata.id} step ${String(step.id ?? stepIndex + 1)} references missing Agent/${step.agent}.`);
+      if (typeof step.policy === 'string' && resolveReference(step.policy, 'Policy', policyIds) === undefined) throw new Error(`Workflow ${resource.metadata.id} step ${String(step.id ?? stepIndex + 1)} references missing Policy/${step.policy}.`);
+      if (typeof step.connection === 'string' && resolveReference(step.connection, 'Connection', connectionIds) === undefined) throw new Error(`Workflow ${resource.metadata.id} step ${String(step.id ?? stepIndex + 1)} references missing Connection/${step.connection}.`);
+      return resolved;
     }),
   }));
+  for (const resource of envelopes.filter((candidate) => candidate.kind === 'Canvas')) {
+    const workflowId = (resource.spec as { workflowId: string }).workflowId;
+    if (resolveReference(workflowId, 'Workflow', new Set(workflows.map((workflow) => workflow.id))) === undefined) throw new Error(`Canvas/${resource.metadata.id} references missing Workflow/${workflowId}.`);
+  }
   const source = {
     apiVersion: 'factory.agentic/v1', kind: 'Project',
     metadata: { id: projectResource.metadata.id, name: projectResource.metadata.name ?? projectResource.metadata.id, description: typeof projectSpec.description === 'string' ? projectSpec.description : '' },
@@ -160,7 +209,7 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
         node.sourceLine = lineForListId(sourceResource.source, node.id, fallbackLine);
       }
     }
-    return compiled;
+    return { ...compiled, resources: envelopes };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'resource compilation failed';
     // Preserve the authored file as the diagnostic anchor while the aggregate
