@@ -126,6 +126,38 @@ describe('coding workflow API', () => {
     } finally { await app.close(); }
   });
 
+  it('routes a failed required CI result into a bounded remediation branch', async () => {
+    const githubFetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/example/repo/actions/runs/3', output: { text: 'test failed' } }] }), { status: 200 }));
+    const github = new GitHubRepositoryClient({ token: 'test-token', owner: 'example', repo: 'repo', fetcher: githubFetcher });
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-e2e-ci-route-state-'));
+    const store = new JsonStore(path.join(dataRoot, 'state.json'));
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-ci-route-e2e';
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'ci', type: 'repositoryCi', label: 'Verify CI', position: { x: 180, y: 0 }, config: { ref: 'commit-failed', required: ['test'], timeoutMs: 500, intervalMs: 10, failurePolicy: 'route' }, unit: defaultWorkUnit('repositoryCi') },
+      { id: 'repair', type: 'transform', label: 'Prepare remediation', position: { x: 360, y: 120 }, config: { value: 'repair-required' }, unit: defaultWorkUnit('transform') },
+      { id: 'output', type: 'output', label: 'Route outcome', position: { x: 540, y: 120 }, config: { value: 'remediation-required' }, unit: defaultWorkUnit('output') },
+    ];
+    workflow.edges = [
+      { id: 'trigger-ci', source: 'trigger', target: 'ci' },
+      { id: 'ci-repair', source: 'ci', target: 'repair', condition: 'failure' },
+      { id: 'repair-output', source: 'repair', target: 'output' },
+    ];
+    await store.mutate((state) => { state.workflows.push(workflow); state.workflowVersions.push(structuredClone(workflow)); });
+    const app = await createApp({ store, githubRepository: github, serveStatic: false });
+    try {
+      const started = await app.inject({ method: 'POST', url: `/api/workflows/${workflow.id}/runs`, payload: {} });
+      const runId = (started.json() as { id: string }).id;
+      const completed = await waitFor(app, runId, 'succeeded');
+      expect((completed.unitOutputs as { repair?: string }).repair).toBe('repair-required');
+      const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
+      const ciEvidence = (evidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items.find((entry) => entry.unitId === 'ci' && entry.status === 'succeeded');
+      expect(ciEvidence?.metadata).toEqual(expect.objectContaining({ 'ci.status': 'failure', 'ci.failure.0.name': 'test', 'ci.failure.0.conclusion': 'failure', 'ci.failure.0.url': 'https://github.com/example/repo/actions/runs/3' }));
+    } finally { await app.close(); }
+  });
+
   it('requires commits to bind selected paths to an upstream patch artifact', async () => {
     const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-e2e-patch-'));
     await execFileAsync('git', ['init', '-b', 'main'], { cwd: repoRoot });
