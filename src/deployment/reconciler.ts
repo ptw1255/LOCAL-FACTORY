@@ -113,12 +113,16 @@ export class DeploymentReconciler {
   }
 
   public async reconcile(id: string, scope: DeploymentScope): Promise<DeploymentRecord> {
-    return this.store.mutate(async (state) => {
+    let transitionError: unknown;
+    const result = await this.store.mutate(async (state) => {
       const deployment = state.deployments.find((candidate) => candidate.id === id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
       if (deployment === undefined) throw new Error('Deployment not found.');
       const now = new Date();
       this.acquireLease(deployment, now.toISOString());
       try {
+        if (this.findArtifact(state.artifacts, deployment.artifactId, scope) === undefined) {
+          throw new Error('Deployment artifact is no longer available for this project.');
+        }
         const previousObserved = deployment.observedState;
         const observation = await this.adapter.observe(deployment);
         const targetObserved = observation.observedState;
@@ -140,11 +144,33 @@ export class DeploymentReconciler {
         deployment.triggerStatus = observation.triggerStatus;
         deployment.lastError = observation.lastError;
         deployment.updatedAt = now.toISOString();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Deployment reconciliation failed.';
+        deployment.observedState = 'failed';
+        deployment.health = 'degraded';
+        deployment.lastError = message;
+        deployment.updatedAt = now.toISOString();
+        const last = deployment.history[0];
+        if (last?.outcome !== 'failed' || last.reason !== message) {
+          deployment.history.unshift({
+            id: randomUUID(),
+            action: deployment.desiredState === 'running' ? 'start' : 'stop',
+            actor: 'reconciler',
+            occurredAt: now.toISOString(),
+            fromArtifactId: deployment.artifactId,
+            toArtifactId: deployment.artifactId,
+            outcome: 'failed',
+            reason: message,
+          });
+        }
+        transitionError = error;
       } finally {
         delete deployment.lease;
       }
       return deployment;
     });
+    if (transitionError !== undefined) throw transitionError;
+    return result;
   }
 
   private acquireLease(deployment: DeploymentRecord, nowIso: string): void {
