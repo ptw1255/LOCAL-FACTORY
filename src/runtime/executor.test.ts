@@ -323,6 +323,23 @@ describe('LocalWorkflowExecutor', () => {
     expect((await store.read((state) => state.runs.find((candidate) => candidate.id === advisoryRun.id)?.unitOutputs.prepare))).toMatchObject({ required: false, promotionBlocked: false });
   });
 
+  it('records required repository check timeouts as timed-out evidence', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-check-timeout-runtime-'));
+    await writeFile(path.join(directory, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node -e "setTimeout(() => {}, 1000)"' } }));
+    const repository = await (await import('../repository/workspace.js')).RepositoryWorkspace.open(directory);
+    const workflow = structuredClone(seedWorkflow);
+    const prepare = workflow.nodes.find((node) => node.id === 'prepare');
+    if (prepare === undefined) throw new Error('Seed prepare node is missing.');
+    prepare.type = 'repositoryCheck';
+    prepare.config = { command: 'npm run typecheck', timeoutMs: 20 };
+    prepare.unit = defaultWorkUnit('repositoryCheck');
+    const checkExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, repository);
+    const run = await checkExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'timed_out');
+    const failed = (await events.listEvidence(run.id)).find((entry) => entry.unitId === 'prepare' && entry.status === 'timed_out');
+    expect(failed).toEqual(expect.objectContaining({ status: 'timed_out', metadata: expect.objectContaining({ 'check.timed_out': true }) }));
+  });
+
   it('routes OpenAI agents through the provider-neutral agent lifecycle', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];
@@ -498,7 +515,11 @@ describe('LocalWorkflowExecutor', () => {
     } as unknown as GitHubRepositoryClient;
     const firstExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, firstGithub);
     const run = await firstExecutor.start(workflow);
-    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.ciCheckpoints.ci)) !== undefined);
+    await waitFor(async () => {
+      const checkpointed = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.ciCheckpoints.ci);
+      const waitingEvidence = (await events.listEvidence(run.id)).some((entry) => entry.unitId === 'ci' && entry.status === 'waiting');
+      return checkpointed !== undefined && waitingEvidence;
+    });
     expect((await events.listEvidence(run.id)).some((entry) => entry.unitId === 'ci' && entry.status === 'waiting')).toBe(true);
 
     const secondGithub = {

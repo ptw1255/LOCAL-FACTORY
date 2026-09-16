@@ -11,6 +11,14 @@ const ALLOWED_CHECKS = new Set(['npm test', 'npm run typecheck', 'npm run build'
 
 export interface RepositoryEntry { path: string; kind: 'file' | 'directory'; size?: number }
 export interface CheckResult { command: string; exitCode: number; durationMs: number; output: string; timedOut: boolean }
+export class RepositoryCheckError extends Error {
+  public readonly code = 'REPOSITORY_CHECK_FAILED';
+  public constructor(message: string, public readonly result: CheckResult) { super(message); this.name = 'RepositoryCheckError'; }
+}
+export class RepositoryCheckTimeoutError extends Error {
+  public readonly code = 'REPOSITORY_CHECK_TIMED_OUT';
+  public constructor(message: string, public readonly result: CheckResult) { super(message); this.name = 'RepositoryCheckTimeoutError'; }
+}
 export interface PatchArtifact { id: string; baseRevision: string; changedPaths: string[]; files?: Array<{ path: string; sha256?: string }>; patch: string; createdAt: string }
 export type RepositoryMutation =
   | { operation: 'create' | 'replace'; path: string; content: string; expectedSha256?: string }
