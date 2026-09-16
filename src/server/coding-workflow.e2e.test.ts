@@ -116,10 +116,10 @@ describe('coding workflow API', () => {
       expect(terminal?.status).toBe('succeeded');
       expect(githubFetcher).toHaveBeenCalledTimes(4);
       const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
-      const operations = (evidence.json() as { items: Array<{ unitId: string; status: string }> }).items;
+      const operations = (evidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items;
       expect(operations.some((entry) => entry.unitId === 'commit' && entry.status === 'succeeded')).toBe(true);
-      expect(operations.some((entry) => entry.unitId === 'pr' && entry.status === 'succeeded')).toBe(true);
-      expect(operations.some((entry) => entry.unitId === 'ci' && entry.status === 'succeeded')).toBe(true);
+      expect(operations.some((entry) => entry.unitId === 'pr' && entry.status === 'succeeded' && entry.metadata?.['pull_request.number'] === 12 && entry.metadata?.['provider.url'] === 'https://github.com/example/repo/pull/12')).toBe(true);
+      expect(operations.some((entry) => entry.unitId === 'ci' && entry.status === 'succeeded' && entry.metadata?.['ci.status'] === 'success' && entry.metadata?.['ci.ref'] === baseRevision)).toBe(true);
       await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe('source');
     } finally { await app.close(); }
   });
