@@ -3,6 +3,10 @@ export interface PullRequest { number: number; url: string; head: string; base: 
 export interface CheckRunSummary { name: string; status: string; conclusion: string | null; url?: string; summary?: string }
 export interface CiFailure { name: string; conclusion: string | null; url?: string; summary?: string }
 export interface CiResult { ref: string; status: 'success' | 'failure' | 'pending' | 'cancelled' | 'timed_out'; checks: CheckRunSummary[]; required: string[]; failures: CiFailure[] }
+export class RepositoryCiError extends Error {
+  public readonly code = 'REPOSITORY_CI_FAILED';
+  public constructor(message: string, public readonly result: CiResult) { super(message); this.name = 'RepositoryCiError'; }
+}
 
 export interface GitHubClientOptions { token?: string; secretRef?: string; secretBroker?: SecretBroker; owner: string; repo: string; fetcher?: typeof fetch }
 
