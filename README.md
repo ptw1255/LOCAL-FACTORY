@@ -189,6 +189,20 @@ POST /api/projects/:projectId/declarative       # replace project config from { 
 Imports are validated and compiled through the same canonical schemas used by the
 runtime. A failed import leaves the existing project configuration untouched.
 
+### Artifact-backed run data
+
+Large event payloads and completed unit outputs are stored outside the control-plane
+state as content-addressed artifacts. Runs persist only an `artifactRef` containing
+the SHA-256 identity, content type, size, and tenant/project scope; the executor
+resolves references before passing inputs to downstream units. This keeps PostgreSQL
+rows and JSON state bounded without changing workflow semantics. Local development
+uses a filesystem store at `.data/artifacts` (or `ARTIFACT_STORE_DIR`); Docker mounts
+that directory as the `artifact_data` volume. Artifacts follow the same 48-hour
+retention window as runtime events and are pruned by the observability cleanup loop.
+
+Prompt and model output capture remains governed by each agent's observability policy;
+artifact storage does not opt those fields in.
+
 ## Run with Docker Desktop
 
 Docker Desktop can run the app and PostgreSQL together:

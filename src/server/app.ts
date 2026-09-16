@@ -38,6 +38,7 @@ import { DeploymentReconciler, type DeploymentRuntimeAdapter } from '../deployme
 import type { OpenAIClient } from '../runtime/openai.js';
 import { JsonStore } from '../storage/json-store.js';
 import { PostgresStore } from '../storage/postgres-store.js';
+import { FileArtifactStore, type ArtifactStore } from '../storage/artifact-store.js';
 import { DEFAULT_PROJECT_ID, DEFAULT_TENANT_ID, type PlatformStore } from '../storage/store.js';
 
 export interface AppOptions {
@@ -52,6 +53,7 @@ export interface AppOptions {
   githubRepository?: GitHubRepositoryClient;
   openaiClient?: OpenAIClient;
   deploymentAdapter?: DeploymentRuntimeAdapter;
+  artifactStore?: ArtifactStore;
 }
 
 function errorMessage(error: unknown): string {
@@ -132,7 +134,9 @@ export async function createApp(
     : positiveNumber(process.env.EVIDENCE_RETENTION_HOURS, 1);
   const exporter = telemetryExporter();
   const phoenixUiUrl = process.env.PHOENIX_UI_URL?.trim() || undefined;
-  const events = new EventService(store, { retentionHours, ...(evidenceRetentionHours === undefined ? {} : { evidenceRetentionHours }), exporter });
+  const artifactDirectory = process.env.ARTIFACT_STORE_DIR?.trim() || path.join(path.dirname(dataFile), 'artifacts');
+  const artifactStore = options.artifactStore ?? new FileArtifactStore(artifactDirectory);
+  const events = new EventService(store, { retentionHours, ...(evidenceRetentionHours === undefined ? {} : { evidenceRetentionHours }), exporter, artifactStore });
   const ollama = new HttpOllamaClient();
   const repositoryWorkspace = options.repositoryWorkspace ?? (process.env.REPOSITORY_WORKSPACE === undefined
     ? undefined

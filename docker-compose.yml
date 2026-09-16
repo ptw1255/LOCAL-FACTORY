@@ -31,6 +31,7 @@ services:
       retries: 5
     volumes:
       - app_data:/app/.data
+      - artifact_data:/app/.data/artifacts
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -91,3 +92,4 @@ volumes:
   postgres_data:
   phoenix_data:
   ollama_data:
+  artifact_data:
