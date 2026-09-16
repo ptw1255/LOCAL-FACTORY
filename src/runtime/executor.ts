@@ -444,7 +444,18 @@ export class LocalWorkflowExecutor {
             await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'cancelled', idempotencyKey: `${unitEvidenceKey}:cancelled`, output: result });
             return;
           }
-          await this.events.recordEvidence({ runId, unitId: nextNode.id, operation: nextNode.type, status: 'succeeded', idempotencyKey: `${unitEvidenceKey}:succeeded`, output: result, metadata: this.operationMetadata(result) });
+          await this.events.recordEvidence({
+            runId,
+            unitId: nextNode.id,
+            operation: nextNode.type,
+            status: 'succeeded',
+            idempotencyKey: `${unitEvidenceKey}:succeeded`,
+            output: result,
+            metadata: {
+              ...(this.operationMetadata(result) ?? {}),
+              ...(this.operationMetadata(persistedResult) ?? {}),
+            },
+          });
           await this.events.emit(runId, 'unit.completed', `${nextNode.label} unit completed.`, {
             nodeId: nextNode.id,
             signal: 'trace',
@@ -1221,6 +1232,10 @@ export class LocalWorkflowExecutor {
       const patchValue = patch as Record<string, unknown>;
       if (typeof patchValue.id === 'string') metadata['patch.artifact_id'] = patchValue.id;
       if (Array.isArray(patchValue.changedPaths)) metadata['patch.changed_path_count'] = patchValue.changedPaths.length;
+    }
+    const artifactRef = value.artifactRef;
+    if (artifactRef !== null && typeof artifactRef === 'object' && typeof (artifactRef as { id?: unknown }).id === 'string') {
+      metadata['artifact.payload_id'] = (artifactRef as { id: string }).id;
     }
     return Object.keys(metadata).length === 0 ? undefined : metadata;
   }
