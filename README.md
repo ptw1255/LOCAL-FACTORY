@@ -248,6 +248,13 @@ Dataset cases reference reports and run/version provenance; prompts, outputs, an
 secrets are never copied into the dataset. List or inspect datasets with
 `GET /api/evaluation-datasets` and `GET /api/evaluation-datasets/:id`.
 
+Workflows can also score an upstream value inline with the deterministic `evaluator`
+node. Supported modes are `equals`, `contains`, `fieldEquals`, `numericGte`, and
+`exists`; each returns `{ score, threshold, passed, mode }`. Set
+`failOnThreshold: true` when a failed score must stop the run, or route on the
+payload's `passed` value for an explicit remediation branch. The evaluator never
+stores the compared payload in telemetry beyond the normal opt-in capture policy.
+
 ### Artifact-backed run data
 
 Large event payloads and completed unit outputs are stored outside the control-plane

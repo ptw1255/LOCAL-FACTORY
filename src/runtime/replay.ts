@@ -18,7 +18,7 @@ export class ReplayNotDeterministicError extends Error {
   }
 }
 
-const deterministicNodeTypes = new Set(['manualTrigger', 'transform', 'output', 'code', 'condition']);
+const deterministicNodeTypes = new Set(['manualTrigger', 'transform', 'output', 'code', 'condition', 'evaluator']);
 
 /** Replays a pinned run definition and compares only safe structural outputs. */
 export class WorkflowReplayService {

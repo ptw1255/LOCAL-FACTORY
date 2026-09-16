@@ -67,6 +67,31 @@ describe('LocalWorkflowExecutor', () => {
     );
   });
 
+  it('executes deterministic evaluator work units and enforces optional thresholds', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-evaluator';
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'value', type: 'transform', label: 'Value', position: { x: 180, y: 0 }, config: { value: { status: 'ok', score: 0.9 } }, unit: defaultWorkUnit('transform') },
+      { id: 'evaluate', type: 'evaluator', label: 'Evaluate', position: { x: 360, y: 0 }, config: { mode: 'fieldEquals', field: 'status', expected: 'ok', threshold: 1 }, unit: defaultWorkUnit('evaluator') },
+    ];
+    workflow.edges = [{ id: 'trigger-value', source: 'trigger', target: 'value' }, { id: 'value-evaluate', source: 'value', target: 'evaluate' }];
+    const run = await executor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
+    const succeeded = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id));
+    expect(succeeded?.unitOutputs.evaluate).toEqual({ score: 1, threshold: 1, passed: true, mode: 'fieldEquals' });
+    const failedWorkflow = structuredClone(workflow);
+    failedWorkflow.id = 'workflow-evaluator-fail';
+    const evaluator = failedWorkflow.nodes.find((node) => node.id === 'evaluate');
+    if (evaluator === undefined) throw new Error('Evaluator node is missing.');
+    evaluator.config = { mode: 'fieldEquals', field: 'status', expected: 'failed', threshold: 1, failOnThreshold: true };
+    const failedRun = await executor.start(failedWorkflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === failedRun.id)))?.status === 'failed');
+    const failedEvidence = await events.listEvidence(failedRun.id);
+    expect(failedEvidence.some((entry) => entry.unitId === 'evaluate' && entry.status === 'failed' && entry.error?.includes('Evaluator threshold failed'))).toBe(true);
+  });
+
   it('waits for and resumes from a human approval', async () => {
     const workflow = structuredClone(seedWorkflow);
     const output = workflow.nodes.find((node) => node.id === 'output');
