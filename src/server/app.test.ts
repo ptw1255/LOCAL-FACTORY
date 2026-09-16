@@ -258,6 +258,36 @@ describe('platform API', () => {
     expect(missing.statusCode).toBe(404);
   });
 
+  it('retains the last valid artifact when a later compilation fails', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const validFiles = [
+      ['factory.yaml', 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: project-local\n  version: 1\n  name: Local\nspec: {}'],
+      ['workflows/review.workflow.yaml', 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: review\n  version: 1\n  name: Review\nspec:\n  trigger: manual\n  steps:\n    - id: done\n      type: output'],
+    ] as const;
+    for (const [filePath, content] of validFiles) {
+      expect((await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: filePath, content } })).statusCode).toBe(200);
+    }
+    const valid = await app.inject({ method: 'POST', url: '/api/projects/project-local/compile', headers, payload: {} });
+    expect(valid.statusCode).toBe(200);
+    const artifactId = valid.json<{ id: string }>().id;
+    const invalid = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/project-local/files',
+      headers,
+      payload: { path: 'workflows/review.workflow.yaml', content: 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata: [' },
+    });
+    expect(invalid.statusCode).toBe(200);
+    const failedCompile = await app.inject({ method: 'POST', url: '/api/projects/project-local/compile', headers, payload: {} });
+    expect(failedCompile.statusCode).toBe(422);
+    expect(failedCompile.json<{ diagnostics: unknown[] }>().diagnostics.length).toBeGreaterThan(0);
+    const artifacts = await app.inject({ method: 'GET', url: '/api/projects/project-local/artifacts', headers });
+    const retainedArtifacts = artifacts.json<{ items: Array<{ id: string }> }>().items;
+    expect(retainedArtifacts).toHaveLength(1);
+    expect(retainedArtifacts[0]?.id).toBe(artifactId);
+    const retained = await app.inject({ method: 'GET', url: `/api/projects/project-local/artifacts/${encodeURIComponent(artifactId)}`, headers });
+    expect(retained.statusCode).toBe(200);
+  });
+
   it('previews and idempotently migrates aggregate workflow records into resource files', async () => {
     const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
     const preview = await app.inject({ method: 'POST', url: '/api/projects/project-local/migrate', headers, payload: {} });
