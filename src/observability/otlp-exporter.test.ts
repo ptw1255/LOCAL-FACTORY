@@ -18,6 +18,10 @@ const baseEvent: RunEvent = {
     'openinference.span.kind': 'AGENT',
     'tenant.id': 'tenant-local',
     'project.id': 'project-local',
+    'run.id': 'run-1',
+    'trace.id': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'span.id': 'bbbbbbbbbbbbbbbb',
+    'unit.id': 'agent-1',
   },
 };
 
@@ -37,10 +41,15 @@ describe('OtlpHttpExporter', () => {
     const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://phoenix:6006/v1/traces');
     const payload = JSON.parse(String(request.body)) as {
-      resourceSpans: Array<{ resource: { attributes: Array<{ key: string }> }; spans?: unknown[] }>;
+      resourceSpans: Array<{
+        resource: { attributes: Array<{ key: string }> };
+        scopeSpans?: Array<{ spans?: Array<{ attributes?: Array<{ key: string }> }> }>;
+      }>;
     };
     expect(payload.resourceSpans).toHaveLength(1);
     expect(payload.resourceSpans[0]?.resource.attributes.map((item) => item.key)).toContain('project.id');
+    const span = (payload.resourceSpans[0]?.scopeSpans?.[0] as { spans?: Array<{ attributes?: Array<{ key: string }> }> } | undefined)?.spans?.[0];
+    expect(span?.attributes?.map((item) => item.key)).toEqual(expect.arrayContaining(['run.id', 'trace.id', 'span.id', 'unit.id']));
   });
 
   it('does not send non-trace signals to a Phoenix trace-only exporter', async () => {
