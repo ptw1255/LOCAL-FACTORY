@@ -8,6 +8,7 @@ import { createApp } from './app.js';
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
 import { JsonStore } from '../storage/json-store.js';
+import { ProjectWorkspace } from '../storage/project-workspace.js';
 
 async function waitForTerminal(store: JsonStore, runId: string): Promise<void> {
   const deadline = Date.now() + 3_000;
@@ -292,6 +293,18 @@ describe('platform API', () => {
     expect((await app.inject({ method: 'POST', url: '/api/projects/project-local/files/directory', headers, payload: { path: '../outside' } })).statusCode).toBe(422);
     const events = await app.inject({ method: 'GET', url: '/api/projects/project-local/files/events', headers });
     expect(events.json<{ items: Array<{ attributes?: Record<string, unknown> }> }>().items).toEqual(expect.arrayContaining([expect.objectContaining({ attributes: expect.objectContaining({ 'workspace.file.operation': 'directory-created', 'workspace.file.path': 'units' }) })]));
+  });
+
+  it('uses the mounted project workspace as source-of-truth when configured', async () => {
+    await app.close();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-api-workspace-'));
+    app = await createApp({ store, projectWorkspace: new ProjectWorkspace(root), serveStatic: false });
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const saved = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'workspace.txt', content: 'filesystem source' } });
+    expect(saved.statusCode).toBe(200);
+    expect(await store.read((state) => state.files.some((file) => file.path === 'workspace.txt'))).toBe(false);
+    const loaded = await app.inject({ method: 'GET', url: '/api/projects/project-local/files?path=workspace.txt', headers });
+    expect(loaded.json<{ content: string }>().content).toBe('filesystem source');
   });
 
   it('exposes deployments through the lean envelope projection', async () => {
