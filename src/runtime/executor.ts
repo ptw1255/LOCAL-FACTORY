@@ -865,7 +865,11 @@ export class LocalWorkflowExecutor {
             'agent.version': agent.version,
             'agent.iteration': iteration,
             'agent.max_iterations': maxIterations,
-            'llm.model_name': agent.model.model ?? agent.model.routingAlias ?? 'unconfigured',
+            'llm.model_name': modelResult?.model ?? agent.model.model ?? agent.model.routingAlias ?? 'unconfigured',
+            ...(invocation === undefined ? {} : {
+              'llm.route.index': invocation.routeIndex,
+              'llm.route.strategy': invocation.routingStrategy,
+            }),
           },
           ...(agent.observability.captureInputs
             ? { data: { iteration, goal } }
@@ -881,6 +885,10 @@ export class LocalWorkflowExecutor {
             'openinference.span.kind': 'LLM',
             'llm.model_name': modelResult.model,
             'llm.provider': provider ?? 'unknown',
+            ...(invocation === undefined ? {} : {
+              'llm.route.index': invocation.routeIndex,
+              'llm.route.strategy': invocation.routingStrategy,
+            }),
             ...(modelResult.requestId === undefined ? {} : { 'llm.request_id': modelResult.requestId }),
             ...(modelResult.promptTokens === undefined ? {} : { 'llm.token_count.prompt': modelResult.promptTokens }),
             ...(modelResult.completionTokens === undefined ? {} : { 'llm.token_count.completion': modelResult.completionTokens }),
@@ -934,7 +942,7 @@ export class LocalWorkflowExecutor {
     agent: AgentDefinition,
     goal: string,
     signal: AbortSignal,
-  ): Promise<{ provider: string; result: OpenAIModelResult | OllamaModelResult } | undefined> {
+  ): Promise<{ provider: string; result: OpenAIModelResult | OllamaModelResult; routeIndex: number; routingStrategy: 'single' | 'fallback' } | undefined> {
     const declaredRoutes = agent.model.routes ?? [];
     const routes: Array<AgentModelRoute | undefined> = declaredRoutes.length === 0
       ? [undefined]
@@ -976,7 +984,7 @@ export class LocalWorkflowExecutor {
             },
           });
         }
-        return { provider, result };
+        return { provider, result, routeIndex: index, routingStrategy: strategy };
       } catch (error) {
         if (signal.aborted) throw error;
         if (strategy !== 'fallback' || index + 1 >= maxAttempts) throw error;
