@@ -170,6 +170,11 @@ async function executeNodeImplementation(
     }
     case 'condition':
       return input.config.result === true;
+    case 'approval':
+      // The workflow layer holds this activity at a deterministic condition
+      // until the operator signal arrives; once dispatched, the human gate is
+      // complete and carries no additional payload.
+      return true;
     case 'agentLoop': {
       throw new TemporalActivityUnsupportedError(input.nodeType);
     }
