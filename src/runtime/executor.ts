@@ -218,6 +218,7 @@ export class LocalWorkflowExecutor {
 
   public async cancel(runId: string): Promise<RunRecord> {
     const completedAt = new Date();
+    let cancelledApproval = false;
     const run = await this.store.mutate((state) => {
       const target = state.runs.find((candidate) => candidate.id === runId);
       if (target === undefined) {
@@ -230,12 +231,18 @@ export class LocalWorkflowExecutor {
       target.completedAt = completedAt.toISOString();
       target.durationMs =
         completedAt.getTime() - new Date(target.startedAt).getTime();
+      for (const approval of state.approvals.filter((candidate) => candidate.runId === runId && candidate.decision === 'pending')) {
+        approval.decision = 'cancelled';
+        approval.decidedAt = completedAt.toISOString();
+        cancelledApproval = true;
+      }
       return target;
     });
     this.activeRuns.get(runId)?.abort(
       new Error('Workflow run was cancelled by an operator.'),
     );
     await this.events.emit(runId, 'run.cancelled', 'Workflow run cancelled.');
+    if (cancelledApproval) await this.events.emit(runId, 'approval.cancelled', 'Pending workflow approval cancelled.', { severityText: 'WARN' });
     return run;
   }
 
