@@ -360,7 +360,7 @@ export class LocalWorkflowExecutor {
             runId,
             unitId: nextNode.id,
             operation: nextNode.type,
-            status: controller.signal.aborted ? 'cancelled' : 'failed',
+            status: controller.signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && error.code === 'WORK_UNIT_TIMED_OUT' ? 'timed_out' : 'failed',
             error: error instanceof Error ? error.message : 'Unknown unit failure.',
           });
           await this.events.emit(runId, 'unit.failed', `${nextNode.label} unit failed.`, {

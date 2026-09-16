@@ -76,7 +76,7 @@ export interface OperationEvidence {
   unitId: string;
   operation: string;
   attempt: number;
-  status: 'started' | 'waiting' | 'succeeded' | 'failed' | 'cancelled';
+  status: 'started' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
   occurredAt: string;
   inputHash?: string;
   outputHash?: string;
