@@ -185,6 +185,8 @@ export interface RunRecord {
   workflowName: string;
   workflowVersion: number;
   artifactId?: string;
+  /** Source run when this execution was created by deterministic replay. */
+  replayOfRunId?: string;
   traceId: string;
   status: RunStatus;
   startedAt: string;

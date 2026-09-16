@@ -290,6 +290,7 @@ describe('platform API authorization', () => {
       authTokens: [
         { token: 'reader-token', principal: { id: 'reader-1', role: 'reader', tenantIds: ['tenant-local'], projectIds: ['project-local'] } },
         { token: 'author-token', principal: { id: 'author-1', role: 'author', tenantIds: ['tenant-local'], projectIds: ['project-local'] } },
+        { token: 'operator-token', principal: { id: 'operator-1', role: 'operator', tenantIds: ['tenant-local'], projectIds: ['project-local'] } },
       ],
     });
     try {
@@ -300,6 +301,8 @@ describe('platform API authorization', () => {
       expect((await app.inject({ method: 'POST', url: '/api/projects', headers: readerHeaders, payload: { name: 'Rejected' } })).statusCode).toBe(403);
       const authorHeaders = { authorization: 'Bearer author-token' };
       expect((await app.inject({ method: 'POST', url: '/api/projects', headers: authorHeaders, payload: { name: 'Authorized' } })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'POST', url: '/api/runs/missing/replay', headers: readerHeaders, payload: {} })).statusCode).toBe(403);
+      expect((await app.inject({ method: 'POST', url: '/api/runs/missing/replay', headers: { authorization: 'Bearer operator-token' }, payload: {} })).statusCode).toBe(404);
       expect((await app.inject({ method: 'GET', url: '/api/workflows', headers: { ...readerHeaders, 'x-tenant-id': 'other-tenant' } })).statusCode).toBe(403);
       await new Promise((resolve) => setImmediate(resolve));
       const allEvents = await store.listEvents();
