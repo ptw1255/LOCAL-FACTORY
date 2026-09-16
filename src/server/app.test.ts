@@ -218,9 +218,9 @@ describe('platform API', () => {
   it('stores typed project files and compiles an immutable artifact', async () => {
     const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
     const files = [
-      ['factory.yaml', 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: project-local\n  name: Local\nspec: {}'],
-      ['agents/reviewer.agent.yaml', 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: reviewer\n  name: Reviewer\nspec:\n  purpose: Review\n  instructions: Review changes\n  skills: []\n  tools: []\n  model: { routingAlias: default-safe }'],
-      ['workflows/review.workflow.yaml', 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: review\n  name: Review\nspec:\n  trigger: manual\n  steps:\n    - id: review\n      kind: agent\n      agent: reviewer'],
+      ['factory.yaml', 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: project-local\n  version: 1\n  name: Local\nspec: {}'],
+      ['agents/reviewer.agent.yaml', 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: reviewer\n  version: 1\n  name: Reviewer\nspec:\n  purpose: Review\n  instructions: Review changes\n  skills: []\n  tools: []\n  model: { routingAlias: default-safe }'],
+      ['workflows/review.workflow.yaml', 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: review\n  version: 1\n  name: Review\nspec:\n  trigger: manual\n  steps:\n    - id: review\n      kind: agent\n      agent: reviewer'],
     ] as const;
     for (const [filePath, content] of files) {
       const response = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: filePath, content } });
@@ -236,6 +236,9 @@ describe('platform API', () => {
     expect(compiled.statusCode).toBe(200);
     expect(compiled.json<{ id: string; workflows: unknown[] }>().id).toMatch(/^sha256:/);
     expect(compiled.json<{ workflows: unknown[] }>().workflows).toHaveLength(1);
+    const compiledAgain = await app.inject({ method: 'POST', url: '/api/projects/project-local/compile', headers, payload: { environment: 'local' } });
+    expect(compiledAgain.statusCode).toBe(200);
+    expect(compiledAgain.json<{ id: string }>().id).toBe(compiled.json<{ id: string }>().id);
     const artifacts = await app.inject({ method: 'GET', url: '/api/projects/project-local/artifacts', headers });
     expect(artifacts.json<{ items: unknown[] }>().items).toHaveLength(1);
   });
