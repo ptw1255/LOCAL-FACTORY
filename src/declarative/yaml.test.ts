@@ -66,6 +66,16 @@ describe('declarative project YAML', () => {
     }
   });
 
+  it('anchors schema diagnostics to the authored YAML node', () => {
+    try {
+      parseProjectYaml('apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  name: 42\n', { tenantId: 'tenant-test' });
+      throw new Error('expected schema validation to fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(DeclarativeSourceError);
+      expect((error as DeclarativeSourceError).diagnostics).toEqual([expect.objectContaining({ path: 'project.yaml', line: 4, column: 9, code: 'yaml.schema' })]);
+    }
+  });
+
   it('parses a project into validated runtime definitions', () => {
     const parsed = parseProjectYaml(source, { tenantId: 'tenant-test' });
     expect(parsed.project).toMatchObject({ id: 'project-test', tenantId: 'tenant-test', name: 'Test loop' });

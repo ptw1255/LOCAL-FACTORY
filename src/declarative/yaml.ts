@@ -1,4 +1,4 @@
-import { parse, stringify } from 'yaml';
+import { parseDocument, stringify } from 'yaml';
 import { z } from 'zod';
 
 import { defaultWorkUnit, knownNodeTypes } from '../domain/catalog.js';
@@ -29,6 +29,12 @@ export class DeclarativeSourceError extends Error {
     this.name = 'DeclarativeSourceError';
     this.diagnostics = diagnostics;
   }
+}
+
+function lineColumnAt(source: string, offset: number): { line: number; column: number } {
+  const prefix = source.slice(0, Math.max(0, offset));
+  const lines = prefix.split(/\r?\n/);
+  return { line: lines.length, column: (lines.at(-1)?.length ?? 0) + 1 };
 }
 
 const declarativeDocumentSchema = z.object({
@@ -139,22 +145,26 @@ export function parseProjectYaml(source: string, scope: { tenantId: string; proj
   project: ProjectRecord;
   workflows: WorkflowDefinition[];
 } {
-  let parsed: unknown;
-  try {
-    parsed = parse(source);
-  } catch (error) {
-    const yamlError = error as { message?: unknown; linePos?: Array<{ line?: unknown; col?: unknown }> };
-    const position = yamlError.linePos?.[0];
-    const line = typeof position?.line === 'number' && position.line > 0 ? position.line : 1;
-    const column = typeof position?.col === 'number' && position.col > 0 ? position.col : 1;
-    const rawMessage = typeof yamlError.message === 'string' ? yamlError.message : 'Invalid YAML syntax.';
+  const yamlDocument = parseDocument(source);
+  if (yamlDocument.errors.length > 0) {
+    const yamlError = yamlDocument.errors[0];
+    const rawMessage = yamlError?.message ?? 'Invalid YAML syntax.';
     // YAML parser messages may append source excerpts; keep diagnostics safe for API/UI responses.
     const message = rawMessage.split(/\r?\n/, 1)[0] ?? 'Invalid YAML syntax.';
+    const position = yamlError?.pos?.[0] ?? 0;
+    const { line, column } = lineColumnAt(source, position);
     throw new DeclarativeSourceError(`Invalid project YAML: ${message}`, [{ severity: 'error', path: 'project.yaml', line, column, code: 'yaml.parse', message }]);
   }
+  const parsed: unknown = yamlDocument.toJS();
   const result = declarativeDocumentSchema.safeParse(parsed);
   if (!result.success) {
-    throw new Error(`Invalid project YAML: ${result.error.issues.map((issue) => `${issue.path.join('.') || 'document'} ${issue.message}`).join('; ')}`);
+    const diagnostics = result.error.issues.map((issue) => {
+      const path = issue.path.join('.') || 'document';
+      const node = yamlDocument.getIn(issue.path, true) as { range?: [number, number, number] } | undefined;
+      const { line, column } = lineColumnAt(source, node?.range?.[0] ?? 0);
+      return { severity: 'error' as const, path: 'project.yaml', line, column, code: 'yaml.schema', message: `${path}: ${issue.message}` };
+    });
+    throw new DeclarativeSourceError(`Invalid project YAML: ${diagnostics.map((diagnostic) => diagnostic.message).join('; ')}`, diagnostics);
   }
   const document = result.data as DeclarativeProjectDocument;
   const now = new Date().toISOString();
