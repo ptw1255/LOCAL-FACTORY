@@ -1315,11 +1315,14 @@ function OperationalTree({
           {workflow.nodes.map((node, index) => {
             const agentId = node.type === 'agentLoop' && typeof node.config.agentId === 'string' ? node.config.agentId : undefined;
             const agent = agentId === undefined ? undefined : agentById.get(agentId);
+            const sourceFile = agent === undefined
+              ? files.find((file) => file.path.includes(workflow.id) && file.path.includes('.workflow.'))
+              : files.find((file) => file.path.includes(agent.id) && file.path.includes('.agent.'));
             return (
               <li key={node.id}>
                 <span className={`tree-rail ${index === workflow.nodes.length - 1 ? 'last' : ''}`} />
                 <span className={`tree-icon tree-kind-${node.unit?.kind ?? 'deterministic'}`}><Icon name={node.type === 'agentLoop' ? 'agent' : node.type === 'approval' ? 'human' : 'code'} size={14} /></span>
-                <div className="tree-node"><div><strong>{node.label}</strong><span className="tree-kind-label">{node.unit?.kind ?? 'work unit'}</span></div><small>{node.type} · {node.unit?.timeoutMs ?? 0}ms timeout · {node.unit?.retryAttempts ?? 1} retries</small>{agent === undefined ? null : <div className="tree-agent"><Icon name="agent" size={12} /> {agent.name} · {agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</div>}</div>
+                <button className="tree-node" disabled={sourceFile === undefined} onClick={() => { if (sourceFile !== undefined) void selectFile(sourceFile); }} title={sourceFile === undefined ? 'No matching source file' : `Open ${sourceFile.path}`} type="button"><div><strong>{node.label}</strong><span className="tree-kind-label">{node.unit?.kind ?? 'work unit'}</span></div><small>{node.type} · {node.unit?.timeoutMs ?? 0}ms timeout · {node.unit?.retryAttempts ?? 1} retries</small>{agent === undefined ? null : <div className="tree-agent"><Icon name="agent" size={12} /> {agent.name} · {agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</div>}</button>
               </li>
             );
           })}
@@ -1327,11 +1330,11 @@ function OperationalTree({
         <div className="agent-boxes-heading"><span className="eyebrow">Declared boxes</span><span className="count-pill">{workflow.agents.length}</span></div>
         <div className="operational-agents">
           {workflow.agents.map((agent) => (
-            <article className="operational-agent" key={agent.id}>
+            <button className="operational-agent" disabled={!files.some((file) => file.path.includes(agent.id) && file.path.includes('.agent.'))} key={agent.id} onClick={() => { const file = files.find((candidate) => candidate.path.includes(agent.id) && candidate.path.includes('.agent.')); if (file !== undefined) void selectFile(file); }} title={`Open source for ${agent.id}`} type="button">
               <div className="operational-agent-title"><span className="tree-icon tree-kind-agent"><Icon name="agent" size={14} /></span><div><strong>{agent.name}</strong><small>{agent.id} · v{agent.version}</small></div><span className="tree-kind-label">{agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</span></div>
               <p>{agent.purpose}</p>
               <div className="agent-facts"><span><strong>Skills</strong>{agent.skills.length > 0 ? agent.skills.join(', ') : 'None declared'}</span><span><strong>Limits</strong>{agent.limits.maxIterations} iterations · ${agent.limits.maxCostUsd.toFixed(2)} · {Math.round(agent.limits.maxDurationMs / 1000)}s</span><span><strong>Network</strong>{agent.boundaries.network}</span></div>
-            </article>
+            </button>
           ))}
         </div>
       </section>
