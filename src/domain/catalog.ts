@@ -152,7 +152,7 @@ export const nodeCatalog: NodeCatalogItem[] = [
     label: 'Commit repository patch',
     category: 'Repository',
     description: 'Commit selected changed paths in the isolated workspace.',
-    defaultConfig: { message: 'Apply workflow change', paths: [] },
+    defaultConfig: { message: 'Apply workflow change', paths: [], requirePatchArtifact: false },
   },
   {
     type: 'repositoryPush',
