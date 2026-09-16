@@ -289,6 +289,11 @@ h1, h2, h3, p { margin-top: 0; }
 .ide-bottom-tabs .bottom-panel-toggle { margin-left: auto; padding-inline: 8px; }
 .ide-bottom-panel.collapsed .ide-bottom-tabs { border-bottom: 0; }
 .ide-problem { background: transparent; border: 0; cursor: pointer; padding: 0; text-align: left; }
+.ide-problems { display: grid; gap: 7px; list-style: none; margin: 0; padding: 0; }
+.ide-problem { display: grid; gap: 3px; width: 100%; }
+.ide-problem-location { color: #9fb5d1; font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; }
+.ide-problem-code { color: #dca86b; font-family: "SFMono-Regular", Consolas, monospace; font-size: 9px; }
+.ide-problem .field-error { font-size: 10px; }
 .ide-run-output { display: grid; gap: 7px; }
 .ide-run-summary { align-items: center; display: flex; gap: 8px; }
 .ide-run-summary > span { color: var(--subtle); flex: 1; }

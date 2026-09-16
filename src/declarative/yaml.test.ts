@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseProjectYaml, stringifyProjectYaml } from './yaml.js';
+import { DeclarativeSourceError, parseProjectYaml, stringifyProjectYaml } from './yaml.js';
 
 const source = `
 apiVersion: factory.agentic/v1
@@ -56,6 +56,16 @@ workflows:
 `;
 
 describe('declarative project YAML', () => {
+  it('returns source location diagnostics for YAML syntax errors', () => {
+    try {
+      parseProjectYaml('apiVersion: [\n', { tenantId: 'tenant-test' });
+      throw new Error('expected parse to fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(DeclarativeSourceError);
+      expect((error as DeclarativeSourceError).diagnostics).toEqual([expect.objectContaining({ path: 'project.yaml', line: 2, column: 1, code: 'yaml.parse' })]);
+    }
+  });
+
   it('parses a project into validated runtime definitions', () => {
     const parsed = parseProjectYaml(source, { tenantId: 'tenant-test' });
     expect(parsed.project).toMatchObject({ id: 'project-test', tenantId: 'tenant-test', name: 'Test loop' });
