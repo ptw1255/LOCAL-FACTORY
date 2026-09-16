@@ -21,7 +21,39 @@ function event(id: string, timestamp: string, traceId: string): RunEvent {
   };
 }
 
+async function waitForNextMillisecond(timestamp: string): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const wait = (): void => {
+      if (Date.now() > Date.parse(timestamp)) {
+        resolve();
+        return;
+      }
+      setTimeout(wait, 1);
+    };
+    wait();
+  });
+}
+
 describe('EventService retention', () => {
+  it('adds standard correlation attributes to every emitted signal', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const service = new EventService(new JsonStore(path.join(directory, 'state.json')));
+
+    const emitted = await service.emit('run-1', 'unit.completed', 'completed', {
+      nodeId: 'unit-1',
+      traceId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      attributes: { 'deployment.id': 'deployment-1' },
+    });
+
+    expect(emitted.attributes).toEqual(expect.objectContaining({
+      'run.id': 'run-1',
+      'trace.id': emitted.traceId,
+      'span.id': emitted.spanId,
+      'unit.id': 'unit-1',
+      'deployment.id': 'deployment-1',
+    }));
+  });
+
   it('removes events older than the configured window', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
@@ -87,8 +119,12 @@ describe('EventService retention', () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
     const service = new EventService(store);
-    await service.recordEvidence({ runId: 'run-1', unitId: 'check', operation: 'repositoryCheck', status: 'started', metadata: { tenant: 'local' } });
+    const started = await service.recordEvidence({ runId: 'run-1', unitId: 'check', operation: 'repositoryCheck', status: 'started', metadata: { tenant: 'local' } });
+    // Keep the exact-range assertion deterministic even on fast filesystems where
+    // consecutive writes can otherwise share the same millisecond timestamp.
+    await waitForNextMillisecond(started.occurredAt);
     const terminal = await service.recordEvidence({ runId: 'run-1', unitId: 'check', operation: 'repositoryCheck', status: 'succeeded' });
+    await waitForNextMillisecond(terminal.occurredAt);
     await service.recordEvidence({ runId: 'run-1', unitId: 'patch', operation: 'repositoryPatch', status: 'succeeded' });
     expect(await service.listEvidence({ unitId: 'check', operation: 'repositoryCheck', status: 'succeeded' })).toEqual([terminal]);
     expect(await service.listEvidence({ from: terminal.occurredAt, to: terminal.occurredAt })).toEqual([terminal]);

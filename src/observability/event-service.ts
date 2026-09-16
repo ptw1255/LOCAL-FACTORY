@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { AgentSpanKind, EvidenceQuery, OperationEvidence, OperationEvidenceStatus, RunEvent } from '../domain/types.js';
 import type { PlatformStore } from '../storage/store.js';
 import type { TelemetryExporter } from './otlp-exporter.js';
-import { telemetryResource } from './semconv.js';
+import { telemetryAttributes, telemetryResource } from './semconv.js';
 
 export class EventService {
   private readonly retentionHours: number;
@@ -45,6 +45,8 @@ export class EventService {
         projectId: run?.projectId,
       };
     });
+    const traceId = options.traceId ?? runContext.traceId ?? runId.replaceAll('-', '').padEnd(32, '0').slice(0, 32);
+    const spanId = randomUUID().replaceAll('-', '').slice(0, 16);
     const event: RunEvent = {
       ...((options.tenantId ?? runContext.tenantId) === undefined ? {} : { tenantId: options.tenantId ?? runContext.tenantId }),
       ...((options.projectId ?? runContext.projectId) === undefined ? {} : { projectId: options.projectId ?? runContext.projectId }),
@@ -54,8 +56,8 @@ export class EventService {
       timestamp: new Date().toISOString(),
       message,
       signal: options.signal ?? 'log',
-      traceId: options.traceId ?? runContext.traceId ?? runId.replaceAll('-', '').padEnd(32, '0').slice(0, 32),
-      spanId: randomUUID().replaceAll('-', '').slice(0, 16),
+      traceId,
+      spanId,
       ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
       ...(options.data === undefined ? {} : { data: options.data }),
       ...(options.parentSpanId === undefined ? {} : { parentSpanId: options.parentSpanId }),
@@ -66,6 +68,13 @@ export class EventService {
         ...((options.tenantId ?? runContext.tenantId) === undefined ? {} : { 'tenant.id': options.tenantId ?? runContext.tenantId }),
         ...((options.projectId ?? runContext.projectId) === undefined ? {} : { 'project.id': options.projectId ?? runContext.projectId }),
         ...(options.attributes ?? {}),
+        // Keep the correlation keys present on every signal. These are emitted as
+        // OTLP attributes in addition to the native trace/span identifiers so
+        // logs, metrics, traces, and persisted events can be joined uniformly.
+        [telemetryAttributes.runId]: runId,
+        [telemetryAttributes.traceId]: traceId,
+        [telemetryAttributes.spanId]: spanId,
+        ...(options.nodeId === undefined ? {} : { [telemetryAttributes.unitId]: options.nodeId }),
       },
     };
 

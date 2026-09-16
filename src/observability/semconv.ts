@@ -5,6 +5,11 @@
 export const telemetryAttributes = {
   serviceName: 'service.name',
   serviceVersion: 'service.version',
+  runId: 'run.id',
+  traceId: 'trace.id',
+  spanId: 'span.id',
+  unitId: 'unit.id',
+  deploymentId: 'deployment.id',
   spanKind: 'openinference.span.kind',
   modelName: 'llm.model_name',
   agentId: 'agent.id',
