@@ -35,6 +35,11 @@ export interface ProjectFileRecord {
   updatedAt: string;
 }
 
+export interface DeletedProjectFileRecord extends ProjectFileRecord {
+  trashId: string;
+  deletedAt: string;
+}
+
 export interface ArtifactRecord {
   tenantId: string;
   projectId: string;
@@ -449,6 +454,7 @@ export interface PlatformState {
   connections: ConnectionRecord[];
   proposals: AgentProposal[];
   files: ProjectFileRecord[];
+  deletedFiles: DeletedProjectFileRecord[];
   artifacts: ArtifactRecord[];
   evidence: OperationEvidence[];
   approvals: ApprovalRecord[];

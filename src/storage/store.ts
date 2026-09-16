@@ -25,6 +25,7 @@ export interface PlatformStore {
 
 export function normalizePlatformState(state: PlatformState): PlatformState {
   state.files ??= [];
+  state.deletedFiles ??= [];
   state.artifacts ??= [];
   state.evidence ??= [];
   state.approvals ??= [];
