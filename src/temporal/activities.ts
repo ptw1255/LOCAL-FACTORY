@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { activityInfo } from '@temporalio/activity';
+import { activityInfo, cancellationSignal } from '@temporalio/activity';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
 import type { WorkUnitDefinition, WorkflowNode } from '../domain/types.js';
@@ -85,6 +85,7 @@ export async function executeNodeActivity(
   } satisfies Omit<TemporalActivityLifecycle, 'status' | 'occurredAt'>;
   await recordLifecycle({ ...baseLifecycle, status: 'started', occurredAt: new Date(startedAt).toISOString() });
   const controller = new AbortController();
+  const unlinkCancellation = linkTemporalCancellation(controller, currentActivityCancellationSignal());
   try {
     const result = await new WorkUnitDispatcher().dispatch(unit, {
       runId: input.runId,
@@ -114,6 +115,8 @@ export async function executeNodeActivity(
     };
     await recordLifecycle(lifecycle);
     throw error;
+  } finally {
+    unlinkCancellation();
   }
 }
 
@@ -129,6 +132,25 @@ function currentActivityAttempt(): number {
   } catch {
     return 1;
   }
+}
+
+function currentActivityCancellationSignal(): AbortSignal | undefined {
+  try {
+    return cancellationSignal();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Link a Temporal cancellation signal to the controller used by WorkUnits. */
+export function linkTemporalCancellation(controller: AbortController, source: AbortSignal | undefined): () => void {
+  if (source === undefined) return () => undefined;
+  const abort = (): void => {
+    if (!controller.signal.aborted) controller.abort(source.reason);
+  };
+  if (source.aborted) abort();
+  else source.addEventListener('abort', abort, { once: true });
+  return () => source.removeEventListener('abort', abort);
 }
 
 async function recordLifecycle(lifecycle: TemporalActivityLifecycle): Promise<void> {
