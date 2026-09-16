@@ -1218,7 +1218,7 @@ function OperationalTree({
   }
 
   return (
-    <div className="ide-layout">
+    <div className={`ide-layout ide-mode-${mode}`}>
       <aside className="ide-explorer">
         <div className="ide-explorer-title"><span className="eyebrow">Explorer</span><span className="ide-explorer-actions"><button aria-label="New file" className="icon-button" onClick={() => void createFile()} title="New file" type="button"><Icon name="plus" size={13} /></button><button aria-label="Rename selected file" className="icon-button" disabled={!files.some((file) => file.path === selectedPath)} onClick={() => void renameFile()} title="Rename selected file" type="button"><Icon name="edit" size={13} /></button><button aria-label="Delete selected file" className="icon-button" disabled={!files.some((file) => file.path === selectedPath)} onClick={() => void deleteFile()} title="Delete selected file" type="button"><Icon name="trash" size={13} /></button></span></div>
         <label className="ide-view-selector"><span>View</span><select aria-label="Workspace view" onChange={(event) => onModeChange(event.target.value as 'files' | 'tree' | 'canvas')} value={mode}><option value="files">Files</option><option value="tree">Tree</option><option value="canvas">Canvas</option></select></label>
