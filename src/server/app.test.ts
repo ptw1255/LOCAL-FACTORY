@@ -187,6 +187,10 @@ describe('platform API', () => {
     }
     const listing = await app.inject({ method: 'GET', url: '/api/projects/project-local/files', headers });
     expect(listing.json<{ items: Array<{ content?: string }> }>().items.every((file) => file.content === undefined)).toBe(true);
+    const contentSearch = await app.inject({ method: 'GET', url: '/api/projects/project-local/files?search=review%20changes', headers });
+    expect(contentSearch.statusCode).toBe(200);
+    expect(contentSearch.json<{ items: Array<{ path: string; content?: string }> }>().items).toEqual([expect.objectContaining({ path: 'agents/reviewer.agent.yaml' })]);
+    expect(contentSearch.json<{ items: Array<{ content?: string }> }>().items.every((file) => file.content === undefined)).toBe(true);
     const compiled = await app.inject({ method: 'POST', url: '/api/projects/project-local/compile', headers, payload: { environment: 'local' } });
     expect(compiled.statusCode).toBe(200);
     expect(compiled.json<{ id: string; workflows: unknown[] }>().id).toMatch(/^sha256:/);

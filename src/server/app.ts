@@ -337,12 +337,16 @@ export async function createApp(
     },
   );
 
-  app.get<{ Params: { projectId: string }; Querystring: { path?: string } }>(
+  app.get<{ Params: { projectId: string }; Querystring: { path?: string; search?: string } }>(
     '/api/projects/:projectId/files',
     async (request, reply) => {
       const scope = scopeFromRequest(request);
       const files = await store.read((state) => state.files.filter((file) => file.projectId === request.params.projectId && file.tenantId === scope.tenantId));
-      if (request.query.path === undefined) return { items: files.map(({ content: _content, ...file }) => file) };
+      const search = request.query.search?.trim().toLowerCase() ?? '';
+      if (request.query.path === undefined) {
+        const matching = search === '' ? files : files.filter((file) => file.path.toLowerCase().includes(search) || file.content.toLowerCase().includes(search));
+        return { items: matching.map(({ content: _content, ...file }) => file) };
+      }
       const file = files.find((candidate) => candidate.path === request.query.path);
       if (file === undefined) return reply.status(404).send({ message: 'Project file not found.' });
       return file;

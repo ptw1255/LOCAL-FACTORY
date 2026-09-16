@@ -1127,13 +1127,13 @@ function OperationalTree({
   }, [bottomOpen, bottomTab, projectId]);
 
   useEffect(() => {
-    void api.projectFiles(projectId).then((response) => {
+    void api.projectFiles(projectId, fileSearch).then((response) => {
       setFiles(response.items);
       if (response.items.length > 0 && !response.items.some((file) => file.path === selectedPath)) {
         setSelectedPath(response.items[0]?.path ?? 'project.yaml');
       }
     }).catch(() => setFiles([]));
-  }, [projectId]);
+  }, [fileSearch, projectId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1175,7 +1175,7 @@ function OperationalTree({
   }
 
   async function refreshFiles(): Promise<void> {
-    try { setFiles((await api.projectFiles(projectId)).items); } catch (loadError) { setError(errorText(loadError)); }
+    try { setFiles((await api.projectFiles(projectId, fileSearch)).items); } catch (loadError) { setError(errorText(loadError)); }
   }
 
   async function createFile(): Promise<void> {
@@ -1214,7 +1214,6 @@ function OperationalTree({
   }
 
   const visibleFiles = (files.length > 0 ? files : [{ path: 'project.yaml', sha256: '', projectId, tenantId: '', updatedAt: '' }])
-    .filter((file) => file.path.toLowerCase().includes(fileSearch.toLowerCase()))
     .filter((file) => !file.path.split('/').slice(0, -1).some((folder, index, folders) => collapsedFolders.has(folders.slice(0, index + 1).join('/'))));
   const folders = [...new Set(visibleFiles.flatMap((file) => file.path.split('/').slice(0, -1).map((_part, index, parts) => parts.slice(0, index + 1).join('/'))))];
 
