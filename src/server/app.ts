@@ -443,7 +443,11 @@ export async function createApp(
         return stringifyProjectYaml(project, workflows);
       });
       if (payload === undefined) return reply.status(404).send({ message: 'Project not found.' });
-      return reply.type('text/yaml').send(payload);
+      return reply
+        .header('Deprecation', 'true')
+        .header('Link', `</api/projects/${encodeURIComponent(request.params.projectId)}/files>; rel="successor-version"`)
+        .type('text/yaml')
+        .send(payload);
     },
   );
 
@@ -465,6 +469,9 @@ export async function createApp(
           state.workflows.push(...imported.workflows);
           state.workflowVersions.push(...structuredClone(imported.workflows));
         });
+        reply
+          .header('Deprecation', 'true')
+          .header('Link', `</api/projects/${encodeURIComponent(request.params.projectId)}/files>; rel="successor-version"`);
         return { project: imported.project, workflows: imported.workflows };
       } catch (error) {
         return reply.status(422).send({ message: errorMessage(error), diagnostics: errorDiagnostics(error) });
