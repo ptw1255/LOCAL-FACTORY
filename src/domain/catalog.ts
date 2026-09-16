@@ -13,6 +13,7 @@ const unitKinds: Record<string, WorkUnitKind> = {
   notification: 'consumer',
   output: 'consumer',
   code: 'deterministic',
+  evaluator: 'evaluator',
   repositoryCheck: 'connector',
   repositoryPatch: 'connector',
   repositoryMutation: 'connector',
@@ -70,6 +71,13 @@ export const nodeCatalog: NodeCatalogItem[] = [
     category: 'Data',
     description: 'Run a safe, deterministic built-in transformation before the next unit.',
     defaultConfig: { operation: 'uppercase', value: '' },
+  },
+  {
+    type: 'evaluator',
+    label: 'Deterministic evaluator',
+    category: 'Evaluation',
+    description: 'Score an upstream value against a declared, payload-safe rubric.',
+    defaultConfig: { mode: 'equals', expected: '', threshold: 1 },
   },
   {
     type: 'condition',

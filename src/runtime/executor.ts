@@ -112,6 +112,12 @@ function edgeMatches(edge: WorkflowEdge, result: unknown): boolean {
   return condition === String(result).toLowerCase();
 }
 
+function stableValue(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
+  if (Array.isArray(value)) return `[${value.map(stableValue).join(',')}]`;
+  return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${stableValue((value as Record<string, unknown>)[key])}`).join(',')}}`;
+}
+
 export class LocalWorkflowExecutor {
   private readonly activeRuns = new Map<string, AbortController>();
   private readonly pendingResumes = new Set<string>();
@@ -571,6 +577,9 @@ export class LocalWorkflowExecutor {
       case 'code':
         result = this.executeDeterministicCode(node, inputs);
         break;
+      case 'evaluator':
+        result = this.executeDeterministicEvaluator(node, inputs);
+        break;
       case 'repositoryCheck': {
         const workspace = await this.workspaceForRun(runId);
         const command = typeof node.config.command === 'string' ? node.config.command : 'npm test';
@@ -757,6 +766,44 @@ export class LocalWorkflowExecutor {
       default:
         throw new Error(`Unsupported deterministic code operation "${operation}".`);
     }
+  }
+
+  private executeDeterministicEvaluator(node: WorkflowNode, inputs: unknown[]): Record<string, unknown> {
+    const mode = typeof node.config.mode === 'string' ? node.config.mode : 'equals';
+    const actual = inputs.at(-1) ?? node.config.actual;
+    const expected = node.config.expected;
+    let matched = false;
+    switch (mode) {
+      case 'equals':
+        matched = stableValue(actual) === stableValue(expected);
+        break;
+      case 'contains':
+        matched = typeof actual === 'string' && typeof expected === 'string' && actual.includes(expected);
+        break;
+      case 'fieldEquals': {
+        const field = typeof node.config.field === 'string' ? node.config.field : '';
+        const value = actual !== null && typeof actual === 'object' ? (actual as Record<string, unknown>)[field] : undefined;
+        matched = stableValue(value) === stableValue(expected);
+        break;
+      }
+      case 'numericGte':
+        matched = typeof actual === 'number' && typeof expected === 'number' && actual >= expected;
+        break;
+      case 'exists':
+        matched = actual !== undefined && actual !== null;
+        break;
+      default:
+        throw new Error(`Unsupported evaluator mode "${mode}".`);
+    }
+    const score = matched ? 1 : 0;
+    const threshold = typeof node.config.threshold === 'number' && Number.isFinite(node.config.threshold)
+      ? Math.min(Math.max(node.config.threshold, 0), 1)
+      : 1;
+    const result = { score, threshold, passed: score >= threshold, mode };
+    if (node.config.failOnThreshold === true && result.passed === false) {
+      throw new Error(`Evaluator threshold failed for mode "${mode}" (score ${score}, threshold ${threshold}).`);
+    }
+    return result;
   }
 
   private async executeHttp(
