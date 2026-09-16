@@ -1217,6 +1217,7 @@ function OperationalTree({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [files, setFiles] = useState<ProjectFileRecord[]>([]);
+  const [directories, setDirectories] = useState<string[]>([]);
   const [selectedPath, setSelectedPath] = useState(() => readStudioFile(projectId));
   const [fileSearch, setFileSearch] = useState('');
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
@@ -1236,6 +1237,7 @@ function OperationalTree({
   useEffect(() => {
     void api.projectFiles(projectId, fileSearch).then((response) => {
       setFiles(response.items);
+      setDirectories((response.directories ?? []).map((directory) => directory.path));
       if (response.items.length > 0 && !response.items.some((file) => file.path === selectedPath)) {
         setSelectedPath(response.items[0]?.path ?? 'project.yaml');
       }
@@ -1296,6 +1298,15 @@ function OperationalTree({
       await refreshFiles();
       setSelectedPath(created.path);
       if (created.content !== undefined) onSourceLoaded(created.content);
+    } catch (createError) { setError(errorText(createError)); }
+  }
+
+  async function createFolder(): Promise<void> {
+    const directoryPath = window.prompt('New folder path', 'workflows')?.trim();
+    if (directoryPath === undefined || directoryPath === '') return;
+    try {
+      await api.createProjectDirectory(projectId, directoryPath);
+      await refreshFiles();
     } catch (createError) { setError(errorText(createError)); }
   }
 
@@ -1383,11 +1394,11 @@ function OperationalTree({
   return (
     <div className={`ide-layout ide-mode-${mode}`}>
       <aside className="ide-explorer">
-        <div className="ide-explorer-title"><span className="eyebrow">Explorer</span><span className="ide-explorer-actions"><button aria-label="New file" className="icon-button" onClick={() => void createFile()} title="New file" type="button"><Icon name="plus" size={13} /></button><button aria-label="Rename selected file" className="icon-button" disabled={!files.some((file) => file.path === selectedPath)} onClick={() => void renameFile()} title="Rename selected file" type="button"><Icon name="edit" size={13} /></button><button aria-label="Delete selected file" className="icon-button" disabled={!files.some((file) => file.path === selectedPath)} onClick={() => void deleteFile()} title="Delete selected file" type="button"><Icon name="trash" size={13} /></button></span></div>
+        <div className="ide-explorer-title"><span className="eyebrow">Explorer</span><span className="ide-explorer-actions"><button aria-label="New file" className="icon-button" onClick={() => void createFile()} title="New file" type="button"><Icon name="plus" size={13} /></button><button aria-label="New folder" className="icon-button" onClick={() => void createFolder()} title="New folder" type="button"><Icon name="folder" size={13} /></button><button aria-label="Rename selected file" className="icon-button" disabled={!files.some((file) => file.path === selectedPath)} onClick={() => void renameFile()} title="Rename selected file" type="button"><Icon name="edit" size={13} /></button><button aria-label="Delete selected file" className="icon-button" disabled={!files.some((file) => file.path === selectedPath)} onClick={() => void deleteFile()} title="Delete selected file" type="button"><Icon name="trash" size={13} /></button></span></div>
         <label className="ide-view-selector"><span>View</span><select aria-label="Workspace view" onChange={(event) => onModeChange(event.target.value as 'files' | 'tree' | 'canvas')} value={mode}><option value="files">Files</option><option value="tree">Tree</option><option value="canvas">Canvas</option></select></label>
         <label className="ide-file-search"><span className="sr-only">Filter files</span><input onChange={(event) => setFileSearch(event.target.value)} placeholder="Filter files" type="search" value={fileSearch} /></label>
         <div className="ide-project"><Icon name="factory" size={15} /><strong>{workflow.projectId ?? 'project'}</strong></div>
-        {folders.map((folder) => <button className="ide-folder" key={folder} onClick={() => setCollapsedFolders((current) => { const next = new Set(current); if (next.has(folder)) next.delete(folder); else next.add(folder); return next; })} type="button"><Icon name={collapsedFolders.has(folder) ? 'chevron' : 'chevronDown'} size={12} /> {folder}</button>)}
+        {[...new Set([...folders, ...directories])].sort().map((folder) => <button className="ide-folder" key={folder} onClick={() => setCollapsedFolders((current) => { const next = new Set(current); if (next.has(folder)) next.delete(folder); else next.add(folder); return next; })} type="button"><Icon name={collapsedFolders.has(folder) ? 'chevron' : 'chevronDown'} size={12} /> {folder}</button>)}
         {visibleFiles.map((file) => <button className={`ide-file ${selectedPath === file.path ? 'active' : ''}`} key={file.path} onClick={() => void selectFile(file)} type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={14} /> <span>{file.path}</span>{selectedPath === file.path && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>)}
         {files.length === 0 ? workflow.agents.map((agent) => <div className="ide-file muted" key={agent.id}><Icon name="agent" size={14} /> agents/{agent.id}.agent.yaml</div>) : null}
         <div className="ide-folder"><Icon name="chevron" size={12} /> runtime</div>

@@ -112,6 +112,13 @@ function projectFilePathError(filePath: string, content?: string): string | unde
   return undefined;
 }
 
+function projectDirectoryPathError(directoryPath: string): string | undefined {
+  const normalized = directoryPath.replaceAll('\\', '/').replace(/\/+$/, '');
+  if (normalized === '' || normalized.startsWith('/') || normalized.split('/').some((segment) => segment === '..' || segment === '')) return 'Directory paths must stay within the project workspace.';
+  if (normalized.split('/').some((segment) => segment === '.env' || segment === 'credentials' || segment === 'secrets')) return 'Secret-bearing directories are not allowed in the project workspace.';
+  return undefined;
+}
+
 function positiveNumber(value: string | undefined, fallback: number): number {
   const parsed = value === undefined ? Number.NaN : Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -166,7 +173,7 @@ export async function createApp(
   const artifactDirectory = process.env.ARTIFACT_STORE_DIR?.trim() || path.join(path.dirname(dataFile), 'artifacts');
   const artifactStore = options.artifactStore ?? new FileArtifactStore(artifactDirectory);
   const events = new EventService(store, { retentionHours, ...(evidenceRetentionHours === undefined ? {} : { evidenceRetentionHours }), exporter, artifactStore });
-  const emitWorkspaceFileEvent = async (scope: { tenantId: string; projectId: string }, operation: 'created' | 'updated' | 'renamed' | 'deleted' | 'restored', filePath: string, sha256?: string): Promise<void> => {
+  const emitWorkspaceFileEvent = async (scope: { tenantId: string; projectId: string }, operation: 'created' | 'updated' | 'renamed' | 'deleted' | 'restored' | 'directory-created', filePath: string, sha256?: string): Promise<void> => {
     await events.emit(`workspace:${scope.projectId}`, 'workspace.file.changed', `Project file ${operation}.`, {
       tenantId: scope.tenantId,
       projectId: scope.projectId,
@@ -456,7 +463,8 @@ export async function createApp(
       const search = request.query.search?.trim().toLowerCase() ?? '';
       if (request.query.path === undefined) {
         const matching = search === '' ? files : files.filter((file) => file.path.toLowerCase().includes(search) || file.content.toLowerCase().includes(search));
-        return { items: matching.map(({ content: _content, ...file }) => file) };
+        const directories = await store.read((state) => state.directories.filter((directory) => directory.projectId === request.params.projectId && directory.tenantId === scope.tenantId));
+        return { items: matching.map(({ content: _content, ...file }) => file), directories };
       }
       const file = files.find((candidate) => candidate.path === request.query.path);
       if (file === undefined) return reply.status(404).send({ message: 'Project file not found.' });
@@ -476,6 +484,30 @@ export async function createApp(
         .filter((event) => event.type === 'workspace.file.changed' && event.tenantId === scope.tenantId && event.projectId === request.params.projectId)
         .filter((event) => since === undefined || event.timestamp > since);
       return { items };
+    },
+  );
+
+  app.post<{ Params: { projectId: string }; Body: unknown }>(
+    '/api/projects/:projectId/files/directory',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      if (scope.projectId !== request.params.projectId) return reply.status(404).send({ message: 'Project not found.' });
+      const body = request.body as { path?: unknown };
+      if (typeof body?.path !== 'string') return reply.status(422).send({ message: 'Directory path is required.' });
+      const directoryPath = body.path.replaceAll('\\', '/').replace(/\/+$/, '');
+      const pathError = projectDirectoryPathError(directoryPath);
+      if (pathError !== undefined) return reply.status(422).send({ message: pathError });
+      const projectExists = await store.read((state) => state.projects.some((project) => project.id === request.params.projectId && project.tenantId === scope.tenantId));
+      if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
+      const directory = { tenantId: scope.tenantId, projectId: request.params.projectId, path: directoryPath, createdAt: new Date().toISOString() };
+      const created = await store.mutate((state) => {
+        if (state.directories.some((candidate) => candidate.tenantId === directory.tenantId && candidate.projectId === directory.projectId && candidate.path === directory.path)) return false;
+        state.directories.push(directory);
+        return true;
+      });
+      if (!created) return reply.status(409).send({ message: 'A directory already exists at that path.' });
+      await emitWorkspaceFileEvent(scope, 'directory-created', directory.path);
+      return directory;
     },
   );
 

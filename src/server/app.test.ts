@@ -281,6 +281,19 @@ describe('platform API', () => {
     expect(crossProject.statusCode).toBe(404);
   });
 
+  it('creates explicit project directories without weakening workspace boundaries', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const created = await app.inject({ method: 'POST', url: '/api/projects/project-local/files/directory', headers, payload: { path: 'units' } });
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toEqual(expect.objectContaining({ projectId: 'project-local', path: 'units' }));
+    const listing = await app.inject({ method: 'GET', url: '/api/projects/project-local/files', headers });
+    expect(listing.json<{ directories: Array<{ path: string }> }>().directories).toEqual([expect.objectContaining({ path: 'units' })]);
+    expect((await app.inject({ method: 'POST', url: '/api/projects/project-local/files/directory', headers, payload: { path: 'units' } })).statusCode).toBe(409);
+    expect((await app.inject({ method: 'POST', url: '/api/projects/project-local/files/directory', headers, payload: { path: '../outside' } })).statusCode).toBe(422);
+    const events = await app.inject({ method: 'GET', url: '/api/projects/project-local/files/events', headers });
+    expect(events.json<{ items: Array<{ attributes?: Record<string, unknown> }> }>().items).toEqual(expect.arrayContaining([expect.objectContaining({ attributes: expect.objectContaining({ 'workspace.file.operation': 'directory-created', 'workspace.file.path': 'units' }) })]));
+  });
+
   it('exposes deployments through the lean envelope projection', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/deployments?format=envelope', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' } });
     expect(response.statusCode).toBe(200);
