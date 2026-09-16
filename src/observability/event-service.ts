@@ -2,9 +2,22 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { AgentSpanKind, EvidenceQuery, OperationEvidence, OperationEvidenceStatus, RunEvent } from '../domain/types.js';
 import type { ArtifactStore } from '../storage/artifact-store.js';
-import type { PlatformStore } from '../storage/store.js';
+import type { PlatformStore, StateMutation } from '../storage/store.js';
 import type { TelemetryExporter, TelemetryExporterHealth } from './otlp-exporter.js';
 import { telemetryAttributes, telemetryResource } from './semconv.js';
+
+export interface EventOptions {
+  nodeId?: string;
+  tenantId?: string;
+  projectId?: string;
+  traceId?: string;
+  data?: Record<string, unknown>;
+  signal?: 'log' | 'trace' | 'metric';
+  spanKind?: AgentSpanKind;
+  parentSpanId?: string;
+  severityText?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+  attributes?: Record<string, string | number | boolean>;
+}
 
 export class EventService {
   private readonly retentionHours: number;
@@ -29,19 +42,40 @@ export class EventService {
     runId: string,
     type: string,
     message: string,
-    options: {
-      nodeId?: string;
-      tenantId?: string;
-      projectId?: string;
-      traceId?: string;
-      data?: Record<string, unknown>;
-      signal?: 'log' | 'trace' | 'metric';
-      spanKind?: AgentSpanKind;
-      parentSpanId?: string;
-      severityText?: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
-      attributes?: Record<string, string | number | boolean>;
-    } = {},
+    options: EventOptions = {},
   ): Promise<RunEvent> {
+    const event = await this.createEvent(runId, type, message, options);
+    await this.store.appendEvent(event);
+    this.exportEvent(event);
+    return event;
+  }
+
+  /** Apply a state transition and publish its lifecycle event atomically when the store supports it. */
+  public async mutateAndEmit<T>(
+    runId: string,
+    type: string,
+    message: string,
+    mutation: StateMutation<{ value: T; emit?: boolean }>,
+    options: EventOptions = {},
+  ): Promise<T> {
+    const event = await this.createEvent(runId, type, message, options);
+    if (this.store.mutateAndAppendEvent !== undefined) {
+      const result = await this.store.mutateAndAppendEvent(async (state) => {
+        const outcome = await mutation(state);
+        return { value: outcome.value, ...(outcome.emit === false ? {} : { event }) };
+      });
+      if (result.eventAppended) this.exportEvent(event);
+      return result.value;
+    }
+    const outcome = await this.store.mutate(mutation);
+    if (outcome.emit !== false) {
+      await this.store.appendEvent(event);
+      this.exportEvent(event);
+    }
+    return outcome.value;
+  }
+
+  private async createEvent(runId: string, type: string, message: string, options: EventOptions): Promise<RunEvent> {
     const runContext = await this.store.read((state) => {
       const run = state.runs.find((candidate) => candidate.id === runId);
       return {
@@ -86,11 +120,11 @@ export class EventService {
       },
     };
 
-    await this.store.appendEvent(event);
-    if (this.exporter !== undefined) {
-      void this.exporter.export(event).catch(() => undefined);
-    }
     return event;
+  }
+
+  private exportEvent(event: RunEvent): void {
+    if (this.exporter !== undefined) void this.exporter.export(event).catch(() => undefined);
   }
 
   public list(runId?: string): Promise<RunEvent[]> {

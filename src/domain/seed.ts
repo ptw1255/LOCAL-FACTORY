@@ -156,5 +156,7 @@ export function createSeedState(): PlatformState {
     evidence: [],
     approvals: [],
     deployments: [],
+    replayReports: [],
+    evaluationDatasets: [],
   };
 }

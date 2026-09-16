@@ -10,6 +10,8 @@ export type StateMutation<T> = (state: PlatformState) => T | Promise<T>;
 export interface PlatformStore {
   read<T>(select: (state: PlatformState) => T): Promise<T>;
   mutate<T>(mutation: StateMutation<T>): Promise<T>;
+  /** Apply a state transition and append its lifecycle event in one store operation. */
+  mutateAndAppendEvent?<T>(mutation: StateMutation<{ value: T; event?: RunEvent }>): Promise<{ value: T; eventAppended: boolean }>;
   appendEvent(event: RunEvent): Promise<void>;
   listEvents(runId?: string): Promise<RunEvent[]>;
   appendEvidence(evidence: OperationEvidence): Promise<void>;
@@ -27,6 +29,8 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
   state.evidence ??= [];
   state.approvals ??= [];
   state.deployments ??= [];
+  state.replayReports ??= [];
+  state.evaluationDatasets ??= [];
   state.tenants ??= [{
     id: DEFAULT_TENANT_ID,
     name: 'Local tenant',
@@ -88,6 +92,13 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
   for (const deployment of state.deployments) {
     deployment.triggerStatus ??= deployment.desiredState === 'running' ? 'active' : 'inactive';
     deployment.healthyArtifactIds ??= [];
+  }
+  for (const report of state.replayReports) {
+    report.differences ??= [];
+    report.completedNodeIds ??= [];
+  }
+  for (const dataset of state.evaluationDatasets) {
+    dataset.cases ??= [];
   }
   return state;
 }

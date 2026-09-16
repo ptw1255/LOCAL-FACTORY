@@ -40,7 +40,8 @@ describe('WorkflowReplayService', () => {
     await waitFor(store, source.id);
     const replay = await new WorkflowReplayService(store, executor).replay(source.id);
 
-    expect(replay).toMatchObject({ sourceRunId: source.id, workflowId: workflow.id, workflowVersion: 7, status: 'passed', differences: [] });
+    expect(replay).toMatchObject({ sourceRunId: source.id, workflowId: workflow.id, workflowVersion: 7, status: 'passed', differences: [], id: expect.stringMatching(/^replay-report-/), sourceOutputHash: expect.stringMatching(/^[a-f0-9]{64}$/), replayOutputHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(await store.read((state) => state.replayReports)).toEqual([expect.objectContaining({ id: replay.id, replayRunId: replay.replayRunId })]);
     const replayRun = await store.read((state) => state.runs.find((run) => run.id === replay.replayRunId));
     expect(replayRun).toEqual(expect.objectContaining({ replayOfRunId: source.id, workflowVersion: 7 }));
   });

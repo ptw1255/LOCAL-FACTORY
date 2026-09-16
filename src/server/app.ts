@@ -21,7 +21,7 @@ import {
   createTenantSchema,
   workflowDefinitionSchema,
 } from '../domain/schema.js';
-import type { ArtifactRecord, ProjectFileRecord, SourceDiagnostic, WorkflowDefinition } from '../domain/types.js';
+import type { ArtifactRecord, EvaluationDatasetCase, ProjectFileRecord, ReplayReportRecord, SourceDiagnostic, WorkflowDefinition } from '../domain/types.js';
 import { validateWorkflow } from '../domain/validator.js';
 import { defaultFactoryManifest } from '../factory/manifest.js';
 import { calculateFactoryMetrics } from '../factory/metrics.js';
@@ -651,6 +651,81 @@ export async function createApp(
     const body = request.body as { timeoutMs?: unknown };
     try {
       return await replayService.replay(source.id, typeof body?.timeoutMs === 'number' ? { timeoutMs: body.timeoutMs } : {});
+    } catch (error) {
+      return reply.status(422).send({ message: errorMessage(error) });
+    }
+  });
+
+  app.get<{ Querystring: { sourceRunId?: string; status?: ReplayReportRecord['status'] } }>('/api/replays', async (request) => {
+    const scope = scopeFromRequest(request);
+    return {
+      items: await store.read((state) => state.replayReports.filter((report) =>
+        inScope(report, scope)
+        && (request.query.sourceRunId === undefined || report.sourceRunId === request.query.sourceRunId)
+        && (request.query.status === undefined || report.status === request.query.status),
+      )),
+    };
+  });
+
+  app.get<{ Params: { id: string } }>('/api/replays/:id', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    const report = await store.read((state) => state.replayReports.find((candidate) => candidate.id === request.params.id && inScope(candidate, scope)));
+    if (report === undefined) return reply.status(404).send({ message: 'Replay report not found.' });
+    return report;
+  });
+
+  app.get('/api/evaluation-datasets', async (request) => {
+    const scope = scopeFromRequest(request);
+    return { items: await store.read((state) => state.evaluationDatasets.filter((dataset) => inScope(dataset, scope))) };
+  });
+
+  app.get<{ Params: { id: string } }>('/api/evaluation-datasets/:id', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    const dataset = await store.read((state) => state.evaluationDatasets.find((candidate) => candidate.id === request.params.id && inScope(candidate, scope)));
+    if (dataset === undefined) return reply.status(404).send({ message: 'Evaluation dataset not found.' });
+    return dataset;
+  });
+
+  app.post<{ Body: unknown }>('/api/evaluation-datasets', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    const body = request.body as { name?: unknown; description?: unknown; reportIds?: unknown };
+    if (typeof body?.name !== 'string' || body.name.trim() === '') return reply.status(422).send({ message: 'A dataset name is required.' });
+    const datasetName = body.name.trim();
+    if (body.description !== undefined && typeof body.description !== 'string') return reply.status(422).send({ message: 'Dataset description must be a string.' });
+    if (body.reportIds !== undefined && (!Array.isArray(body.reportIds) || !body.reportIds.every((id) => typeof id === 'string' && id.trim() !== ''))) return reply.status(422).send({ message: 'reportIds must be an array of report IDs.' });
+    const requestedReportIds = body.reportIds === undefined ? undefined : [...new Set((body.reportIds as string[]).map((id) => id.trim()))];
+    try {
+      return await store.mutate((state) => {
+        const reports = state.replayReports
+          .filter((report) => inScope(report, scope))
+          .filter((report) => requestedReportIds === undefined || requestedReportIds.includes(report.id));
+        if (requestedReportIds !== undefined && reports.length !== requestedReportIds.length) throw new Error('One or more replay reports were not found in the requested project scope.');
+        if (reports.length === 0) throw new Error('At least one replay report is required to materialize an evaluation dataset.');
+        const createdAt = new Date().toISOString();
+        const cases: EvaluationDatasetCase[] = reports.map((report) => ({
+          id: `evaluation-case-${randomUUID()}`,
+          reportId: report.id,
+          sourceRunId: report.sourceRunId,
+          replayRunId: report.replayRunId,
+          workflowId: report.workflowId,
+          workflowVersion: report.workflowVersion,
+          status: report.status,
+          ...(report.sourceOutputHash === undefined ? {} : { sourceOutputHash: report.sourceOutputHash }),
+          ...(report.replayOutputHash === undefined ? {} : { replayOutputHash: report.replayOutputHash }),
+          createdAt,
+        }));
+        const dataset = {
+          id: `evaluation-dataset-${randomUUID()}`,
+          tenantId: scope.tenantId,
+          projectId: scope.projectId,
+          name: datasetName,
+          ...(typeof body.description === 'string' && body.description.trim() === '' ? {} : typeof body.description === 'string' ? { description: body.description.trim() } : {}),
+          createdAt,
+          cases,
+        };
+        state.evaluationDatasets.unshift(dataset);
+        return dataset;
+      });
     } catch (error) {
       return reply.status(422).send({ message: errorMessage(error) });
     }

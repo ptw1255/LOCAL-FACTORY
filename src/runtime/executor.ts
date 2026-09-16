@@ -1197,42 +1197,36 @@ export class LocalWorkflowExecutor {
 
   private async completeRun(runId: string): Promise<void> {
     const completedAt = new Date();
-    const completed = await this.store.mutate((state) => {
+    await this.events.mutateAndEmit(runId, 'run.succeeded', 'Workflow run succeeded.', (state) => {
       const run = state.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
         throw new Error('Run not found.');
       }
       if (run.status === 'cancelled') {
-        return false;
+        return { value: false, emit: false };
       }
       run.status = 'succeeded';
       run.completedAt = completedAt.toISOString();
       run.durationMs =
         completedAt.getTime() - new Date(run.startedAt).getTime();
       run.ciCheckpoints = {};
-      return true;
+      return { value: true };
     });
-    if (completed) {
-      await this.events.emit(runId, 'run.succeeded', 'Workflow run succeeded.');
-    }
   }
 
   private async failRun(runId: string, message: string, status: 'failed' | 'timed_out' = 'failed'): Promise<void> {
     const completedAt = new Date();
-    const failed = await this.store.mutate((state) => {
+    await this.events.mutateAndEmit(runId, status === 'timed_out' ? 'run.timed_out' : 'run.failed', message, (state) => {
       const run = state.runs.find((candidate) => candidate.id === runId);
       if (run === undefined || run.status === 'cancelled') {
-        return false;
+        return { value: false, emit: false };
       }
       run.status = status;
       run.error = message;
       run.completedAt = completedAt.toISOString();
       run.durationMs =
         completedAt.getTime() - new Date(run.startedAt).getTime();
-      return true;
+      return { value: true };
     });
-    if (failed) {
-      await this.events.emit(runId, status === 'timed_out' ? 'run.timed_out' : 'run.failed', message);
-    }
   }
 }

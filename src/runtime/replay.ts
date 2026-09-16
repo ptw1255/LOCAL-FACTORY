@@ -1,19 +1,11 @@
-import type { RunRecord, WorkflowDefinition } from '../domain/types.js';
+import { createHash, randomUUID } from 'node:crypto';
+
+import type { ReplayReportRecord, RunRecord, WorkflowDefinition } from '../domain/types.js';
 import type { PlatformStore } from '../storage/store.js';
 import type { LocalWorkflowExecutor } from './executor.js';
 
-export type ReplayReportStatus = 'passed' | 'mismatch' | 'failed' | 'timed_out';
-
-export interface ReplayReport {
-  sourceRunId: string;
-  replayRunId: string;
-  workflowId: string;
-  workflowVersion: number;
-  status: ReplayReportStatus;
-  differences: string[];
-  completedNodeIds: string[];
-  durationMs: number;
-}
+export type { ReplayReportStatus } from '../domain/types.js';
+export type ReplayReport = ReplayReportRecord;
 
 export class ReplayNotDeterministicError extends Error {
   public constructor(nodeTypes: string[]) {
@@ -63,8 +55,11 @@ export class WorkflowReplayService {
     return undefined;
   }
 
-  private report(source: RunRecord, replay: RunRecord, status: ReplayReportStatus, differences: string[], startedAt: number): ReplayReport {
-    return {
+  private async report(source: RunRecord, replay: RunRecord, status: ReplayReport['status'], differences: string[], startedAt: number): Promise<ReplayReport> {
+    const report: ReplayReport = {
+      id: `replay-report-${randomUUID()}`,
+      ...(source.tenantId === undefined ? {} : { tenantId: source.tenantId }),
+      ...(source.projectId === undefined ? {} : { projectId: source.projectId }),
       sourceRunId: source.id,
       replayRunId: replay.id,
       workflowId: source.workflowId,
@@ -73,7 +68,16 @@ export class WorkflowReplayService {
       differences,
       completedNodeIds: replay.completedNodeIds,
       durationMs: Date.now() - startedAt,
+      sourceOutputHash: outputHash(source),
+      ...(replay.status === 'succeeded' || replay.status === 'failed' || replay.status === 'timed_out' || replay.status === 'cancelled'
+        ? { replayOutputHash: outputHash(replay) }
+        : {}),
+      createdAt: new Date().toISOString(),
     };
+    await this.store.mutate((state) => {
+      state.replayReports.unshift(report);
+    });
+    return report;
   }
 }
 
@@ -91,6 +95,10 @@ function stableSerialize(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'undefined';
   if (Array.isArray(value)) return `[${value.map((entry) => stableSerialize(entry)).join(',')}]`;
   return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`).join(',')}}`;
+}
+
+function outputHash(run: RunRecord): string {
+  return createHash('sha256').update(stableSerialize(run.unitOutputs)).digest('hex');
 }
 
 export function isReplayableWorkflow(workflow: WorkflowDefinition): boolean {

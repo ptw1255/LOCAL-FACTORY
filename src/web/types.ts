@@ -9,6 +9,7 @@ export type RunStatus =
   | 'timed_out'
   | 'cancelled';
 export type ConnectionStatus = 'healthy' | 'degraded' | 'expired';
+export type ReplayReportStatus = 'passed' | 'mismatch' | 'failed' | 'timed_out';
 
 export interface TenantRecord {
   id: string;
@@ -191,6 +192,46 @@ export interface RunRecord {
   error?: string;
   unitOutputs?: Record<string, unknown>;
   ciCheckpoints?: Record<string, { ref: string; required: string[]; timeoutMs: number; intervalMs: number; startedAt: string; polls: number; lastStatus: 'pending' | 'success' | 'failure' | 'timed_out' }>;
+}
+
+export interface ReplayReportRecord {
+  id: string;
+  tenantId?: string;
+  projectId?: string;
+  sourceRunId: string;
+  replayRunId: string;
+  workflowId: string;
+  workflowVersion: number;
+  status: ReplayReportStatus;
+  differences: string[];
+  completedNodeIds: string[];
+  durationMs: number;
+  sourceOutputHash?: string;
+  replayOutputHash?: string;
+  createdAt: string;
+}
+
+export interface EvaluationDatasetCase {
+  id: string;
+  reportId: string;
+  sourceRunId: string;
+  replayRunId: string;
+  workflowId: string;
+  workflowVersion: number;
+  status: ReplayReportStatus;
+  sourceOutputHash?: string;
+  replayOutputHash?: string;
+  createdAt: string;
+}
+
+export interface EvaluationDatasetRecord {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  createdAt: string;
+  cases: EvaluationDatasetCase[];
 }
 
 export interface RunEvent {

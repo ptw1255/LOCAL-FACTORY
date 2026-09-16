@@ -36,6 +36,22 @@ export class JsonStore implements PlatformStore {
     return structuredClone(await operation);
   }
 
+  public async mutateAndAppendEvent<T>(mutation: StateMutation<{ value: T; event?: RunEvent }>): Promise<{ value: T; eventAppended: boolean }> {
+    const operation = this.queue.then(async () => {
+      const draft = structuredClone(await this.load());
+      const result = await mutation(draft);
+      if (result.event !== undefined && !draft.events.some((candidate) => candidate.id === result.event?.id)) draft.events.push(result.event);
+      await this.persist(draft);
+      this.state = draft;
+      return { value: result.value, eventAppended: result.event !== undefined };
+    });
+    this.queue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return structuredClone(await operation);
+  }
+
   public async appendEvent(event: RunEvent): Promise<void> {
     await this.mutate((state) => {
       if (!state.events.some((candidate) => candidate.id === event.id)) state.events.push(event);

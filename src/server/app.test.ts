@@ -5,7 +5,19 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createApp } from './app.js';
+import { defaultWorkUnit } from '../domain/catalog.js';
+import { seedWorkflow } from '../domain/seed.js';
 import { JsonStore } from '../storage/json-store.js';
+
+async function waitForTerminal(store: JsonStore, runId: string): Promise<void> {
+  const deadline = Date.now() + 3_000;
+  while (Date.now() < deadline) {
+    const status = await store.read((state) => state.runs.find((run) => run.id === runId)?.status);
+    if (status === 'succeeded' || status === 'failed' || status === 'timed_out' || status === 'cancelled') return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('Timed out waiting for test run.');
+}
 
 describe('platform API', () => {
   let app: Awaited<ReturnType<typeof createApp>>;
@@ -276,6 +288,42 @@ describe('platform API', () => {
     expect(new Set(payload.items.map((item) => item.signal))).toEqual(
       new Set(['log', 'trace', 'metric']),
     );
+  });
+
+  it('persists replay reports and materializes payload-free evaluation datasets', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-replay-api';
+    workflow.name = 'Replay API workflow';
+    workflow.version = 4;
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'normalize', type: 'code', label: 'Normalize', position: { x: 160, y: 0 }, config: { operation: 'uppercase', value: 'stable' }, unit: defaultWorkUnit('code') },
+    ];
+    workflow.edges = [{ id: 'trigger-normalize', source: 'trigger', target: 'normalize' }];
+    await store.mutate((state) => {
+      state.workflows.unshift(workflow);
+      state.workflowVersions.unshift(structuredClone(workflow));
+    });
+    const start = await app.inject({ method: 'POST', url: '/api/workflows/workflow-replay-api/runs', payload: {} });
+    expect(start.statusCode).toBe(200);
+    const sourceRunId = start.json<{ id: string }>().id;
+    await waitForTerminal(store, sourceRunId);
+    const replayResponse = await app.inject({ method: 'POST', url: `/api/runs/${sourceRunId}/replay`, payload: {} });
+    expect(replayResponse.statusCode).toBe(200);
+    const report = replayResponse.json<{ id: string; status: string; sourceOutputHash?: string; replayOutputHash?: string }>();
+    expect(report).toEqual(expect.objectContaining({ id: expect.stringMatching(/^replay-report-/), status: 'passed', sourceOutputHash: expect.any(String), replayOutputHash: expect.any(String) }));
+    const reports = await app.inject({ method: 'GET', url: `/api/replays?sourceRunId=${sourceRunId}` });
+    expect(reports.statusCode).toBe(200);
+    expect(reports.json<{ items: Array<{ id: string }> }>().items).toEqual([expect.objectContaining({ id: report.id })]);
+    const datasetResponse = await app.inject({ method: 'POST', url: '/api/evaluation-datasets', payload: { name: 'Replay regression set', reportIds: [report.id] } });
+    expect(datasetResponse.statusCode).toBe(200);
+    const dataset = datasetResponse.json<{ id: string; cases: Array<{ reportId: string; status: string; sourceOutputHash?: string }> }>();
+    expect(dataset).toEqual(expect.objectContaining({ id: expect.stringMatching(/^evaluation-dataset-/), cases: [expect.objectContaining({ reportId: report.id, status: 'passed', sourceOutputHash: expect.any(String) })] }));
+    expect(JSON.stringify(dataset)).not.toContain('stable');
+    const fetched = await app.inject({ method: 'GET', url: `/api/evaluation-datasets/${dataset.id}` });
+    expect(fetched.statusCode).toBe(200);
+    expect(fetched.json()).toEqual(dataset);
   });
 });
 

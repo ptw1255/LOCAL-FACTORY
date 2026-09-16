@@ -11,6 +11,8 @@ import type {
   RunRecord,
   ProjectRecord,
   ProjectFileRecord,
+  ReplayReportRecord,
+  EvaluationDatasetRecord,
   SourceDiagnostic,
   TenantRecord,
   ValidationResult,
@@ -120,6 +122,10 @@ export const api = {
     }),
   runs: () => request<ItemsResponse<RunRecord>>('/api/runs'),
   run: (id: string) => request<RunRecord>(`/api/runs/${encodeURIComponent(id)}`),
+  replay: (id: string, timeoutMs?: number) => request<ReplayReportRecord>(`/api/runs/${encodeURIComponent(id)}/replay`, { method: 'POST', body: JSON.stringify(timeoutMs === undefined ? {} : { timeoutMs }) }),
+  replays: (sourceRunId?: string) => request<ItemsResponse<ReplayReportRecord>>(`/api/replays${sourceRunId === undefined ? '' : `?sourceRunId=${encodeURIComponent(sourceRunId)}`}`),
+  evaluationDatasets: () => request<ItemsResponse<EvaluationDatasetRecord>>('/api/evaluation-datasets'),
+  createEvaluationDataset: (input: { name: string; description?: string; reportIds?: string[] }) => request<EvaluationDatasetRecord>('/api/evaluation-datasets', { method: 'POST', body: JSON.stringify(input) }),
   approveRun: (id: string) =>
     request<RunRecord>(`/api/runs/${encodeURIComponent(id)}/approve`, {
       method: 'POST',

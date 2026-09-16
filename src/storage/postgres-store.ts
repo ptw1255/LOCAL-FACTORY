@@ -63,6 +63,57 @@ export class PostgresStore implements PlatformStore {
     return structuredClone(await operation);
   }
 
+  public async mutateAndAppendEvent<T>(mutation: StateMutation<{ value: T; event?: RunEvent }>): Promise<{ value: T; eventAppended: boolean }> {
+    const operation = this.queue.then(async () => {
+      await this.ensureInitialized();
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await client.query<StateRow>('SELECT state FROM platform_state WHERE id = 1 FOR UPDATE');
+        const current = result.rows[0]?.state;
+        if (current === undefined) throw new Error('PostgreSQL platform state is missing.');
+        const draft = structuredClone(normalizePlatformState(current));
+        const outcome = await mutation(draft);
+        await client.query('UPDATE platform_state SET state = $1::jsonb, updated_at = now() WHERE id = 1', [JSON.stringify(draft)]);
+        if (outcome.event !== undefined) {
+          await client.query(
+            `INSERT INTO observability_events
+              (id, tenant_id, project_id, run_id, timestamp, signal, event_type, trace_id, span_id,
+               parent_span_id, span_kind, severity_text, node_id, attributes, event)
+             VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb)
+             ON CONFLICT (id) DO NOTHING`,
+            [
+              outcome.event.id,
+              outcome.event.tenantId ?? null,
+              outcome.event.projectId ?? null,
+              outcome.event.runId,
+              outcome.event.timestamp,
+              outcome.event.signal,
+              outcome.event.type,
+              outcome.event.traceId,
+              outcome.event.spanId,
+              outcome.event.parentSpanId ?? null,
+              outcome.event.spanKind ?? null,
+              outcome.event.severityText ?? null,
+              outcome.event.nodeId ?? null,
+              JSON.stringify(outcome.event.attributes ?? {}),
+              JSON.stringify(outcome.event),
+            ],
+          );
+        }
+        await client.query('COMMIT');
+        return { value: outcome.value, eventAppended: outcome.event !== undefined };
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    });
+    this.queue = operation.then(() => undefined, () => undefined);
+    return structuredClone(await operation);
+  }
+
   public async appendEvent(event: RunEvent): Promise<void> {
     await this.ensureInitialized();
     await this.pool.query(
