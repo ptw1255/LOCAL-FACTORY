@@ -7,7 +7,13 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT = 20_000;
-const ALLOWED_CHECKS = new Set(['npm test', 'npm run typecheck', 'npm run build']);
+const ALLOWED_CHECKS = new Set([
+  'npm test',
+  'npm run test:integration',
+  'npm run lint',
+  'npm run typecheck',
+  'npm run build',
+]);
 const SAFE_CHECK_ENVIRONMENT = new Set([
   'PATH',
   'HOME',

@@ -29,6 +29,16 @@ describe('RepositoryWorkspace', () => {
     expect(result.output.length).toBeLessThanOrEqual(20_020);
   });
 
+  it('supports the standard lint and integration-test check profiles', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-check-profiles-'));
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: {
+      lint: 'node -e "process.stdout.write(\'lint-ok\')"',
+      'test:integration': 'node -e "process.stdout.write(\'integration-ok\')"',
+    } }));
+    await expect((await RepositoryWorkspace.open(root)).runCheck('npm run lint')).resolves.toMatchObject({ command: 'npm run lint', exitCode: 0, timedOut: false });
+    await expect((await RepositoryWorkspace.open(root)).runCheck('npm run test:integration')).resolves.toMatchObject({ command: 'npm run test:integration', exitCode: 0, timedOut: false });
+  });
+
   it('normalizes a timed-out allow-listed check', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-check-timeout-'));
     await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node -e "setTimeout(() => {}, 1000)"' } }));
