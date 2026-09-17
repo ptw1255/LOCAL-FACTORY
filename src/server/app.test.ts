@@ -9,6 +9,7 @@ import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
 import { JsonStore } from '../storage/json-store.js';
 import { ProjectWorkspace } from '../storage/project-workspace.js';
+import { createQueuedRun } from '../runtime/executor.js';
 
 async function waitForTerminal(store: JsonStore, runId: string): Promise<void> {
   const deadline = Date.now() + 3_000;
@@ -302,6 +303,27 @@ describe('platform API', () => {
     expect(again.json<{ changedPaths: string[] }>().changedPaths).toEqual([]);
     const listing = await app.inject({ method: 'GET', url: '/api/projects/project-local/files', headers });
     expect(listing.json<{ items: Array<{ path: string }> }>().items.some((file) => file.path === 'factory.yaml')).toBe(true);
+  });
+
+  it('preserves workflow versions and run history during migration', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const historicalRun = createQueuedRun(seedWorkflow);
+    historicalRun.status = 'succeeded';
+    historicalRun.completedNodeIds = seedWorkflow.nodes.map((node) => node.id);
+    historicalRun.unitOutputs = { output: 'historical-result' };
+    await store.mutate((state) => { state.runs.push(historicalRun); });
+    const before = await store.read((state) => ({
+      workflowVersions: structuredClone(state.workflowVersions.filter((workflow) => workflow.projectId === 'project-local')),
+      runs: structuredClone(state.runs.filter((run) => run.projectId === 'project-local')),
+    }));
+    const migrated = await app.inject({ method: 'POST', url: '/api/projects/project-local/migrate', headers, payload: { dryRun: false } });
+    expect(migrated.statusCode).toBe(200);
+    const after = await store.read((state) => ({
+      workflowVersions: state.workflowVersions.filter((workflow) => workflow.projectId === 'project-local'),
+      runs: state.runs.filter((run) => run.projectId === 'project-local'),
+    }));
+    expect(after.workflowVersions).toEqual(before.workflowVersions);
+    expect(after.runs).toEqual(before.runs);
   });
 
   it('rejects stale file writes with optimistic hash concurrency', async () => {
