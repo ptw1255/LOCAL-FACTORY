@@ -79,6 +79,12 @@ test.describe('IDE workspace', () => {
     expect(workflows.ok()).toBeTruthy();
     const current = await workflows.json() as { items: Array<{ id: string; nodes: Array<{ type: string }> }> };
     expect(current.items.find((item) => item.id === 'workflow-agent-intake')?.nodes.some((node) => node.type === 'transform')).toBeTruthy();
+
+    const addedNode = page.locator('.react-flow__node article.workflow-node').filter({ hasText: 'Transform' }).last();
+    await expect(addedNode).toHaveCount(1);
+    await addedNode.dispatchEvent('dblclick');
+    await expect(page).toHaveURL(/#\/studio\?file=workflows%2Fworkflow-agent-intake\.workflow\.yaml/);
+    await expect(page.getByRole('tab', { name: /workflows\/workflow-agent-intake\.workflow\.yaml/ })).toHaveAttribute('aria-selected', 'true');
   });
 });
 
