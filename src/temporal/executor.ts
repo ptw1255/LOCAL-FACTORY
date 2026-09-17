@@ -7,7 +7,10 @@ import type { PlatformStore } from '../storage/store.js';
 import type { EventService } from '../observability/event-service.js';
 import { temporalConnectionSettings } from './config.js';
 
-const TEMPORAL_START_ATTEMPTS = 8;
+// Namespace visibility fields are provisioned by a separate sidecar during
+// startup. Give that bounded readiness window enough time to complete while
+// retaining a finite cap for real failures.
+const TEMPORAL_START_ATTEMPTS = 16;
 
 function temporalStartBackoff(attempt: number): number {
   return Math.min(2_000, 250 * 2 ** attempt);
