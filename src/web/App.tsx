@@ -44,6 +44,7 @@ import type {
   DeploymentEnvelope,
   DeploymentApprovalRecord,
   OperationEvidence,
+  ToolCheckpointRecord,
   NodeCatalogItem,
   ProjectRecord,
   ProjectFileRecord,
@@ -1808,6 +1809,7 @@ function RunsView() {
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [evidence, setEvidence] = useState<OperationEvidence[]>([]);
+  const [toolCheckpoints, setToolCheckpoints] = useState<ToolCheckpointRecord[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -1861,13 +1863,14 @@ function RunsView() {
       setSelectedRun(null);
       setEvents([]);
       setEvidence([]);
+      setToolCheckpoints([]);
       setApprovals([]);
       return;
     }
     sessionStorage.setItem('selectedRunId', selectedRunId);
     setDetailLoading(true);
-    Promise.all([api.run(selectedRunId), api.events(selectedRunId), api.evidence(selectedRunId), api.approvals(selectedRunId)])
-      .then(([run, eventResponse, evidenceResponse, approvalResponse]) => {
+    Promise.all([api.run(selectedRunId), api.events(selectedRunId), api.evidence(selectedRunId), api.approvals(selectedRunId), api.toolCheckpoints(selectedRunId)])
+      .then(([run, eventResponse, evidenceResponse, approvalResponse, checkpointResponse]) => {
         setSelectedRun(run);
         setEvents(
           [...eventResponse.items].sort(
@@ -1875,11 +1878,38 @@ function RunsView() {
           ),
         );
         setEvidence([...evidenceResponse.items].sort((a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()));
+        setToolCheckpoints(checkpointResponse.items);
         setApprovals(approvalResponse.items);
       })
       .catch((detailError: unknown) => setError(errorText(detailError)))
       .finally(() => setDetailLoading(false));
   }, [selectedRunId, runs]);
+
+  async function recoverToolCheckpoint(checkpoint: ToolCheckpointRecord, resolution: 'succeeded' | 'failed'): Promise<void> {
+    if (selectedRun === null) return;
+    const reason = window.prompt(`Reason for marking ${checkpoint.callId} as ${resolution}:`);
+    if (reason === null || reason.trim() === '') return;
+    let outputHash: string | undefined;
+    if (resolution === 'succeeded') {
+      outputHash = window.prompt('Verified output SHA-256 (64 hex characters):')?.trim().toLowerCase();
+      if (outputHash === undefined || !/^[a-f0-9]{64}$/.test(outputHash)) {
+        setActionError('A verified 64-character SHA-256 output hash is required to confirm tool success.');
+        return;
+      }
+    }
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const updated = await api.recoverToolCheckpoint(selectedRun.id, { unitId: checkpoint.unitId, callId: checkpoint.callId, resolution, reason: reason.trim(), ...(outputHash === undefined ? {} : { outputHash }) });
+      setSelectedRun(updated);
+      setToolCheckpoints((current) => current.filter((item) => item.callId !== checkpoint.callId || item.unitId !== checkpoint.unitId));
+      await loadRuns(true);
+    } catch (recoveryError) {
+      setActionError(errorText(recoveryError));
+    } finally {
+      setActionLoading(false);
+    }
+  }
 
   const filteredRuns = runs.filter((run) => {
     const matchesQuery = `${run.workflowName} ${run.id}`.toLowerCase().includes(query.toLowerCase());
@@ -2066,6 +2096,7 @@ function RunsView() {
                 {actionError !== null ? <div className="run-error" role="alert"><Icon name="warning" /><div><strong>Action failed</strong><span>{actionError}</span></div></div> : null}
                 {selectedRun.error !== undefined ? <div className="run-error" role="alert"><Icon name="warning" /><div><strong>Run failed</strong><span>{selectedRun.error}</span></div></div> : null}
                 {approvals.length === 0 ? null : <section className="approval-summary"><div className="timeline-heading"><div><span className="eyebrow">Authorization</span><h3>Approval records</h3></div><span className="count-pill">{approvals.length}</span></div>{approvals.map((approval) => <div className="approval-record" key={approval.id}><strong>{approval.operation} · {approval.nodeId}</strong><StatusBadge status={approval.decision} /><span>Requested {formatDate(approval.requestedAt)} · expires {formatDate(approval.expiresAt)}</span><code>Binding {approval.bindingHash}</code>{approval.reason === undefined ? null : <small>{approval.reason}</small>}</div>)}</section>}
+                {toolCheckpoints.length === 0 ? null : <section className="approval-summary tool-recovery-summary"><div className="timeline-heading"><div><span className="eyebrow">Operator recovery</span><h3>Incomplete tool checkpoints</h3></div><span className="count-pill">{toolCheckpoints.length}</span></div><p className="run-recovery-note">The runtime refused to replay these side effects. Verify the external outcome before resolving a checkpoint.</p>{toolCheckpoints.map((checkpoint) => <div className="approval-record" key={`${checkpoint.unitId}:${checkpoint.callId}`}><strong>{checkpoint.callId}</strong><span>{checkpoint.unitId} · started {formatDate(checkpoint.occurredAt)}</span><div className="form-actions"><button className="button primary" disabled={actionLoading} onClick={() => void recoverToolCheckpoint(checkpoint, 'succeeded')} type="button"><Icon name="check" size={13} /> Mark succeeded</button><button className="button secondary" disabled={actionLoading} onClick={() => void recoverToolCheckpoint(checkpoint, 'failed')} type="button"><Icon name="close" size={13} /> Mark failed</button></div></div>)}</section>}
                 <nav aria-label="Observe detail views" className="observe-tabs">
                   {(['runs', 'logs', 'traces', 'metrics'] as const).map((tab) => (
                     <button aria-selected={observeTab === tab} className={observeTab === tab ? 'active' : ''} key={tab} onClick={() => setObserveTab(tab)} role="tab" type="button">
