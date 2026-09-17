@@ -155,8 +155,8 @@ export class TemporalWorkflowExecutor {
   public async approve(runId: string): Promise<RunRecord> {
     const run = await this.requireRun(runId);
     const handle = this.handleFor(run);
-    const node = run.workflowDefinition.nodes.find((candidate) => candidate.type === 'approval' && !run.completedNodeIds.includes(candidate.id));
-    if (node === undefined) throw new Error('No approval node is waiting.');
+    const node = run.workflowDefinition.nodes.find((candidate) => (candidate.type === 'approval' || candidate.config.requiresApproval === true) && !run.completedNodeIds.includes(candidate.id));
+    if (node === undefined) throw new Error('No approval-gated node is waiting.');
     if (run.approvedNodeIds.includes(node.id)) return run;
     await handle.signal('approve', node.id);
     return this.updateRun(runId, (target) => {

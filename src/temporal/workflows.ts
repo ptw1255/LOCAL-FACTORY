@@ -34,6 +34,11 @@ export interface TemporalWorkflowResult {
   lifecycle: TemporalActivityLifecycle[];
 }
 
+/** Approval boundary shared by explicit human gates and side-effect WorkUnits. */
+export function requiresTemporalApproval(node: WorkflowDefinition['nodes'][number]): boolean {
+  return node.type === 'approval' || node.config.requiresApproval === true;
+}
+
 export async function executeWorkflow(
   input: TemporalWorkflowInput,
 ): Promise<TemporalWorkflowResult> {
@@ -76,7 +81,7 @@ export async function executeWorkflow(
     if (node === undefined) {
       throw new Error('No executable node is available for the active graph.');
     }
-    if (node.type === 'approval') {
+    if (requiresTemporalApproval(node)) {
       await condition(() => approved.has(node.id) || paused);
       await condition(() => !paused);
       if (!approved.has(node.id)) continue;
