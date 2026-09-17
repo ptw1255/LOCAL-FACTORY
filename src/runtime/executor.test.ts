@@ -11,6 +11,7 @@ import { JsonStore } from '../storage/json-store.js';
 import { FileArtifactStore } from '../storage/artifact-store.js';
 import { createQueuedRun, LocalWorkflowExecutor, releaseBundleHash } from './executor.js';
 import { OpenAIProviderError } from './openai.js';
+import type { OpenAIClient } from './openai.js';
 import type { GitHubRepositoryClient } from '../repository/github.js';
 
 async function waitFor(
@@ -854,6 +855,34 @@ describe('LocalWorkflowExecutor', () => {
     const recorded = await events.list(run.id);
     expect(recorded.some((event) => event.type === 'agent.connection.denied' && event.attributes?.['connection.provider'] === 'openai')).toBe(true);
     expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.error).toContain('not authorized');
+  });
+
+  it.each(['anthropic', 'gemini'] as const)('executes the %s adapter through the agent lifecycle', async (provider) => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agent === undefined || agentNode === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider, model: `${provider}-test-model`, capabilities: ['text', 'usage'] };
+    agent.boundaries.allowedConnections = [provider];
+    agentNode.config.maxIterations = 1;
+    let calls = 0;
+    let receivedTraceId: string | undefined;
+    const client: OpenAIClient = {
+      provider,
+      capabilities: ['text', 'usage'],
+      chat: async (input) => {
+        calls += 1;
+        receivedTraceId = input.traceId;
+        return { content: `${provider}-completed`, model: `${provider}-test-model`, promptTokens: 2, completionTokens: 1 };
+      },
+    };
+    const providerExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, undefined, new Map(), undefined, new Map([[provider, client]]));
+    const run = await providerExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
+    expect(calls).toBe(1);
+    expect(receivedTraceId).toBe(run.traceId);
+    const completed = (await events.list(run.id)).find((event) => event.type === 'llm.completed');
+    expect(completed?.attributes).toEqual(expect.objectContaining({ 'llm.provider': provider, 'llm.model_name': `${provider}-test-model` }));
   });
 
   it('does not execute nodes unreachable from the declared trigger', async () => {
