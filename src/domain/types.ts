@@ -296,6 +296,20 @@ export interface EvaluationDatasetRecord {
   cases: EvaluationDatasetCase[];
 }
 
+/** Payload-free aggregate score used to decide whether a dataset may promote. */
+export interface EvaluationDatasetEvaluation {
+  datasetId: string;
+  datasetVersion: number;
+  totalCases: number;
+  passedCases: number;
+  nonPassingCases: number;
+  statusCounts: Record<ReplayReportStatus, number>;
+  passRate: number;
+  threshold: number;
+  promotionBlocked: boolean;
+  evaluatedAt: string;
+}
+
 export interface CiCheckpoint {
   ref: string;
   required: string[];
