@@ -1,13 +1,18 @@
+import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { WorkUnitTimeoutError } from '../runtime/work-unit-dispatcher.js';
-import { configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
+import { configureTemporalGitHubRepository, configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
+
+const execFileAsync = (file: string, args: string[], options: { cwd?: string } = {}) => new Promise<void>((resolve, reject) => {
+  execFile(file, args, options, (error) => error === null ? resolve() : reject(error));
+});
 
 describe('Temporal node activities', () => {
   it('executes deterministic nodes through the WorkUnit contract', async () => {
@@ -111,13 +116,13 @@ describe('Temporal node activities', () => {
     const error = await executeNodeActivity({
       runId: 'run-unsupported',
       nodeId: 'repository',
-      nodeType: 'repositoryMutation',
+      nodeType: 'repositoryUnknown',
       label: 'Repository mutation',
       config: { operations: [] },
-      unit: defaultWorkUnit('repositoryMutation'),
+      unit: defaultWorkUnit('repositoryUnknown'),
     }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(TemporalActivityUnsupportedError);
-    expect(error).toMatchObject({ code: 'TEMPORAL_ACTIVITY_UNSUPPORTED', nodeType: 'repositoryMutation' });
+    expect(error).toMatchObject({ code: 'TEMPORAL_ACTIVITY_UNSUPPORTED', nodeType: 'repositoryUnknown' });
   });
 
   it('does not report simulated agent completion on the Temporal worker', async () => {
@@ -208,6 +213,75 @@ describe('Temporal node activities', () => {
       configureTemporalRepositoryWorkspace(undefined);
       await rm(directory, { recursive: true, force: true });
       await rm(runRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('executes repository mutation and patch activities in the same isolated run workspace', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-mutation-'));
+    const runRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-mutation-root-'));
+    await writeFile(path.join(directory, 'README.md'), 'before');
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: directory });
+    await execFileAsync('git', ['config', 'user.email', 'factory@example.test'], { cwd: directory });
+    await execFileAsync('git', ['config', 'user.name', 'Factory Test'], { cwd: directory });
+    await execFileAsync('git', ['add', 'README.md'], { cwd: directory });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: directory });
+    const workspace = await RepositoryWorkspace.open(directory);
+    configureTemporalRepositoryWorkspace(workspace, { runRoot });
+    try {
+      await expect(executeNodeActivity({
+        runId: 'run-repository-mutation', nodeId: 'mutate', nodeType: 'repositoryMutation', label: 'Edit',
+        config: { capabilities: ['repository.write'], operations: [{ operation: 'replace', path: 'README.md', content: 'after' }] }, unit: defaultWorkUnit('repositoryMutation'),
+      })).resolves.toMatchObject({ result: { results: [{ operation: 'replace', path: 'README.md' }], rolledBack: false } });
+      await expect(executeNodeActivity({
+        runId: 'run-repository-mutation', nodeId: 'patch', nodeType: 'repositoryPatch', label: 'Patch', config: {}, unit: defaultWorkUnit('repositoryPatch'),
+      })).resolves.toMatchObject({ result: { changedPaths: ['README.md'] } });
+      const patch = await executeNodeActivity({
+        runId: 'run-repository-mutation', nodeId: 'patch', nodeType: 'repositoryPatch', label: 'Patch', config: {}, unit: defaultWorkUnit('repositoryPatch'),
+      });
+      await expect(executeNodeActivity({
+        runId: 'run-repository-mutation', nodeId: 'commit', nodeType: 'repositoryCommit', label: 'Commit',
+        config: { message: 'Apply change', paths: ['README.md'], requirePatchArtifact: true }, unit: defaultWorkUnit('repositoryCommit'), inputs: [patch.result],
+      })).resolves.toMatchObject({ result: { branch: 'main', revision: expect.any(String) } });
+      await expect(import('node:fs/promises').then(({ readFile }) => readFile(path.join(directory, 'README.md'), 'utf8'))).resolves.toBe('before');
+    } finally {
+      configureTemporalRepositoryWorkspace(undefined);
+      await rm(directory, { recursive: true, force: true });
+      await rm(runRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('dispatches Temporal pull request, review, merge, and CI adapters through the configured GitHub client', async () => {
+    const pullRequest = { number: 42, url: 'https://github.com/example/repo/pull/42', head: 'factory/change', base: 'main', state: 'open' };
+    const github = {
+      createOrGetPullRequest: vi.fn(async () => pullRequest),
+      waitForPullRequestStatus: vi.fn(async () => ({ number: 42, state: 'open' as const, approvals: 1, changesRequested: 0, reviews: [], status: 'approved' as const, requiredApprovals: 1 })),
+      mergePullRequest: vi.fn(async () => ({ number: 42, merged: true, sha: 'abc123', message: 'Merged' })),
+      waitForChecks: vi.fn(async () => ({ ref: 'abc123', status: 'success' as const, checks: [], required: [], failures: [] })),
+    };
+    configureTemporalGitHubRepository(github);
+    try {
+      await expect(executeNodeActivity({
+        runId: 'run-github-lifecycle', nodeId: 'pr', nodeType: 'repositoryPullRequest', label: 'Open PR',
+        config: { title: 'Change', body: 'Body', head: 'factory/change', base: 'main' }, unit: defaultWorkUnit('repositoryPullRequest'),
+      })).resolves.toMatchObject({ result: { number: 42, head: 'factory/change' } });
+      await expect(executeNodeActivity({
+        runId: 'run-github-lifecycle', nodeId: 'review', nodeType: 'repositoryReview', label: 'Review',
+        config: { number: 42, requiredApprovals: 1 }, unit: defaultWorkUnit('repositoryReview'),
+      })).resolves.toMatchObject({ result: { status: 'approved' } });
+      await expect(executeNodeActivity({
+        runId: 'run-github-lifecycle', nodeId: 'merge', nodeType: 'repositoryMerge', label: 'Merge',
+        config: { number: 42, method: 'squash' }, unit: defaultWorkUnit('repositoryMerge'),
+      })).resolves.toMatchObject({ result: { merged: true } });
+      await expect(executeNodeActivity({
+        runId: 'run-github-lifecycle', nodeId: 'ci', nodeType: 'repositoryCi', label: 'CI',
+        config: { ref: 'abc123', required: ['checks'] }, unit: defaultWorkUnit('repositoryCi'),
+      })).resolves.toMatchObject({ result: { status: 'success', ref: 'abc123' } });
+      expect(github.createOrGetPullRequest).toHaveBeenCalledWith({ title: 'Change', body: 'Body', head: 'factory/change', base: 'main' });
+      expect(github.waitForPullRequestStatus).toHaveBeenCalledWith(expect.objectContaining({ number: 42, requiredApprovals: 1 }));
+      expect(github.mergePullRequest).toHaveBeenCalledWith(expect.objectContaining({ number: 42, method: 'squash' }));
+      expect(github.waitForChecks).toHaveBeenCalledWith(expect.objectContaining({ ref: 'abc123', required: ['checks'] }));
+    } finally {
+      configureTemporalGitHubRepository(undefined);
     }
   });
 
