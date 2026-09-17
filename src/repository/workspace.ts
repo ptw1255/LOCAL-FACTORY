@@ -13,6 +13,7 @@ const ALLOWED_CHECKS = new Set([
   'npm run lint',
   'npm run typecheck',
   'npm run build',
+  'node --version',
 ]);
 const SAFE_CHECK_ENVIRONMENT = new Set([
   'PATH',
