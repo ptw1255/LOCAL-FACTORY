@@ -32,6 +32,22 @@ test.describe('IDE workspace', () => {
     await expect(dialog).toBeHidden();
   });
 
+  test('navigates the application shell with keyboard-only controls', async ({ page }) => {
+    const observe = page.getByRole('button', { name: 'Observe', exact: true });
+    await observe.focus();
+    await expect(observe).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/#\/observe$/);
+    await expect(page.getByRole('heading', { name: 'Observe' })).toBeVisible();
+
+    const workspace = page.getByRole('button', { name: 'Workspace', exact: true });
+    await workspace.focus();
+    await expect(workspace).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/#\/studio$/);
+    await expect(page.getByRole('heading', { name: 'Project definition' })).toBeVisible();
+  });
+
   test('opens Run preflight for workflows with required input and restores focus', async ({ page, request }) => {
     const workflowResponse = await request.get('/api/workflows/workflow-agent-intake');
     expect(workflowResponse.ok()).toBeTruthy();
