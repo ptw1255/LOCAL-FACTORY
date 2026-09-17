@@ -6,8 +6,9 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
+import { seedWorkflow } from '../domain/seed.js';
 import { WorkUnitTimeoutError } from '../runtime/work-unit-dispatcher.js';
-import { configureTemporalGitHubRepository, configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
+import { configureTemporalGitHubRepository, configureTemporalModelProviders, configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 
 const execFileAsync = (file: string, args: string[], options: { cwd?: string } = {}) => new Promise<void>((resolve, reject) => {
@@ -125,17 +126,68 @@ describe('Temporal node activities', () => {
     expect(error).toMatchObject({ code: 'TEMPORAL_ACTIVITY_UNSUPPORTED', nodeType: 'repositoryUnknown' });
   });
 
-  it('does not report simulated agent completion on the Temporal worker', async () => {
-    const error = await executeNodeActivity({
-      runId: 'run-agent',
-      nodeId: 'agent',
-      nodeType: 'agentLoop',
-      label: 'Agent',
-      config: { maxIterations: 1 },
-      unit: defaultWorkUnit('agentLoop'),
-    }).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(TemporalActivityUnsupportedError);
-    expect(error).toMatchObject({ code: 'TEMPORAL_ACTIVITY_UNSUPPORTED', nodeType: 'agentLoop' });
+  it('executes a bounded agent loop through a configured Temporal provider adapter', async () => {
+    const agent = structuredClone(seedWorkflow.agents[0]!);
+    agent.model = { provider: 'fake', model: 'fake-v1', capabilities: ['text'] };
+    agent.limits.maxIterations = 2;
+    const provider = {
+      provider: 'fake',
+      capabilities: ['text'] as const,
+      chat: vi.fn(async ({ agent: requestedAgent, goal }: { agent: typeof agent; goal: string; signal: AbortSignal; traceId?: string }) => ({ content: `${requestedAgent.id}:${goal}`, model: requestedAgent.model.model ?? 'fake-v1' })),
+    };
+    configureTemporalModelProviders({ clients: new Map([['fake', provider]]) });
+    try {
+      const activity = await executeNodeActivity({
+        runId: 'run-agent',
+        traceId: 'trace-agent',
+        nodeId: 'agent',
+        nodeType: 'agentLoop',
+        label: 'Agent',
+        config: { agent, goal: 'Assess this change', maxIterations: 2 },
+        unit: defaultWorkUnit('agentLoop'),
+      });
+      expect(activity).toMatchObject({ result: { iterations: 2, outcome: 'bounded-completion', output: 'request-assessor:Assess this change', agentId: 'request-assessor', agentVersion: 1, provider: 'fake', model: 'fake-v1' }, lifecycle: { agentId: 'request-assessor', agentVersion: 1 } });
+      expect(provider.chat).toHaveBeenCalledTimes(2);
+      expect(provider.chat).toHaveBeenCalledWith(expect.objectContaining({ traceId: 'trace-agent', goal: 'Assess this change' }));
+    } finally {
+      configureTemporalModelProviders();
+    }
+  });
+
+  it('uses bounded fallback routes and fails closed for undeclared Temporal tools', async () => {
+    const agent = structuredClone(seedWorkflow.agents[0]!);
+    agent.model = {
+      provider: 'primary', model: 'primary-v1', routes: [
+        { provider: 'primary', model: 'primary-v1' },
+        { provider: 'secondary', model: 'secondary-v1' },
+      ], routing: { strategy: 'fallback', maxAttempts: 2 },
+    };
+    const primary = { provider: 'primary', capabilities: ['text'] as const, chat: vi.fn(async () => { throw new Error('primary unavailable'); }) };
+    const secondary = { provider: 'secondary', capabilities: ['text'] as const, chat: vi.fn(async () => ({ content: 'fallback', model: 'secondary-v1' })) };
+    configureTemporalModelProviders({ clients: new Map([['primary', primary], ['secondary', secondary]]) });
+    try {
+      await expect(executeNodeActivity({
+        runId: 'run-agent-fallback', nodeId: 'agent', nodeType: 'agentLoop', label: 'Agent',
+        config: { agent, goal: 'Fallback', maxIterations: 1 }, unit: defaultWorkUnit('agentLoop'),
+      })).resolves.toMatchObject({ result: { provider: 'secondary', output: 'fallback', routeIndex: 1 } });
+      expect(primary.chat).toHaveBeenCalledOnce();
+      expect(secondary.chat).toHaveBeenCalledOnce();
+    } finally {
+      configureTemporalModelProviders();
+    }
+
+    const toolAgent = structuredClone(seedWorkflow.agents[0]!);
+    toolAgent.model = { provider: 'tool-provider', model: 'tool-v1' };
+    const toolProvider = { provider: 'tool-provider', capabilities: ['text', 'tools'] as const, chat: vi.fn(async () => ({ content: '', model: 'tool-v1', toolCalls: [{ callId: 'call-1', name: 'not-declared', arguments: '{}' }] })) };
+    configureTemporalModelProviders({ clients: new Map([['tool-provider', toolProvider]]) });
+    try {
+      await expect(executeNodeActivity({
+        runId: 'run-agent-tool-policy', nodeId: 'agent', nodeType: 'agentLoop', label: 'Agent',
+        config: { agent: toolAgent, goal: 'Tool policy', maxIterations: 1 }, unit: defaultWorkUnit('agentLoop'),
+      })).rejects.toThrow('requested undeclared tool');
+    } finally {
+      configureTemporalModelProviders();
+    }
   });
 
   it('completes an approval activity after the workflow signal is received', async () => {
