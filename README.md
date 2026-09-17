@@ -419,8 +419,13 @@ still uses the lighter local executor. Temporal repository activities resolve a
 run-scoped workspace instead of operating on the configured source checkout. Set
 `TEMPORAL_REPOSITORY_RUN_ROOT` to a durable worker volume when restart recovery
 must retain uncommitted run state; when unset, direct/local activity calls use a
-temporary run directory. Unsupported provider and repository WorkUnits still fail
-closed until their parity work is implemented.
+temporary run directory. Repository mutation, patch, branch, commit, push,
+pull-request, review, merge, and CI WorkUnits all use that same run-scoped
+workspace and persist their activity lifecycle evidence. Configure
+`GITHUB_REPOSITORY_OWNER`, `GITHUB_REPOSITORY_NAME`, and either `GITHUB_TOKEN` or
+the Vault-backed `GITHUB_SECRET_REF` for the GitHub delivery adapters. Provider
+agent-loop execution remains fail-closed on Temporal until its provider adapter
+parity is implemented.
 
 PostgreSQL stores workflow and run control-plane state in `platform_state` and keeps
 runtime logs, traces, and metrics in the indexed `observability_events` table. Legacy

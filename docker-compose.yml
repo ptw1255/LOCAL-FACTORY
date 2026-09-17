@@ -142,11 +142,20 @@ services:
       REPOSITORY_WORKSPACE: ${REPOSITORY_WORKSPACE:-}
       # Persist run-scoped Temporal repository workspaces across worker restarts.
       TEMPORAL_REPOSITORY_RUN_ROOT: ${TEMPORAL_REPOSITORY_RUN_ROOT:-/app/.data/temporal-runs}
+      # Optional GitHub repository adapter for pull-request, review, merge, and CI WorkUnits.
+      GITHUB_REPOSITORY_OWNER: ${GITHUB_REPOSITORY_OWNER:-}
+      GITHUB_REPOSITORY_NAME: ${GITHUB_REPOSITORY_NAME:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_SECRET_REF: ${GITHUB_SECRET_REF:-}
+      VAULT_ADDR: ${VAULT_ADDR:-http://vault:8200}
+      VAULT_TOKEN: ${VAULT_TOKEN:-dev-only-token}
     depends_on:
       postgres:
         condition: service_healthy
       temporal:
         condition: service_started
+      vault:
+        condition: service_healthy
     volumes:
       - app_data:/app/.data
     restart: unless-stopped

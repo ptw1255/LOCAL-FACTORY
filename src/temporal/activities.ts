@@ -5,6 +5,7 @@ import { activityInfo, cancellationSignal } from '@temporalio/activity';
 import { defaultWorkUnit } from '../domain/catalog.js';
 import type { WorkUnitDefinition, WorkflowNode } from '../domain/types.js';
 import { parseRepositoryCheckSandbox, RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryWorkspace } from '../repository/workspace.js';
+import { RepositoryCiError, RepositoryMergeError, RepositoryReviewError, type GitHubRepositoryClient } from '../repository/github.js';
 import { WorkUnitDispatcher } from '../runtime/work-unit-dispatcher.js';
 import type { TemporalActivityLifecycle, TemporalObservabilitySink } from './observability.js';
 
@@ -12,6 +13,8 @@ let observabilitySink: TemporalObservabilitySink | undefined;
 let repositoryWorkspace: RepositoryWorkspace | undefined;
 let repositoryRunRoot: string | undefined;
 const runWorkspaces = new Map<string, RepositoryWorkspace>();
+type TemporalGitHubRepository = Pick<GitHubRepositoryClient, 'createOrGetPullRequest' | 'waitForPullRequestStatus' | 'mergePullRequest' | 'waitForChecks'>;
+let githubRepository: TemporalGitHubRepository | undefined;
 
 /** Configure the worker-side durable sink; tests can inject a deterministic fake. */
 export function configureTemporalObservabilitySink(sink: TemporalObservabilitySink | undefined): void {
@@ -23,6 +26,11 @@ export function configureTemporalRepositoryWorkspace(workspace: RepositoryWorksp
   repositoryWorkspace = workspace;
   repositoryRunRoot = options.runRoot?.trim() || undefined;
   if (workspace === undefined) runWorkspaces.clear();
+}
+
+/** Configure the worker-side GitHub adapter; tests can inject a deterministic fake. */
+export function configureTemporalGitHubRepository(repository: TemporalGitHubRepository | undefined): void {
+  githubRepository = repository;
 }
 
 export interface NodeActivityInput {
@@ -247,6 +255,83 @@ async function executeNodeImplementation(
       }
       return (await workspaceForRun(input.runId)).patchArtifact();
     }
+    case 'repositoryMutation': {
+      const capabilities = Array.isArray(input.config.capabilities) ? input.config.capabilities.filter((value): value is string => typeof value === 'string') : [];
+      if (!capabilities.includes('repository.write')) throw new Error('Repository mutation requires the declared "repository.write" capability.');
+      const operations = Array.isArray(input.config.operations) ? input.config.operations : [];
+      const protectedPaths = Array.isArray(input.config.protectedPaths) ? input.config.protectedPaths.filter((value): value is string => typeof value === 'string') : [];
+      return (await workspaceForRun(input.runId)).applyMutationsTransaction(operations, { protectedPaths });
+    }
+    case 'repositoryBranch': {
+      const branch = typeof input.config.branch === 'string' ? input.config.branch : '';
+      const baseRevision = typeof input.config.baseRevision === 'string' && input.config.baseRevision !== '' ? input.config.baseRevision : await (await workspaceForRun(input.runId)).revision();
+      return (await workspaceForRun(input.runId)).createBranch(branch, baseRevision);
+    }
+    case 'repositoryCommit': {
+      const workspace = await workspaceForRun(input.runId);
+      const message = typeof input.config.message === 'string' ? input.config.message : '';
+      const paths = Array.isArray(input.config.paths) ? input.config.paths.filter((value): value is string => typeof value === 'string') : [];
+      if (input.config.requirePatchArtifact === true) await assertPatchBinding(workspace, input.inputs ?? [], paths);
+      return workspace.commit(message, paths);
+    }
+    case 'repositoryPush': {
+      const workspace = await workspaceForRun(input.runId);
+      const branch = typeof input.config.branch === 'string' && input.config.branch !== '' ? input.config.branch : await workspace.currentBranch();
+      const remote = typeof input.config.remote === 'string' ? input.config.remote : 'origin';
+      const allowedRemotes = Array.isArray(input.config.allowedRemotes) ? input.config.allowedRemotes.filter((value): value is string => typeof value === 'string') : ['origin'];
+      return workspace.push(branch, remote, { allowedRemotes });
+    }
+    case 'repositoryPullRequest': {
+      if (githubRepository === undefined) throw new Error('GitHub repository integration is not configured for this Temporal worker.');
+      const title = typeof input.config.title === 'string' ? input.config.title : '';
+      const body = typeof input.config.body === 'string' ? input.config.body : '';
+      const head = typeof input.config.head === 'string' && input.config.head !== '' ? input.config.head : await (await workspaceForRun(input.runId)).currentBranch();
+      const base = typeof input.config.base === 'string' && input.config.base !== '' ? input.config.base : 'main';
+      return githubRepository.createOrGetPullRequest({ title, body, head, base });
+    }
+    case 'repositoryReview': {
+      if (githubRepository === undefined) throw new Error('GitHub repository integration is not configured for this Temporal worker.');
+      const configuredNumber = typeof input.config.number === 'number' && input.config.number > 0 ? input.config.number : undefined;
+      const inputNumber = configuredNumber === undefined
+        ? (input.inputs ?? []).map((value) => value !== null && typeof value === 'object' && typeof (value as { number?: unknown }).number === 'number' ? (value as { number: number }).number : undefined).find((value): value is number => value !== undefined)
+        : undefined;
+      const number = configuredNumber ?? inputNumber;
+      if (number === undefined) throw new Error('Repository review requires a pull request number or upstream pull request result.');
+      const requiredApprovals = typeof input.config.requiredApprovals === 'number' ? input.config.requiredApprovals : undefined;
+      const timeoutMs = typeof input.config.timeoutMs === 'number' ? Math.max(1, input.config.timeoutMs) : 120_000;
+      const intervalMs = typeof input.config.intervalMs === 'number' ? Math.max(10, input.config.intervalMs) : 2_000;
+      const review = await githubRepository.waitForPullRequestStatus({ number, requiredApprovals, timeoutMs, intervalMs, signal });
+      if (input.config.failurePolicy !== 'route' && !['approved', 'merged'].includes(review.status)) {
+        throw new RepositoryReviewError(`Pull request #${number} did not reach an approved state: ${review.status}.`, review);
+      }
+      return review;
+    }
+    case 'repositoryMerge': {
+      if (githubRepository === undefined) throw new Error('GitHub repository integration is not configured for this Temporal worker.');
+      const configuredNumber = typeof input.config.number === 'number' && input.config.number > 0 ? input.config.number : undefined;
+      const inputNumber = configuredNumber === undefined
+        ? (input.inputs ?? []).map((value) => value !== null && typeof value === 'object' && typeof (value as { number?: unknown }).number === 'number' ? (value as { number: number }).number : undefined).find((value): value is number => value !== undefined)
+        : undefined;
+      const number = configuredNumber ?? inputNumber;
+      if (number === undefined) throw new Error('Repository merge requires a pull request number or upstream pull request result.');
+      const configuredMethod = input.config.method;
+      const method = configuredMethod === 'merge' || configuredMethod === 'rebase' || configuredMethod === 'squash' ? configuredMethod : 'squash';
+      const merge = await githubRepository.mergePullRequest({ number, method, ...(typeof input.config.commitTitle === 'string' ? { commitTitle: input.config.commitTitle } : {}), ...(typeof input.config.commitMessage === 'string' ? { commitMessage: input.config.commitMessage } : {}) });
+      if (!merge.merged) throw new RepositoryMergeError(`Pull request #${number} was not merged: ${merge.message}.`, merge);
+      return merge;
+    }
+    case 'repositoryCi': {
+      if (githubRepository === undefined) throw new Error('GitHub repository integration is not configured for this Temporal worker.');
+      const ref = typeof input.config.ref === 'string' && input.config.ref !== '' ? input.config.ref : await (await workspaceForRun(input.runId)).revision();
+      const required = Array.isArray(input.config.required) ? input.config.required.filter((value): value is string => typeof value === 'string') : [];
+      const timeoutMs = typeof input.config.timeoutMs === 'number' ? Math.max(1, input.config.timeoutMs) : 120_000;
+      const intervalMs = typeof input.config.intervalMs === 'number' ? Math.max(10, input.config.intervalMs) : 2_000;
+      const ci = await githubRepository.waitForChecks({ ref, required, timeoutMs, intervalMs, signal });
+      if (input.config.failurePolicy !== 'route' && ci.status !== 'success') {
+        throw new RepositoryCiError(`Repository CI did not pass for ${ref}: ${ci.status}.`, ci);
+      }
+      return ci;
+    }
     case 'approval':
       // The workflow layer holds this activity at a deterministic condition
       // until the operator signal arrives; once dispatched, the human gate is
@@ -279,6 +364,28 @@ async function executeNodeImplementation(
       return { emitted: true, channel: input.config.channel ?? 'default' };
     default:
       throw new TemporalActivityUnsupportedError(input.nodeType);
+  }
+}
+
+async function assertPatchBinding(workspace: RepositoryWorkspace, inputs: unknown[], paths: string[]): Promise<void> {
+  const patches = inputs.map((value) => {
+    if (value !== null && typeof value === 'object' && 'patch' in value && (value as { patch?: unknown }).patch !== null && typeof (value as { patch?: unknown }).patch === 'object') return (value as { patch?: unknown }).patch;
+    return value;
+  }).filter((value): value is { id: string; changedPaths?: unknown[]; files?: unknown[] } => value !== null && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string' && Array.isArray((value as { changedPaths?: unknown[] }).changedPaths));
+  if (patches.length === 0) throw new Error('Repository commit requires an upstream patch artifact.');
+  if (patches.length > 1) throw new Error('Repository commit requires exactly one unambiguous upstream patch artifact.');
+  const patch = patches[0]!;
+  const changedPaths = patch.changedPaths?.filter((value): value is string => typeof value === 'string') ?? [];
+  const selectedPaths = paths.length === 0 ? changedPaths : paths;
+  if (selectedPaths.some((value) => !changedPaths.includes(value))) throw new Error('Repository commit paths must be contained in the approved patch artifact.');
+  if (patch.files !== undefined && patch.files.length > 0) {
+    for (const selectedPath of selectedPaths) {
+      const expected = patch.files.find((value) => value !== null && typeof value === 'object' && (value as { path?: unknown }).path === selectedPath) as { path: string; sha256?: unknown } | undefined;
+      if (expected === undefined) throw new Error(`Repository commit path "${selectedPath}" is missing from the approved patch file manifest.`);
+      let actualSha: string | undefined;
+      try { actualSha = createHash('sha256').update(await workspace.read(selectedPath)).digest('hex'); } catch { actualSha = undefined; }
+      if (actualSha !== (typeof expected.sha256 === 'string' ? expected.sha256 : undefined)) throw new Error(`Repository commit content for "${selectedPath}" no longer matches the approved patch artifact.`);
+    }
   }
 }
 
