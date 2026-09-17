@@ -16,6 +16,10 @@ test.describe('IDE workspace', () => {
     const initialHeight = await resize.getAttribute('aria-valuenow');
     await resize.press('ArrowUp');
     await expect(resize).not.toHaveAttribute('aria-valuenow', initialHeight ?? '');
+    const explorerResize = page.getByRole('separator', { name: 'Resize explorer' });
+    const initialWidth = await explorerResize.getAttribute('aria-valuenow');
+    await explorerResize.press('ArrowRight');
+    await expect(explorerResize).not.toHaveAttribute('aria-valuenow', initialWidth ?? '');
 
     await view.selectOption('tree');
     await expect(page.getByText('Operational tree', { exact: true })).toBeVisible();
