@@ -60,6 +60,20 @@ describe('ProjectWorkspace filesystem source store', () => {
     expect(saved.files?.map((file) => file.content)).toEqual(['version: 2', 'version: 2']);
   });
 
+  it('treats a null expected hash as a create-only precondition', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-workspace-create-race-'));
+    const workspace = new ProjectWorkspace(root);
+    const scope = { tenantId: 'tenant-a', projectId: 'project-a' };
+    await workspace.save(scope, 'workflow.yaml', 'version: 1');
+    const conflict = await workspace.saveMany(scope, [
+      { path: 'workflow.yaml', content: 'version: 2', expectedSha256: null },
+      { path: 'unit.yaml', content: 'version: 2', expectedSha256: null },
+    ]);
+    expect(conflict).toEqual({ status: 'conflict' });
+    expect((await workspace.read(scope, 'workflow.yaml'))?.content).toBe('version: 1');
+    expect(await workspace.read(scope, 'unit.yaml')).toBeUndefined();
+  });
+
   it('rejects symlinked tenant and project scopes', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-workspace-scope-links-'));
     const outside = await mkdtemp(path.join(os.tmpdir(), 'factory-workspace-scope-outside-'));

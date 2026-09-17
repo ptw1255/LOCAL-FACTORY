@@ -496,6 +496,18 @@ describe('platform API', () => {
     expect(saved.json<{ files: Array<{ path: string; content: string }> }>().files.map((file) => file.content)).toEqual(['version: 2', 'version: 2']);
   });
 
+  it('rejects create-only batch writes when a target path already exists', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'existing.yaml', content: 'version: 1' } });
+    const response = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files/batch', headers, payload: { files: [
+      { path: 'existing.yaml', content: 'version: 2', expectedSha256: null },
+      { path: 'new.yaml', content: 'version: 2', expectedSha256: null },
+    ] } });
+    expect(response.statusCode).toBe(409);
+    expect((await app.inject({ method: 'GET', url: '/api/projects/project-local/files?path=existing.yaml', headers })).json<{ content: string }>().content).toBe('version: 1');
+    expect((await app.inject({ method: 'GET', url: '/api/projects/project-local/files?path=new.yaml', headers })).statusCode).toBe(404);
+  });
+
   it('rolls back generated files when a mounted workspace migration fails partway through', async () => {
     await app.close();
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-api-migration-rollback-'));

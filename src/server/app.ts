@@ -631,7 +631,8 @@ export async function createApp(
       }
       const projectExists = await store.read((state) => state.projects.some((project) => project.id === scope.projectId && project.tenantId === scope.tenantId));
       if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
-      const normalizedWrites = writes.map((file) => ({ path: file.path, content: file.content, ...(typeof file.expectedSha256 === 'string' ? { expectedSha256: file.expectedSha256 } : {}) }));
+      if (writes.some((file) => file.expectedSha256 !== undefined && file.expectedSha256 !== null && typeof file.expectedSha256 !== 'string')) return reply.status(422).send({ message: 'expectedSha256 must be a string, null, or omitted.' });
+      const normalizedWrites: Array<{ path: string; content: string; expectedSha256?: string | null }> = writes.map((file) => ({ path: file.path, content: file.content, ...(file.expectedSha256 === null ? { expectedSha256: null } : typeof file.expectedSha256 === 'string' ? { expectedSha256: file.expectedSha256 } : {}) }));
       if (projectWorkspace !== undefined) {
         const existingPaths = new Set((await Promise.all(normalizedWrites.map((file) => projectWorkspace.read(scope, file.path)))).flatMap((file) => file === undefined ? [] : [file.path]));
         const saved = await projectWorkspace.saveMany(scope, normalizedWrites);
@@ -644,7 +645,8 @@ export async function createApp(
         const currentByPath = new Map(state.files.filter((file) => file.projectId === scope.projectId && file.tenantId === scope.tenantId).map((file) => [file.path, file]));
         for (const file of normalizedWrites) {
           const current = currentByPath.get(file.path);
-          if (file.expectedSha256 !== undefined && current?.sha256 !== file.expectedSha256) return undefined;
+          if (file.expectedSha256 === null && current !== undefined) return undefined;
+          if (typeof file.expectedSha256 === 'string' && current?.sha256 !== file.expectedSha256) return undefined;
         }
         const now = new Date().toISOString();
         const savedFiles = normalizedWrites.map((file) => ({ ...file, tenantId: scope.tenantId, projectId: scope.projectId, sha256: createHash('sha256').update(file.content).digest('hex'), updatedAt: now }));

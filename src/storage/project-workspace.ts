@@ -17,7 +17,8 @@ export interface ProjectWorkspaceListing {
 export interface ProjectWorkspaceWrite {
   path: string;
   content: string;
-  expectedSha256?: string;
+  /** A hash requires the current file to match; null requires the path to be new. */
+  expectedSha256?: string | null;
 }
 
 /**
@@ -81,7 +82,8 @@ export class ProjectWorkspace {
     const current = await Promise.all(writes.map((write) => this.read(scope, write.path)));
     for (const [index, write] of writes.entries()) {
       const existing = current[index];
-      if (write.expectedSha256 !== undefined && existing?.sha256 !== write.expectedSha256) return { status: 'conflict' };
+      if (write.expectedSha256 === null && existing !== undefined) return { status: 'conflict' };
+      if (typeof write.expectedSha256 === 'string' && existing?.sha256 !== write.expectedSha256) return { status: 'conflict' };
     }
     const targets = await Promise.all(writes.map((write) => this.safeTarget(scope, write.path, true)));
     const written: number[] = [];
