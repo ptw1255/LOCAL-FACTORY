@@ -1051,26 +1051,34 @@ export async function createApp(
     const body = (request.body ?? {}) as { threshold?: unknown };
     const threshold = body.threshold === undefined ? 1 : body.threshold;
     if (typeof threshold !== 'number' || !Number.isFinite(threshold) || threshold < 0 || threshold > 1) return reply.status(422).send({ message: 'threshold must be a number between 0 and 1.' });
-    const dataset = await store.read((state) => state.evaluationDatasets.find((candidate) => candidate.id === request.params.id && inScope(candidate, scope)));
-    if (dataset === undefined) return reply.status(404).send({ message: 'Evaluation dataset not found.' });
-    const statusCounts: Record<ReplayReportRecord['status'], number> = { passed: 0, mismatch: 0, failed: 0, timed_out: 0 };
-    for (const evaluationCase of dataset.cases) statusCounts[evaluationCase.status] += 1;
-    const totalCases = dataset.cases.length;
-    const passedCases = statusCounts.passed;
-    const passRate = totalCases === 0 ? 0 : Number((passedCases / totalCases).toFixed(6));
-    const evaluation: EvaluationDatasetEvaluation = {
-      datasetId: dataset.id,
-      datasetVersion: dataset.version,
-      totalCases,
-      passedCases,
-      nonPassingCases: totalCases - passedCases,
-      statusCounts,
-      passRate,
-      threshold,
-      promotionBlocked: passRate < threshold,
-      evaluatedAt: new Date().toISOString(),
-    };
-    return evaluation;
+    try {
+      return await store.mutate((state) => {
+        const dataset = state.evaluationDatasets.find((candidate) => candidate.id === request.params.id && inScope(candidate, scope));
+        if (dataset === undefined) throw new Error('Evaluation dataset not found.');
+        const statusCounts: Record<ReplayReportRecord['status'], number> = { passed: 0, mismatch: 0, failed: 0, timed_out: 0 };
+        for (const evaluationCase of dataset.cases) statusCounts[evaluationCase.status] += 1;
+        const totalCases = dataset.cases.length;
+        const passedCases = statusCounts.passed;
+        const passRate = totalCases === 0 ? 0 : Number((passedCases / totalCases).toFixed(6));
+        const evaluation: EvaluationDatasetEvaluation = {
+          datasetId: dataset.id,
+          datasetVersion: dataset.version,
+          totalCases,
+          passedCases,
+          nonPassingCases: totalCases - passedCases,
+          statusCounts,
+          passRate,
+          threshold,
+          promotionBlocked: passRate < threshold,
+          evaluatedAt: new Date().toISOString(),
+        };
+        dataset.lastEvaluation = evaluation;
+        return evaluation;
+      });
+    } catch (error) {
+      if (errorMessage(error) === 'Evaluation dataset not found.') return reply.status(404).send({ message: 'Evaluation dataset not found.' });
+      throw error;
+    }
   });
 
   app.post<{ Body: unknown }>('/api/evaluation-datasets', async (request, reply) => {

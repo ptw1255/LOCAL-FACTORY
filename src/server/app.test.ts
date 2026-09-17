@@ -585,6 +585,8 @@ describe('platform API', () => {
     const evaluation = await app.inject({ method: 'POST', url: `/api/evaluation-datasets/${dataset.id}/evaluate`, payload: { threshold: 1 } });
     expect(evaluation.statusCode).toBe(200);
     expect(evaluation.json<{ totalCases: number; passedCases: number; passRate: number; promotionBlocked: boolean; statusCounts: Record<string, number> }>()).toEqual(expect.objectContaining({ totalCases: 1, passedCases: 1, passRate: 1, promotionBlocked: false, statusCounts: expect.objectContaining({ passed: 1 }) }));
+    const evaluatedDataset = await app.inject({ method: 'GET', url: `/api/evaluation-datasets/${dataset.id}` });
+    expect(evaluatedDataset.json<{ lastEvaluation?: { datasetVersion: number; threshold: number; promotionBlocked: boolean } }>().lastEvaluation).toEqual(expect.objectContaining({ datasetVersion: 1, threshold: 1, promotionBlocked: false }));
     const blockedEvaluation = await app.inject({ method: 'POST', url: `/api/evaluation-datasets/${dataset.id}/evaluate`, payload: { threshold: 1.01 } });
     expect(blockedEvaluation.statusCode).toBe(422);
   });

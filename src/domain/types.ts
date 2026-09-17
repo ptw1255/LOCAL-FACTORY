@@ -301,6 +301,8 @@ export interface EvaluationDatasetRecord {
   description?: string;
   createdAt: string;
   cases: EvaluationDatasetCase[];
+  /** Most recent aggregate evaluation, retained as a payload-free release gate. */
+  lastEvaluation?: EvaluationDatasetEvaluation;
 }
 
 /** Payload-free aggregate score used to decide whether a dataset may promote. */
