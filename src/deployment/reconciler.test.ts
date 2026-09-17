@@ -334,6 +334,25 @@ describe('DeploymentReconciler', () => {
     await expect(reconciler.action(deployment.id, scope, 'rollback', { artifactId: artifacts[0]!.id, runId: runA.id, approvalId: rollbackApproval.id })).resolves.toMatchObject({ artifactId: artifacts[0]!.id, observedState: 'live', health: 'healthy' });
   });
 
+  it('requires promotion evidence to reference the selected artifact', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const artifacts = await store.mutate((state) => {
+      const values = ['evidence-a', 'evidence-b'].map((suffix) => ({ id: `sha256:${suffix}`, tenantId: scope.tenantId, projectId: scope.projectId, environment: 'production', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() }));
+      state.artifacts.push(...values);
+      return values;
+    });
+    const run = createQueuedRun(seedWorkflow, { artifactId: artifacts[0]!.id, environment: 'production' });
+    run.status = 'succeeded';
+    await store.mutate((state) => { state.runs.push(run); });
+    await store.appendEvidence({ id: `${run.id}-patch`, tenantId: scope.tenantId, projectId: scope.projectId, runId: run.id, unitId: 'patch', operation: 'repositoryPatch', attempt: 1, status: 'succeeded', occurredAt: new Date().toISOString() });
+    await store.appendEvidence({ id: `${run.id}-ci`, tenantId: scope.tenantId, projectId: scope.projectId, runId: run.id, unitId: 'ci', operation: 'repositoryCi', attempt: 1, status: 'succeeded', occurredAt: new Date().toISOString(), metadata: { 'ci.status': 'success' } });
+
+    const reconciler = new DeploymentReconciler(store);
+    const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'production', artifactId: artifacts[1]!.id, trigger: 'manual' });
+    await expect(reconciler.requestApproval(deployment.id, scope, { artifactId: artifacts[1]!.id, runId: run.id })).rejects.toThrow('selected workflow and artifact');
+  });
+
   it('does not retain a verified run when protected promotion health fails', async () => {
     const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
     const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
