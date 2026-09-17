@@ -1,5 +1,6 @@
 import type {
   AgentProposal,
+  ArtifactDiff,
   ArtifactRecord,
   ConnectionRecord,
   FactoryMetrics,
@@ -98,6 +99,7 @@ export const api = {
   projectFiles: (projectId: string, search = '') => request<ItemsResponse<ProjectFileRecord> & { directories?: ProjectDirectoryRecord[] }>(`/api/projects/${encodeURIComponent(projectId)}/files${search.trim() === '' ? '' : `?search=${encodeURIComponent(search.trim())}`}`),
   projectFile: (projectId: string, filePath: string) => request<ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files?path=${encodeURIComponent(filePath)}`),
   artifacts: (projectId: string) => request<ItemsResponse<ArtifactRecord>>(`/api/projects/${encodeURIComponent(projectId)}/artifacts`),
+  artifactDiff: (projectId: string, fromArtifactId: string, toArtifactId: string) => request<ArtifactDiff>(`/api/projects/${encodeURIComponent(projectId)}/artifacts/diff?from=${encodeURIComponent(fromArtifactId)}&to=${encodeURIComponent(toArtifactId)}`),
   artifact: (projectId: string, artifactId: string) => request<ArtifactRecord>(`/api/projects/${encodeURIComponent(projectId)}/artifacts/${encodeURIComponent(artifactId)}`),
   saveProjectFile: (projectId: string, filePath: string, content: string, expectedSha256?: string) => request<ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files`, { method: 'PUT', body: JSON.stringify({ path: filePath, content, ...(expectedSha256 === undefined ? {} : { expectedSha256 }) }) }),
   createProjectDirectory: (projectId: string, directoryPath: string) => request<ProjectDirectoryRecord>(`/api/projects/${encodeURIComponent(projectId)}/files/directory`, { method: 'POST', body: JSON.stringify({ path: directoryPath }) }),
