@@ -464,6 +464,11 @@ every 15 minutes and removes older records.
 `degraded`, failure count, and last success/error timestamps). Export errors remain
 non-blocking for workflow execution but are therefore visible to operators.
 
+The runtime uses the official OpenTelemetry API and async context manager for
+parent-span propagation across asynchronous event/export boundaries. The API is
+safe when no SDK exporter is configured; the existing OTLP bridge remains the
+non-blocking local transport until the full SDK exporter migration is enabled.
+
 Deployments to `production`, `prod`, `preprod`, or `staging` are promotion-gated:
 the action must reference a succeeded run for the same workflow that has both a
 reviewable repository patch and a passing `repositoryCi` evidence record, plus a
