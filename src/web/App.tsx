@@ -24,6 +24,7 @@ import {
 } from 'react';
 import { api } from './api';
 import { Icon, type IconName } from './icons';
+import { WorkspaceShell } from './WorkspaceShell';
 import type { CanvasNode } from './WorkflowNodeCard';
 import { defaultWorkUnit } from '../domain/catalog';
 import { validateWorkflowInput } from '../domain/input-schema';
@@ -170,7 +171,7 @@ function applyCanvasEdgeChanges(changes: EdgeChange<Edge>[], edges: Edge[]): Edg
   }
   return next;
 }
-const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName }> = {
+const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName; beta?: boolean }> = {
   // Keep the /studio route as a backwards-compatible deep link while exposing
   // the product surface as Workspace in navigation and copy.
   studio: { label: 'Workspace', icon: 'studio' },
@@ -668,64 +669,23 @@ export function App() {
     return <ErrorState message={scopeError ?? 'No project is available.'} retry={() => void loadProjects()} />;
   }
 
-  return (
-    <div className="app-shell">
-      <aside className={`sidebar ${mobileNavOpen ? 'open' : ''}`}>
-        <div className="brand">
-          <span className="brand-mark"><Icon name="spark" size={22} /></span>
-          <div>
-            <strong>Agentic</strong>
-            <span>Workflow Factory</span>
-          </div>
-        </div>
-        <ProjectSwitcher
-          currentProjectId={projectId}
-          onCreate={createProject}
-          onSelect={selectProject}
-          projects={projects}
-        />
-        <nav aria-label="Primary navigation">
-          <span className="nav-section-label">Build & operate</span>
-          {(Object.entries(viewLabels) as Array<[Exclude<ViewId, 'runs'>, (typeof viewLabels)[Exclude<ViewId, 'runs'>]]>).map(
-            ([id, item]) => (
-              <button
-                aria-current={view === id ? 'page' : undefined}
-                className={view === id ? 'active' : ''}
-                key={id}
-                onClick={() => setView(id)}
-                type="button"
-              >
-                <Icon name={item.icon} />
-                <span>{item.label}</span>
-                {id === 'proposals' ? <span className="nav-beta">AI</span> : null}
-              </button>
-            ),
-          )}
-        </nav>
-        <div className="sidebar-footer">
-          <span className="system-dot" />
-          <div>
-            <strong>Factory online</strong>
-            <span>Local durable engine</span>
-          </div>
-        </div>
-      </aside>
-      {mobileNavOpen ? (
-        <button
-          aria-label="Close navigation"
-          className="nav-scrim"
-          onClick={() => setMobileNavOpen(false)}
-          type="button"
-        />
-      ) : null}
-      <main className="main-content">
-        <div className="mobile-bar">
-          <button aria-label="Open navigation" className="icon-button" onClick={() => setMobileNavOpen(true)} type="button">
-            <Icon name="menu" />
-          </button>
-          <div className="mobile-brand"><Icon name="spark" /> Workflow Factory</div>
-          <span className="system-dot" />
-        </div>
+    return (
+      <WorkspaceShell
+        mobileNavOpen={mobileNavOpen}
+        navigation={Object.entries(viewLabels).map(([id, item]) => ({ id: id as Exclude<ViewId, 'runs'>, ...item, ...(id === 'proposals' ? { beta: true } : {}) }))}
+        onCloseMobileNavigation={() => setMobileNavOpen(false)}
+        onNavigate={setView}
+        onOpenMobileNavigation={() => setMobileNavOpen(true)}
+        projectSwitcher={(
+          <ProjectSwitcher
+            currentProjectId={projectId}
+            onCreate={createProject}
+            onSelect={selectProject}
+            projects={projects}
+          />
+        )}
+        view={view}
+      >
         <LazyChunkBoundary key={view}>
           {view === 'studio' ? <StudioView key={projectId} onNavigate={setView} projectId={projectId} /> : null}
           {view === 'observe' ? <RunsView key={projectId} /> : null}
@@ -734,8 +694,7 @@ export function App() {
           {view === 'factory' ? <FactoryView key={projectId} onNavigate={setView} /> : null}
           {view === 'deployments' ? <DeploymentsView key={projectId} onNavigate={setView} /> : null}
         </LazyChunkBoundary>
-      </main>
-    </div>
+      </WorkspaceShell>
   );
 }
 
