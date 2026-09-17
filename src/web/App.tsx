@@ -7,6 +7,7 @@ import {
 } from '@xyflow/react';
 import type * as Monaco from 'monaco-editor';
 import {
+  Component,
   type ChangeEvent,
   type CSSProperties,
   type FormEvent,
@@ -71,6 +72,21 @@ const LazyDiffEditor = lazy(async () => {
   return { default: module.DiffEditor };
 });
 const LazyCanvasProjection = lazy(async () => import('./CanvasProjection').then((module) => ({ default: module.CanvasProjection })));
+
+class LazyChunkBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error): { error: Error } {
+    return { error };
+  }
+
+  render(): ReactNode {
+    if (this.state.error !== null) {
+      return <div className="state-panel" role="alert"><strong>This workspace asset is out of date.</strong><span>Reload the page to pick up the latest build.</span><button className="button secondary" onClick={() => window.location.reload()} type="button">Reload workspace</button></div>;
+    }
+    return this.props.children;
+  }
+}
 
 function applyCanvasNodeChanges(changes: NodeChange<CanvasNode>[], nodes: CanvasNode[]): CanvasNode[] {
   let next = [...nodes];
@@ -1189,9 +1205,9 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
             <small className={agentError === null ? '' : 'field-error'}>{agentError ?? 'JSON array · validated when saved'}</small>
           </details>
         </aside>
-        <Suspense fallback={<div className="state-panel" role="status"><strong>Loading Canvas</strong><span>Preparing the visual projection.</span></div>}>
+        <LazyChunkBoundary><Suspense fallback={<div className="state-panel" role="status"><strong>Loading Canvas</strong><span>Preparing the visual projection.</span></div>}>
           <LazyCanvasProjection nodes={nodes} edges={edges} onConnect={onConnect} onEdgesChange={onEdgesChange} onNodesChange={onNodesChange} onSelectionChange={onSelectionChange} />
-        </Suspense>
+        </Suspense></LazyChunkBoundary>
         <aside className="inspector">
           <div className="panel-title">
             <div><span className="eyebrow">Properties</span><h2>Inspector</h2></div>
