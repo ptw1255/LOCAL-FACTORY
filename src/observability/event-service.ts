@@ -173,8 +173,29 @@ export class EventService {
   }): Promise<OperationEvidence> {
     const scope = await this.store.read((state) => {
       const run = state.runs.find((candidate) => candidate.id === input.runId);
-      return { tenantId: input.tenantId ?? run?.tenantId, projectId: input.projectId ?? run?.projectId, traceId: run?.traceId };
+      return {
+        tenantId: input.tenantId ?? run?.tenantId,
+        projectId: input.projectId ?? run?.projectId,
+        traceId: run?.traceId,
+        workflowId: run?.workflowId,
+        workflowVersion: run?.workflowVersion,
+        releaseBundleHash: run?.releaseBundleHash,
+        pinnedAgentVersions: run?.pinnedAgentVersions,
+        artifactId: run?.artifactId,
+        deploymentId: run?.deploymentId,
+        environment: run?.environment,
+      };
     });
+    const contextMetadata: Record<string, string | number | boolean> = {
+      ...(input.metadata ?? {}),
+      ...(scope.workflowId === undefined ? {} : { 'workflow.id': scope.workflowId }),
+      ...(scope.workflowVersion === undefined ? {} : { 'workflow.version': scope.workflowVersion }),
+      ...(scope.releaseBundleHash === undefined ? {} : { 'release.bundle.hash': scope.releaseBundleHash }),
+      ...(scope.pinnedAgentVersions === undefined ? {} : { 'agent.versions': JSON.stringify(scope.pinnedAgentVersions) }),
+      ...(scope.artifactId === undefined ? {} : { 'artifact.id': scope.artifactId }),
+      ...(scope.deploymentId === undefined ? {} : { 'deployment.id': scope.deploymentId }),
+      ...(scope.environment === undefined ? {} : { 'deployment.environment': scope.environment }),
+    };
     const evidence: OperationEvidence = {
       ...(scope.tenantId === undefined ? {} : { tenantId: scope.tenantId }),
       ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
@@ -195,7 +216,7 @@ export class EventService {
       ...(input.input === undefined ? {} : { inputHash: createHash('sha256').update(JSON.stringify(input.input)).digest('hex') }),
       ...(input.output === undefined ? {} : { outputHash: createHash('sha256').update(JSON.stringify(input.output)).digest('hex') }),
       ...(input.error === undefined ? {} : { error: input.error.slice(0, 2_000) }),
-      ...(input.metadata === undefined ? {} : { metadata: sanitizeMetadata(input.metadata) }),
+      ...(Object.keys(contextMetadata).length === 0 ? {} : { metadata: sanitizeMetadata(contextMetadata) }),
     };
     await this.store.appendEvidence(evidence);
     return evidence;
