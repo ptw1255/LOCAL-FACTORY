@@ -192,6 +192,25 @@ describe('Temporal node activities', () => {
     }
   });
 
+  it('runs repository checks in a persistent run-scoped workspace', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-check-isolation-'));
+    const runRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-run-root-'));
+    await writeFile(path.join(directory, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "require(\'fs\').writeFileSync(\'run-marker\', \'created\')"' } }));
+    const workspace = await RepositoryWorkspace.open(directory);
+    configureTemporalRepositoryWorkspace(workspace, { runRoot });
+    try {
+      await expect(executeNodeActivity({
+        runId: 'run-repository-check-isolation', nodeId: 'check', nodeType: 'repositoryCheck', label: 'Run tests', config: { command: 'npm test' }, unit: defaultWorkUnit('repositoryCheck'),
+      })).resolves.toMatchObject({ result: { exitCode: 0 } });
+      await expect(import('node:fs/promises').then(({ readFile }) => readFile(path.join(directory, 'run-marker'), 'utf8'))).rejects.toThrow();
+      await expect(import('node:fs/promises').then(({ readFile }) => readFile(path.join(runRoot, 'run-run-repository-check-isolation', 'run-marker'), 'utf8'))).resolves.toBe('created');
+    } finally {
+      configureTemporalRepositoryWorkspace(undefined);
+      await rm(directory, { recursive: true, force: true });
+      await rm(runRoot, { recursive: true, force: true });
+    }
+  });
+
   it('fails required Temporal repository checks and permits advisory failures', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-check-fail-'));
     await writeFile(path.join(directory, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(2)"' } }));

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -141,6 +141,20 @@ describe('RepositoryWorkspace', () => {
     expect(await run.read('README.md')).toBe('after');
     expect(await source.read('README.md')).toBe('before');
     await expect(run.applyMutations([{ operation: 'replace', path: 'README.md', content: 'blocked' }], { protectedPaths: ['README.md'] })).rejects.toThrow(/protected/);
+  });
+
+  it('reuses a persistent run workspace after a worker restart', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-repo-persistent-'));
+    const runRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-run-root-'));
+    await writeFile(path.join(root, 'README.md'), 'before');
+    const source = await RepositoryWorkspace.open(root);
+    const first = await source.cloneForRun('restart-safe', { rootDirectory: runRoot });
+    await first.applyMutations([{ operation: 'replace', path: 'README.md', content: 'after' }]);
+    const reattached = await source.cloneForRun('restart-safe', { rootDirectory: runRoot });
+    expect(await reattached.read('README.md')).toBe('after');
+    expect(await source.read('README.md')).toBe('before');
+    await rm(root, { recursive: true, force: true });
+    await rm(runRoot, { recursive: true, force: true });
   });
 
   it('returns a content-addressed mutation transaction with patch provenance', async () => {

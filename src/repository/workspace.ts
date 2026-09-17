@@ -189,10 +189,16 @@ export class RepositoryWorkspace {
 
   public get path(): string { return this.root; }
 
-  /** Copy the repository into a temporary run-specific workspace before mutation or checks. */
-  public async cloneForRun(runId: string): Promise<RepositoryWorkspace> {
+  /** Copy the repository into a run-specific workspace before mutation or checks. */
+  public async cloneForRun(runId: string, options: { rootDirectory?: string } = {}): Promise<RepositoryWorkspace> {
     const safeRunId = runId.replace(/[^a-zA-Z0-9_-]/g, '-');
-    const target = await import('node:fs/promises').then(({ mkdtemp }) => mkdtemp(path.join(os.tmpdir(), `factory-run-${safeRunId}-`)));
+    const persistentRoot = options.rootDirectory?.trim();
+    const target = persistentRoot === undefined || persistentRoot === ''
+      ? await import('node:fs/promises').then(({ mkdtemp }) => mkdtemp(path.join(os.tmpdir(), `factory-run-${safeRunId}-`)))
+      : (await mkdir(persistentRoot, { recursive: true }), path.join(await realpath(persistentRoot), `run-${safeRunId}`));
+    if (persistentRoot !== undefined && persistentRoot !== '' && await stat(target).then((value) => value.isDirectory()).catch(() => false)) {
+      return new RepositoryWorkspace(await realpath(target), true, false, this.repository);
+    }
     await cp(this.root, target, {
       recursive: true,
       filter: (source) => {
@@ -201,7 +207,7 @@ export class RepositoryWorkspace {
         return !isSensitiveRunFile(path.basename(source));
       },
     });
-    return new RepositoryWorkspace(await realpath(target), true, true, this.repository);
+    return new RepositoryWorkspace(await realpath(target), true, persistentRoot === undefined || persistentRoot === '', this.repository);
   }
 
   /** Remove a temporary run workspace. Safe to call multiple times. */

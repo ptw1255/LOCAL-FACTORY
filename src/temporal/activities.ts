@@ -10,6 +10,8 @@ import type { TemporalActivityLifecycle, TemporalObservabilitySink } from './obs
 
 let observabilitySink: TemporalObservabilitySink | undefined;
 let repositoryWorkspace: RepositoryWorkspace | undefined;
+let repositoryRunRoot: string | undefined;
+const runWorkspaces = new Map<string, RepositoryWorkspace>();
 
 /** Configure the worker-side durable sink; tests can inject a deterministic fake. */
 export function configureTemporalObservabilitySink(sink: TemporalObservabilitySink | undefined): void {
@@ -17,8 +19,10 @@ export function configureTemporalObservabilitySink(sink: TemporalObservabilitySi
 }
 
 /** Configure the bounded repository workspace available to repository activities. */
-export function configureTemporalRepositoryWorkspace(workspace: RepositoryWorkspace | undefined): void {
+export function configureTemporalRepositoryWorkspace(workspace: RepositoryWorkspace | undefined, options: { runRoot?: string } = {}): void {
   repositoryWorkspace = workspace;
+  repositoryRunRoot = options.runRoot?.trim() || undefined;
+  if (workspace === undefined) runWorkspaces.clear();
 }
 
 export interface NodeActivityInput {
@@ -178,6 +182,15 @@ async function recordLifecycle(lifecycle: TemporalActivityLifecycle): Promise<vo
   }
 }
 
+async function workspaceForRun(runId: string): Promise<RepositoryWorkspace> {
+  if (repositoryWorkspace === undefined) throw new Error('Repository workspace is not configured for this Temporal worker.');
+  const existing = runWorkspaces.get(runId);
+  if (existing !== undefined) return existing;
+  const isolated = await repositoryWorkspace.cloneForRun(runId, repositoryRunRoot === undefined ? {} : { rootDirectory: repositoryRunRoot });
+  runWorkspaces.set(runId, isolated);
+  return isolated;
+}
+
 function hashPayload(payload: unknown): string {
   return createHash('sha256').update(JSON.stringify(payload) ?? 'undefined').digest('hex');
 }
@@ -222,7 +235,7 @@ async function executeNodeImplementation(
       const command = typeof input.config.command === 'string' ? input.config.command : 'npm test';
       const timeoutMs = typeof input.config.timeoutMs === 'number' ? input.config.timeoutMs : undefined;
       const required = input.config.required !== false;
-      const check = await repositoryWorkspace.runCheck(command, timeoutMs, signal, { sandbox: parseRepositoryCheckSandbox(input.config.sandbox) });
+      const check = await (await workspaceForRun(input.runId)).runCheck(command, timeoutMs, signal, { sandbox: parseRepositoryCheckSandbox(input.config.sandbox) });
       const result = { ...check, required, promotionBlocked: required && (check.timedOut || check.exitCode !== 0) };
       if (required && check.timedOut) throw new RepositoryCheckTimeoutError(`Required repository check timed out: ${command}.`, check);
       if (required && check.exitCode !== 0) throw new RepositoryCheckError(`Required repository check failed: ${command}.`, check);
@@ -232,7 +245,7 @@ async function executeNodeImplementation(
       if (repositoryWorkspace === undefined) {
         throw new Error('Repository workspace is not configured for this Temporal worker.');
       }
-      return repositoryWorkspace.patchArtifact();
+      return (await workspaceForRun(input.runId)).patchArtifact();
     }
     case 'approval':
       // The workflow layer holds this activity at a deterministic condition

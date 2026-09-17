@@ -140,6 +140,8 @@ services:
       TEMPORAL_WORKFLOW_VERSION: ${TEMPORAL_WORKFLOW_VERSION:-1}
       # Optional bounded repository workspace for repository check/patch activities.
       REPOSITORY_WORKSPACE: ${REPOSITORY_WORKSPACE:-}
+      # Persist run-scoped Temporal repository workspaces across worker restarts.
+      TEMPORAL_REPOSITORY_RUN_ROOT: ${TEMPORAL_REPOSITORY_RUN_ROOT:-/app/.data/temporal-runs}
     depends_on:
       postgres:
         condition: service_healthy
