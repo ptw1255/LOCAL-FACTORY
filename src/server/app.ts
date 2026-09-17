@@ -32,6 +32,7 @@ import { planResourceMigration } from '../declarative/migration.js';
 import { computeArtifactId, diffArtifacts } from '../declarative/artifact.js';
 import { parseProjectYaml, stringifyProjectYaml } from '../declarative/yaml.js';
 import { CompositeTelemetryExporter, OtlpHttpExporter } from '../observability/otlp-exporter.js';
+import type { TelemetryExporter } from '../observability/otlp-exporter.js';
 import { OtelSdkExporter } from '../observability/otel-sdk-exporter.js';
 import { LocalWorkflowExecutor } from '../runtime/executor.js';
 import { WorkflowReplayService } from '../runtime/replay.js';
@@ -61,6 +62,7 @@ export interface AppOptions {
   logger?: boolean;
   serveStatic?: boolean;
   observabilityRetentionHours?: number;
+  telemetryExporter?: TelemetryExporter;
   repositoryWorkspace?: RepositoryWorkspace;
   githubRepository?: GitHubRepositoryClient;
   openaiClient?: OpenAIClient;
@@ -173,7 +175,7 @@ export async function createApp(
   const evidenceRetentionHours = process.env.EVIDENCE_RETENTION_HOURS === undefined
     ? undefined
     : positiveNumber(process.env.EVIDENCE_RETENTION_HOURS, 1);
-  const exporter = telemetryExporter();
+  const exporter = options.telemetryExporter ?? telemetryExporter();
   const phoenixUiUrl = process.env.PHOENIX_UI_URL?.trim() || undefined;
   const artifactDirectory = process.env.ARTIFACT_STORE_DIR?.trim() || path.join(path.dirname(dataFile), 'artifacts');
   const artifactStore = options.artifactStore ?? new FileArtifactStore(artifactDirectory);
