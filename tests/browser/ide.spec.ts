@@ -64,5 +64,16 @@ test.describe('Observe and Deployments', () => {
     await page.getByRole('combobox', { name: 'Filter deployments by observed state' }).selectOption('stopped');
     await expect(card).toBeVisible();
     await page.getByRole('combobox', { name: 'Filter deployments by observed state' }).selectOption('all');
+
+    await card.getByRole('button', { name: 'Observe' }).click();
+    await expect(page).toHaveURL(/#\/observe\?workflowId=workflow-agent-intake&environment=local/);
+    await expect(page.getByRole('heading', { name: 'Observe' })).toBeVisible();
+
+    await page.goto('/#/deployments');
+    const refreshedCard = page.locator('article.connection-card').first();
+    const source = refreshedCard.getByRole('button', { name: 'workflows/workflow-agent-intake.workflow.yaml' });
+    await source.click();
+    await expect(page).toHaveURL(/#\/studio$/);
+    await expect(page.getByRole('heading', { name: 'Project definition' })).toBeVisible();
   });
 });
