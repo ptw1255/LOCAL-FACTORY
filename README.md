@@ -253,6 +253,32 @@ If GitHub integration is configured with `GITHUB_TOKEN`,
 already-created branch. The token is used only in the Authorization header and is
 never included in request payloads or telemetry.
 
+Repository delivery can also be composed directly in a declarative workflow. Use
+`repositoryReview` to poll reviewer approvals and merge state, then place an
+explicitly approval-gated `repositoryMerge` step after it:
+
+```yaml
+- id: review
+  type: repositoryReview
+  config:
+    number: 42
+    requiredApprovals: 1
+    timeoutMs: 180000
+    intervalMs: 5000
+- id: merge
+  type: repositoryMerge
+  config:
+    number: 42
+    method: squash
+    requiresApproval: true
+```
+
+Review polling is read-only and produces bounded statuses (`approved`,
+`changes_requested`, `merged`, `closed`, or `timed_out`). Merge is a separate
+side effect and cannot run until the normal WorkUnit approval boundary is
+resolved. Both steps persist pull-request number, review/merge status, approval
+counts, and merge SHA as payload-free operation evidence.
+
 Useful commands:
 
 ```bash
