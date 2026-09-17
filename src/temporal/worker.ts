@@ -19,13 +19,12 @@ import { OpenAISDKClient } from '../runtime/openai-sdk.js';
 import { OpenAICompatibleClient } from '../runtime/openai-compatible.js';
 import { AnthropicClient } from '../runtime/anthropic.js';
 import { GeminiClient } from '../runtime/gemini.js';
-import { temporalConnectionSettings } from './config.js';
+import { temporalConnectionSettings, temporalTaskQueues } from './config.js';
 
 const temporalSettings = temporalConnectionSettings();
 const address = temporalSettings.address;
 const namespace = temporalSettings.namespace;
-const configuredTaskQueue = process.env.TEMPORAL_TASK_QUEUE;
-const taskQueue = configuredTaskQueue ?? `${process.env.TEMPORAL_TASK_QUEUE_PREFIX ?? 'agentic-workflows'}-v${process.env.TEMPORAL_WORKFLOW_VERSION ?? '1'}`;
+const taskQueues = temporalTaskQueues();
 const databaseUrl = process.env.DATABASE_URL;
 const dataFile = process.env.DATA_FILE ?? path.join(process.cwd(), '.data', 'state.json');
 const store: PlatformStore = databaseUrl === undefined ? new JsonStore(dataFile) : new PostgresStore(databaseUrl);
@@ -64,7 +63,7 @@ configureTemporalModelProviders({ clients: providers, ollama });
 const connection = await NativeConnection.connect({ address, ...(temporalSettings.tls === undefined ? {} : { tls: temporalSettings.tls }), ...(temporalSettings.apiKey === undefined ? {} : { apiKey: temporalSettings.apiKey }) });
 const compiledWorkflowsPath = new URL('./workflows.js', import.meta.url);
 const sourceWorkflowsPath = new URL('./workflows.ts', import.meta.url);
-const worker = await Worker.create({
+const workers = await Promise.all(taskQueues.map((taskQueue) => Worker.create({
   connection,
   namespace,
   taskQueue,
@@ -72,11 +71,12 @@ const worker = await Worker.create({
   // `tsx` execution uses the TypeScript source tree.
   workflowsPath: fileURLToPath(existsSync(fileURLToPath(compiledWorkflowsPath)) ? compiledWorkflowsPath : sourceWorkflowsPath),
   activities,
-});
+})));
 
 try {
-  await worker.run();
+  await Promise.all(workers.map((worker) => worker.run()));
 } finally {
+  for (const worker of workers) worker.shutdown();
   configureTemporalObservabilitySink(undefined);
   activities.configureTemporalRepositoryWorkspace(undefined);
   configureTemporalGitHubRepository(undefined);

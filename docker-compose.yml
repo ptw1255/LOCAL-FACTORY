@@ -30,6 +30,7 @@ services:
       TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-temporal:7233}
       TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE_PREFIX: ${TEMPORAL_TASK_QUEUE_PREFIX:-agentic-workflows}
+      TEMPORAL_TASK_QUEUES: ${TEMPORAL_TASK_QUEUES:-}
       # Optional Temporal Cloud/self-hosted TLS. Keep certificate material out
       # of the image; mount files and set these paths in production.
       TEMPORAL_TLS_CERT_FILE: ${TEMPORAL_TLS_CERT_FILE:-}
@@ -179,6 +180,7 @@ services:
       TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-temporal:7233}
       TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE_PREFIX: ${TEMPORAL_TASK_QUEUE_PREFIX:-agentic-workflows}
+      TEMPORAL_TASK_QUEUES: ${TEMPORAL_TASK_QUEUES:-}
       TEMPORAL_WORKFLOW_VERSION: ${TEMPORAL_WORKFLOW_VERSION:-1}
       TEMPORAL_TLS_CERT_FILE: ${TEMPORAL_TLS_CERT_FILE:-}
       TEMPORAL_TLS_KEY_FILE: ${TEMPORAL_TLS_KEY_FILE:-}

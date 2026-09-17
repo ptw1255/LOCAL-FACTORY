@@ -9,6 +9,17 @@ export interface TemporalConnectionSettings {
   apiKey?: string;
 }
 
+/** Resolve the bounded set of release queues a worker is expected to serve. */
+export function temporalTaskQueues(env: NodeJS.ProcessEnv = process.env): string[] {
+  const explicit = env.TEMPORAL_TASK_QUEUES?.split(',').map((queue) => queue.trim()).filter((queue) => queue !== '') ?? [];
+  if (explicit.length > 0) return [...new Set(explicit)].slice(0, 32);
+  const single = env.TEMPORAL_TASK_QUEUE?.trim();
+  if (single !== undefined && single !== '') return [single];
+  const prefix = env.TEMPORAL_TASK_QUEUE_PREFIX?.trim() || 'agentic-workflows';
+  const version = env.TEMPORAL_WORKFLOW_VERSION?.trim() || '1';
+  return [`${prefix}-v${version}`];
+}
+
 function configuredFile(env: NodeJS.ProcessEnv, name: string): Uint8Array | undefined {
   const file = env[name]?.trim();
   if (file === undefined || file === '') return undefined;

@@ -706,7 +706,10 @@ and records searchable factory, workflow, version, environment, status, and
 correlation attributes. The adapter reattaches to queued/running Temporal runs after
 an API restart and observes the workflow result back into the same run record. Supply
 `TEMPORAL_TASK_QUEUE` to the worker when you need an explicit queue name instead of
-the prefix/version convention.
+the prefix/version convention. During a rollout, `TEMPORAL_TASK_QUEUES` can contain
+a comma-separated bounded set such as `agentic-workflows-v1,agentic-workflows-v2`;
+one worker process will poll each queue so rollback can continue serving the prior
+release while the new version is promoted.
 
 Production workers and the API can connect to Temporal Cloud or a TLS-enabled
 self-hosted cluster without putting certificate material in the image. Mount a
