@@ -2113,7 +2113,7 @@ function RunsView() {
             ) : (
               <>
                 <header className="detail-header">
-                  <div><span className="eyebrow">Run {selectedRun.id}</span><h2>{selectedRun.workflowName}</h2><p>Workflow version {selectedRun.workflowVersion} · started {formatDate(selectedRun.startedAt)}</p></div>
+                  <div><span className="eyebrow">Run {selectedRun.id}</span><h2>{selectedRun.workflowName}</h2><p>Workflow version {selectedRun.workflowVersion} · project {selectedRun.projectId} · environment {selectedRun.environment ?? 'default'} · started {formatDate(selectedRun.startedAt)}</p><small className="run-trace-reference">Trace <code>{selectedRun.traceId}</code></small></div>
                   <div className="run-actions">
                     <StatusBadge status={selectedRun.status} />
                     {selectedRun.status === 'waiting' ? (
@@ -2153,9 +2153,9 @@ function RunsView() {
                 {selectedRun.error !== undefined ? <div className="run-error" role="alert"><Icon name="warning" /><div><strong>Run failed</strong><span>{selectedRun.error}</span></div></div> : null}
                 {approvals.length === 0 ? null : <section className="approval-summary"><div className="timeline-heading"><div><span className="eyebrow">Authorization</span><h3>Approval records</h3></div><span className="count-pill">{approvals.length}</span></div>{approvals.map((approval) => <div className="approval-record" key={approval.id}><strong>{approval.operation} · {approval.nodeId}</strong><StatusBadge status={approval.decision} /><span>Requested {formatDate(approval.requestedAt)} · expires {formatDate(approval.expiresAt)}</span><code>Binding {approval.bindingHash}</code>{approval.reason === undefined ? null : <small>{approval.reason}</small>}</div>)}</section>}
                 {toolCheckpoints.length === 0 ? null : <section className="approval-summary tool-recovery-summary"><div className="timeline-heading"><div><span className="eyebrow">Operator recovery</span><h3>Incomplete tool checkpoints</h3></div><span className="count-pill">{toolCheckpoints.length}</span></div><p className="run-recovery-note">The runtime refused to replay these side effects. Verify the external outcome before resolving a checkpoint.</p>{toolCheckpoints.map((checkpoint) => <div className="approval-record" key={`${checkpoint.unitId}:${checkpoint.callId}`}><strong>{checkpoint.callId}</strong><span>{checkpoint.unitId} · started {formatDate(checkpoint.occurredAt)}</span><div className="form-actions"><button className="button primary" disabled={actionLoading} onClick={() => void recoverToolCheckpoint(checkpoint, 'succeeded')} type="button"><Icon name="check" size={13} /> Mark succeeded</button><button className="button secondary" disabled={actionLoading} onClick={() => void recoverToolCheckpoint(checkpoint, 'failed')} type="button"><Icon name="close" size={13} /> Mark failed</button></div></div>)}</section>}
-                <nav aria-label="Observe detail views" className="observe-tabs">
+                <nav aria-label="Observe detail views" className="observe-tabs" role="tablist">
                   {(['runs', 'logs', 'traces', 'metrics'] as const).map((tab) => (
-                    <button aria-selected={observeTab === tab} className={observeTab === tab ? 'active' : ''} key={tab} onClick={() => setObserveTab(tab)} role="tab" type="button">
+                    <button aria-controls="observe-events-panel" aria-selected={observeTab === tab} className={observeTab === tab ? 'active' : ''} id={`observe-${tab}-tab`} key={tab} onClick={() => setObserveTab(tab)} role="tab" type="button" tabIndex={observeTab === tab ? 0 : -1}>
                       {tab[0]!.toUpperCase() + tab.slice(1)}
                     </button>
                   ))}
@@ -2166,10 +2166,11 @@ function RunsView() {
                   <div><Icon name="person" /><span>Human touches</span><strong>{selectedRun.humanTouchpoints}</strong></div>
                   <div><Icon name="success" /><span>Completed</span><strong>{formatDate(selectedRun.completedAt)}</strong></div>
                 </div>
-                <div className="timeline-heading"><div><span className="eyebrow">{observeTab === 'runs' ? 'Execution log' : `${observeTab[0]!.toUpperCase() + observeTab.slice(1)} signal`}</span><h3>{observeTab === 'runs' ? 'Event timeline' : `${observeTab[0]!.toUpperCase() + observeTab.slice(1)} events`}</h3></div><span className="count-pill">{visibleEvents.length} events</span></div>
-                {visibleEvents.length === 0 ? (
+                <div aria-labelledby={`observe-${observeTab}-tab`} className="observe-events-panel" id="observe-events-panel" role="tabpanel" tabIndex={0}>
+                  <div className="timeline-heading"><div><span className="eyebrow">{observeTab === 'runs' ? 'Execution log' : `${observeTab[0]!.toUpperCase() + observeTab.slice(1)} signal`}</span><h3>{observeTab === 'runs' ? 'Event timeline' : `${observeTab[0]!.toUpperCase() + observeTab.slice(1)} events`}</h3></div><span className="count-pill">{visibleEvents.length} events</span></div>
+                  {visibleEvents.length === 0 ? (
                   <EmptyState icon="clock" title="No matching events" message="This run has not emitted events for the selected Observe view yet." />
-                ) : (
+                  ) : (
                   <ol className="timeline">
                     {visibleEvents.map((event, index) => (
                       <li aria-level={(eventDepth.get(event.id) ?? 0) + 1} key={event.id} style={{ marginLeft: `${(eventDepth.get(event.id) ?? 0) * 18}px` }}>
@@ -2184,14 +2185,15 @@ function RunsView() {
                       </li>
                     ))}
                   </ol>
-                )}
-                {observeTab === 'runs' ? <><div className="timeline-heading"><div><span className="eyebrow">Durable evidence</span><h3>Operation history</h3></div><span className="count-pill">{evidence.length} records</span></div>
-                {evidence.length === 0 ? <p className="inline-empty">No durable operation evidence recorded.</p> : (
+                  )}
+                  {observeTab === 'runs' ? <><div className="timeline-heading"><div><span className="eyebrow">Durable evidence</span><h3>Operation history</h3></div><span className="count-pill">{evidence.length} records</span></div>
+                  {evidence.length === 0 ? <p className="inline-empty">No durable operation evidence recorded.</p> : (
                   <div className="stage-table evidence-table">
                     <div className="stage-row stage-head"><span>Operation</span><span>Status</span><span>Attempt</span><span>Occurred</span></div>
                     {evidence.map((entry) => <div className="stage-row" key={entry.id}><details className="evidence-detail"><summary><strong>{entry.operation} · {entry.unitId}</strong></summary><div className="evidence-detail-body">{entry.inputHash === undefined ? null : <span>Input hash: <code>{entry.inputHash}</code></span>}{entry.outputHash === undefined ? null : <span>Output hash: <code>{entry.outputHash}</code></span>}{entry.error === undefined ? null : <span className="form-error">{entry.error}</span>}{entry.metadata === undefined || Object.keys(entry.metadata).length === 0 ? null : <pre>{JSON.stringify(entry.metadata, null, 2)}</pre>}{typeof entry.metadata?.['provider.url'] === 'string' && entry.metadata['provider.url'].startsWith('https://github.com/') ? <a href={entry.metadata['provider.url']} rel="noreferrer" target="_blank">Open provider record <Icon name="chevron" /></a> : null}</div></details><StatusBadge status={entry.status} /><span>{entry.attempt}</span><span>{formatDate(entry.occurredAt)}</span></div>)}
                   </div>
-                )}</> : null}
+                  )}</> : null}
+                </div>
               </>
             )}
           </section>
