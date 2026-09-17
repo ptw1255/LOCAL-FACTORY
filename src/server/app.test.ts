@@ -619,6 +619,27 @@ describe('platform API', () => {
     expect(JSON.stringify(await store.read((state) => state.connections))).not.toContain('must-not-be-persisted');
   });
 
+  it('never returns connection credentials through the list API', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/connections',
+      payload: {
+        name: 'Private provider',
+        connector: 'OpenAI',
+        environment: 'development',
+        scopes: ['models:invoke'],
+        secret: 'credential-must-not-leak',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+    const listed = await app.inject({ method: 'GET', url: '/api/connections' });
+    expect(listed.statusCode).toBe(200);
+    expect(JSON.stringify(listed.json())).not.toContain('credential-must-not-leak');
+    expect(listed.json<{ items: Array<{ secretConfigured: boolean; secretRef?: string }> }>().items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ secretConfigured: true, secretRef: expect.stringMatching(/^connections\//) }),
+    ]));
+  });
+
   it('preserves immutable workflow versions after a save', async () => {
     const currentResponse = await app.inject({
       method: 'GET',
