@@ -464,10 +464,23 @@ every 15 minutes and removes older records.
 `degraded`, failure count, and last success/error timestamps). Export errors remain
 non-blocking for workflow execution but are therefore visible to operators.
 
-The runtime uses the official OpenTelemetry API and async context manager for
-parent-span propagation across asynchronous event/export boundaries. The API is
-safe when no SDK exporter is configured; the existing OTLP bridge remains the
-non-blocking local transport until the full SDK exporter migration is enabled.
+The runtime uses the official OpenTelemetry API, SDKs, and async context manager
+for parent-span propagation across asynchronous event/export boundaries. When an
+OTLP or Phoenix endpoint is configured, the official SDK exporter is used by
+default for traces, logs, and metrics. Set `OTEL_USE_SDK_EXPORTER=false` only for
+compatibility with the legacy dependency-free OTLP bridge. SDK export failures are
+non-blocking and remain visible through `/api/health`.
+
+The Collector/Phoenix path has an opt-in Docker smoke test. It is skipped by
+default (and whenever Docker is unavailable); run it with:
+
+```bash
+OTEL_DOCKER_SMOKE=1 npm run test:observability-smoke
+```
+
+The smoke test starts the observability Compose profile, checks app health and the
+48-hour retention setting, posts a trace through the Collector, verifies Phoenix,
+and removes the temporary containers when it finishes.
 
 Deployments to `production`, `prod`, `preprod`, or `staging` are promotion-gated:
 the action must reference a succeeded run for the same workflow that has both a

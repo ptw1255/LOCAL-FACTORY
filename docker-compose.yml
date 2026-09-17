@@ -19,6 +19,7 @@ services:
       OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
       # Set PHOENIX_ENDPOINT=http://phoenix:6006 when enabling the observability profile.
       PHOENIX_ENDPOINT: ${PHOENIX_ENDPOINT:-}
+      OTEL_USE_SDK_EXPORTER: ${OTEL_USE_SDK_EXPORTER:-true}
       # Browser-facing Phoenix URL; keep the collector endpoint internal to Docker.
       PHOENIX_UI_URL: ${PHOENIX_UI_URL:-http://localhost:6006}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}

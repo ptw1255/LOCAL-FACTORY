@@ -32,6 +32,7 @@ import { planResourceMigration } from '../declarative/migration.js';
 import { computeArtifactId, diffArtifacts } from '../declarative/artifact.js';
 import { parseProjectYaml, stringifyProjectYaml } from '../declarative/yaml.js';
 import { CompositeTelemetryExporter, OtlpHttpExporter } from '../observability/otlp-exporter.js';
+import { OtelSdkExporter } from '../observability/otel-sdk-exporter.js';
 import { LocalWorkflowExecutor } from '../runtime/executor.js';
 import { WorkflowReplayService } from '../runtime/replay.js';
 import { TemporalWorkflowExecutor, type TemporalWorkflowClientLike } from '../temporal/executor.js';
@@ -130,20 +131,20 @@ function positiveNumber(value: string | undefined, fallback: number): number {
 
 function telemetryExporter(): CompositeTelemetryExporter | undefined {
   const exporters = [];
+  const useOfficialSdk = process.env.OTEL_USE_SDK_EXPORTER !== 'false';
   const configuredPhoenixEndpoint = process.env.PHOENIX_ENDPOINT ?? process.env.PHOENIX_COLLECTOR_ENDPOINT;
   const phoenixEndpoint = configuredPhoenixEndpoint?.trim() || undefined;
   const phoenixApiKey = process.env.PHOENIX_API_KEY;
   if (phoenixEndpoint !== undefined) {
-    exporters.push(new OtlpHttpExporter(
-      phoenixEndpoint,
-      phoenixApiKey === undefined ? {} : { api_key: phoenixApiKey },
-      { deleteTraces: true, signals: ['trace'] },
-    ));
+    const headers: Record<string, string> = phoenixApiKey === undefined ? {} : { api_key: phoenixApiKey };
+    exporters.push(useOfficialSdk
+      ? new OtelSdkExporter(phoenixEndpoint, { headers, signals: ['trace'], deleteTraces: true })
+      : new OtlpHttpExporter(phoenixEndpoint, headers, { deleteTraces: true, signals: ['trace'] }));
   }
   const configuredOtlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   const otlpEndpoint = configuredOtlpEndpoint?.trim() || undefined;
   if (otlpEndpoint !== undefined && otlpEndpoint !== phoenixEndpoint) {
-    exporters.push(new OtlpHttpExporter(otlpEndpoint));
+    exporters.push(useOfficialSdk ? new OtelSdkExporter(otlpEndpoint) : new OtlpHttpExporter(otlpEndpoint));
   }
   return exporters.length === 0 ? undefined : new CompositeTelemetryExporter(exporters);
 }
