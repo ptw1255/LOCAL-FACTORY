@@ -53,7 +53,7 @@ async function json(url, options = {}) {
   return body;
 }
 
-const unit = (id) => ({ kind: 'deterministic', version: 1, inputSchema: 'any', outputSchema: 'any', timeoutMs: 60_000, retryAttempts: 1, idempotencyKey: `temporal-smoke:${id}:v1` });
+const unit = (id, kind = 'deterministic') => ({ kind, version: 1, inputSchema: 'any', outputSchema: 'any', timeoutMs: 60_000, retryAttempts: 1, idempotencyKey: `temporal-smoke:${id}:v1` });
 
 let originalWorkflow;
 let smokeFailed = false;
@@ -68,7 +68,7 @@ try {
     nodes: [
       { id: 'smoke-trigger', type: 'manualTrigger', label: 'Smoke trigger', position: { x: 40, y: 180 }, config: {}, unit: unit('trigger') },
       { id: 'smoke-wait', type: 'wait', label: 'Restart boundary', position: { x: 320, y: 180 }, config: { durationMs: 8_000 }, unit: unit('wait') },
-      { id: 'smoke-output', type: 'output', label: 'Smoke output', position: { x: 600, y: 180 }, config: { value: 'temporal-smoke-passed' }, unit: unit('output') },
+      { id: 'smoke-output', type: 'output', label: 'Smoke output', position: { x: 600, y: 180 }, config: { value: 'temporal-smoke-passed' }, unit: unit('output', 'consumer') },
     ],
     edges: [
       { id: 'smoke-trigger-wait', source: 'smoke-trigger', target: 'smoke-wait' },
