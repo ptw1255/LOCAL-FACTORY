@@ -1327,6 +1327,7 @@ function OperationalTree({
   const validateShortcutRef = useRef(onValidate);
   const runShortcutRef = useRef(onRun);
   const pendingProblem = useRef<SourceDiagnostic | null>(null);
+  const draggedTab = useRef<string | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem(`${BOTTOM_PANEL_STORAGE_PREFIX}${projectId}`, JSON.stringify({ open: bottomOpen, tab: bottomTab }));
@@ -1420,6 +1421,17 @@ function OperationalTree({
       const next = files.find((file) => file.path === remaining.at(-1));
       if (next !== undefined) void selectFile(next);
     }
+  }
+
+  function moveTab(filePath: string, direction: -1 | 1): void {
+    setOpenPaths((current) => {
+      const index = current.indexOf(filePath);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.length) return current;
+      const next = [...current];
+      [next[index], next[nextIndex]] = [next[nextIndex]!, next[index]!];
+      return next;
+    });
   }
 
   async function refreshFiles(): Promise<void> {
@@ -1601,7 +1613,7 @@ function OperationalTree({
         <div className="ide-explorer-footer"><span className="system-dot" /> Git-backed definition</div>
       </aside>
       <section className="yaml-panel ide-editor">
-        <div className="ide-tab-bar"><div className="ide-tabs" role="tablist" aria-label="Open files">{openPaths.map((filePath) => <span className={`ide-tab ${selectedPath === filePath ? 'active' : ''}`} key={filePath}><button aria-selected={selectedPath === filePath} onClick={() => { const file = files.find((candidate) => candidate.path === filePath); if (file !== undefined) void selectFile(file); }} role="tab" type="button"><Icon name={filePath.includes('agent') ? 'agent' : 'code'} size={13} /> {filePath}{selectedPath === filePath && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>{openPaths.length > 1 ? <button aria-label={`Close ${filePath}`} className="ide-tab-close" onClick={() => closeTab(filePath)} type="button">×</button> : null}</span>)}</div><span className="ide-branch">factory.agentic/v1</span></div>
+        <div className="ide-tab-bar"><div className="ide-tabs" role="tablist" aria-label="Open files">{openPaths.map((filePath) => <span className={`ide-tab ${selectedPath === filePath ? 'active' : ''}`} draggable key={filePath} onDragEnd={() => { draggedTab.current = null; }} onDragOver={(event) => event.preventDefault()} onDragStart={() => { draggedTab.current = filePath; }} onDrop={() => { const source = draggedTab.current; draggedTab.current = null; if (source === null || source === filePath) return; setOpenPaths((current) => { const from = current.indexOf(source); const to = current.indexOf(filePath); if (from < 0 || to < 0) return current; const next = [...current]; next.splice(from, 1); next.splice(to, 0, source); return next; }); }}><button aria-selected={selectedPath === filePath} onClick={() => { const file = files.find((candidate) => candidate.path === filePath); if (file !== undefined) void selectFile(file); }} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); moveTab(filePath, event.key === 'ArrowLeft' ? -1 : 1); } }} role="tab" type="button"><Icon name={filePath.includes('agent') ? 'agent' : 'code'} size={13} /> {filePath}{selectedPath === filePath && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>{openPaths.length > 1 ? <button aria-label={`Close ${filePath}`} className="ide-tab-close" onClick={() => closeTab(filePath)} type="button">×</button> : null}</span>)}</div><span className="ide-branch">factory.agentic/v1</span></div>
         <div className="ide-editor-heading"><div><span className="eyebrow">Declarative source</span><h2>Project definition</h2><p>Author the loop in YAML. Apply compiles it into the runtime model.</p></div><div className="ide-editor-actions"><span className={dirty ? 'ide-dirty' : 'ide-clean'}>{dirty ? 'Unsaved changes' : 'Synced'}</span><button className="button ghost" onClick={() => void formatSource()} type="button"><Icon name="code" size={14} /> Format</button><button className="button primary" disabled={!dirty || busy} onClick={() => void applyYaml()} type="button"><Icon name="save" size={14} /> {busy ? 'Applying…' : 'Apply YAML'}</button><button className="icon-button" onClick={onCanvas} title="Open canvas compatibility view" type="button"><Icon name="studio" size={15} /></button></div></div>
         <div className="yaml-editor-wrap"><Editor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => { setProblems([]); setError(null); onSourceChange(value ?? ''); }} onMount={(editor, monaco) => { editorRef.current = editor; monacoRef.current = monaco; editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { void saveShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF, () => { void formatShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { validateShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => { runShortcutRef.current(); }); }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} /></div>
         {error === null ? <small className="ide-hint">Review the compiled tree on the right, then apply the file when it is ready. Invalid definitions never replace the active runtime. Shortcuts: Cmd/Ctrl+S apply · Shift+Alt+F format · Cmd/Ctrl+Enter validate · Cmd/Ctrl+Shift+Enter run.</small> : <div className="ide-error"><Icon name="warning" size={14} /> {error}</div>}
