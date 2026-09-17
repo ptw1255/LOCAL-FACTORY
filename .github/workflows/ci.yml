@@ -12,7 +12,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16-alpine
@@ -57,6 +57,10 @@ jobs:
         run: npm run check
       - name: Enforce browser bundle budgets
         run: npm run check:bundle
+      - name: Install Chromium for IDE browser smoke
+        run: npx playwright install --with-deps chromium
+      - name: IDE browser smoke gate
+        run: npm run test:browser
       - name: Coding workflow integration gate
         run: npm run test:coding-workflow
       - name: Container sandbox smoke gate

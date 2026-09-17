@@ -9,6 +9,7 @@
     "check:image": "node scripts/check-docker-image-size.mjs",
     "test:observability-smoke": "node scripts/observability-smoke.mjs",
     "test:temporal-smoke": "node scripts/temporal-smoke.mjs",
+    "test:browser": "npm run build && playwright test",
     "check": "npm run typecheck && npm test && npm run build",
     "demo": "tsx scripts/demo.ts",
     "factory": "tsx scripts/factory.ts",
@@ -43,6 +44,7 @@
   },
   "devDependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "@playwright/test": "^1.63.0",
     "@types/node": "26.2.0",
     "@types/pg": "^8.15.5",
     "@types/react": "19.2.18",
