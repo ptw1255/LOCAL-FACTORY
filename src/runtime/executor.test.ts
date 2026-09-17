@@ -16,7 +16,10 @@ import type { GitHubRepositoryClient } from '../repository/github.js';
 
 async function waitFor(
   predicate: () => Promise<boolean>,
-  timeoutMs = 5_000,
+  // Repository and provider fixtures can contend for the filesystem when
+  // Vitest runs the full suite in parallel. Keep the wait bounded while
+  // avoiding a false negative caused only by worker scheduling.
+  timeoutMs = 10_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
