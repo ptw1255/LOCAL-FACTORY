@@ -23,6 +23,7 @@ let ollamaClient: OllamaClient | undefined;
 
 export interface TemporalToolExecutionContext {
   runId: string;
+  traceId: string;
   nodeId: string;
   agentId: string;
   callId: string;
@@ -62,7 +63,7 @@ function defaultTemporalToolExecutors(): ReadonlyMap<string, TemporalToolExecuto
     }
     return executeNodeImplementation({
       runId: input.runId,
-      traceId: input.runId,
+      traceId: input.traceId,
       nodeId: input.nodeId,
       nodeType,
       label: `Agent tool ${input.name}`,
@@ -368,7 +369,7 @@ export async function executeAgentToolActivity(input: TemporalAgentToolInput): P
   };
   await recordLifecycle({ ...baseLifecycle, status: 'started', occurredAt: new Date(startedAt).toISOString() });
   try {
-    const result = await executor({ runId: input.runId, nodeId: input.nodeId, agentId: input.agent.id, callId: input.call.callId, name: input.call.name, arguments: parsedArguments, signal: currentActivityCancellationSignal() ?? new AbortController().signal });
+    const result = await executor({ runId: input.runId, traceId: input.traceId, nodeId: input.nodeId, agentId: input.agent.id, callId: input.call.callId, name: input.call.name, arguments: parsedArguments, signal: currentActivityCancellationSignal() ?? new AbortController().signal });
     const outputHash = hashPayload(result);
     const lifecycle: TemporalActivityLifecycle = { ...baseLifecycle, status: 'succeeded', occurredAt: new Date().toISOString(), durationMs: Date.now() - startedAt, outputHash };
     await recordLifecycle(lifecycle);
@@ -690,7 +691,7 @@ async function executeTemporalAgentLoop(input: NodeActivityInput, signal: AbortS
           await recordLifecycle({ ...toolLifecycleBase, status: 'started', occurredAt: new Date().toISOString() });
           const startedAt = Date.now();
           try {
-            const result = await executor({ runId: input.runId, nodeId: input.nodeId, agentId: agent.id, callId: call.callId, name: call.name, arguments: parsedArguments, signal });
+            const result = await executor({ runId: input.runId, traceId: input.traceId ?? input.runId, nodeId: input.nodeId, agentId: agent.id, callId: call.callId, name: call.name, arguments: parsedArguments, signal });
             await recordLifecycle({ ...toolLifecycleBase, status: 'succeeded', occurredAt: new Date().toISOString(), durationMs: Date.now() - startedAt, outputHash: hashPayload(result) });
             toolResults.push({ name: call.name, callId: call.callId, result });
           } catch (error) {
