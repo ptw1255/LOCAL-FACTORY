@@ -1,5 +1,5 @@
-export type FactoryLifecycleCommand = 'launch' | 'open' | 'dashboard' | 'up' | 'down' | 'restart' | 'status' | 'logs' | 'build' | 'deploy' | 'observe' | 'tui' | 'approve' | 'deny' | 'cancel' | 'pause' | 'resume';
-export type FactoryResourceCommand = 'validate' | 'plan' | 'tree' | 'run';
+export type FactoryLifecycleCommand = 'launch' | 'open' | 'dashboard' | 'workspace' | 'up' | 'down' | 'restart' | 'status' | 'logs' | 'build' | 'deploy' | 'observe' | 'tui' | 'approve' | 'deny' | 'cancel' | 'pause' | 'resume';
+export type FactoryResourceCommand = 'validate' | 'plan' | 'workflow' | 'tree' | 'edit' | 'run';
 export type FactoryCommand = FactoryLifecycleCommand | FactoryResourceCommand | 'help';
 
 const ansiReset = '\u001b[0m';
@@ -40,8 +40,8 @@ export interface FactoryArgs {
   help: boolean;
 }
 
-const lifecycleCommands = new Set<FactoryCommand>(['launch', 'open', 'dashboard', 'up', 'down', 'restart', 'status', 'logs', 'build', 'deploy', 'observe', 'tui', 'approve', 'deny', 'cancel', 'pause', 'resume']);
-const resourceCommands = new Set<FactoryCommand>(['validate', 'plan', 'tree', 'run']);
+const lifecycleCommands = new Set<FactoryCommand>(['launch', 'open', 'dashboard', 'workspace', 'up', 'down', 'restart', 'status', 'logs', 'build', 'deploy', 'observe', 'tui', 'approve', 'deny', 'cancel', 'pause', 'resume']);
+const resourceCommands = new Set<FactoryCommand>(['validate', 'plan', 'workflow', 'tree', 'edit', 'run']);
 const aliases: Readonly<Record<string, FactoryCommand>> = {
   start: 'up',
   stop: 'down',
@@ -105,14 +105,14 @@ export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
     }
     if (value.startsWith('-')) throw new Error(`Unknown option "${value}". Run "/factory help" for usage.`);
     if (resourceCommands.has(command) && resourcePath === undefined) resourcePath = value;
-    else if (command === 'run' && workflowId === undefined) workflowId = value;
+    else if ((command === 'run' || command === 'workflow') && workflowId === undefined) workflowId = value;
     else if (command === 'logs' && service === undefined) service = value;
     else if (['observe', 'approve', 'deny', 'cancel', 'pause', 'resume'].includes(command) && runId === undefined) runId = value;
     else if ((command === 'deny' || command === 'approve') && reason === undefined) reason = value;
     else if ((command === 'deny' || command === 'approve') && reason !== undefined) reason = `${reason} ${value}`;
     else throw new Error(`Unexpected argument "${value}".`);
   }
-  if (resourceCommands.has(command) && resourcePath === undefined) throw new Error(`${command} requires a project.yaml or resource directory.`);
+  if (resourceCommands.has(command) && resourcePath === undefined && command !== 'workflow') throw new Error(`${command} requires a project.yaml or resource directory.`);
   if (['approve', 'deny', 'cancel', 'pause', 'resume'].includes(command) && runId === undefined) throw new Error(`${command} requires a run id.`);
   return { command, ...(resourcePath === undefined ? {} : { resourcePath }), ...(workflowId === undefined ? {} : { workflowId }), ...(service === undefined ? {} : { service }), ...(runId === undefined ? {} : { runId }), ...(reason === undefined ? {} : { reason }), profiles: [...new Set(profiles)], follow, once, intervalMs, web, help: false };
 }
@@ -157,6 +157,7 @@ Lifecycle:
   deploy                            Build and start the stack
   open                             Open the browser dashboard directly
   dashboard | dashboards           Open the terminal Portals selector
+  workspace                        Open terminal file-backed authoring
   observe [run-id]                 Show runs, approvals, and telemetry
   tui                              Interactive terminal monitor (q quit, a approve, d deny)
   approve <run-id> [reason]        Approve a waiting run
@@ -168,7 +169,9 @@ Lifecycle:
 Authoring:
   validate <path>                  Validate a project YAML/resource directory
   plan <path>                      Print the workflow plan
-  tree <path>                      Print the operational tree
+  workflow <path> [workflow-id]     Inspect or author a workflow resource
+  tree <path>                      Compatibility alias for workflow
+  edit <path>                      Open a local resource in $EDITOR, then validate
   run <path> [workflow-id]         Execute a workflow locally
 
 Options:
@@ -182,5 +185,8 @@ Options:
 
 Environment:
   FACTORY_BASE_URL                 Dashboard URL (default: http://localhost:3100)
+  FACTORY_PROJECT_ID               Project selected by terminal authoring (default: first project)
+  FACTORY_ENVIRONMENT              Compile target for terminal saves (default: local)
+  VISUAL / EDITOR                  Editor opened by Workspace and Workflow authoring
   FACTORY_NO_OPEN=1                Print the URL without launching a browser`;
 }

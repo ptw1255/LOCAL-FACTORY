@@ -56,6 +56,9 @@ factory down                   # stop services (volumes are preserved)
 factory observe --follow        # live runs, approvals, and deployments
 factory tui                     # interactive monitor (q/a/d/r controls)
 factory dashboard               # quick-launch terminal portals
+factory workspace               # terminal file-backed authoring
+factory workflow                # terminal Workflow graph/source authoring
+factory edit workflows/review.workflow.yaml  # edit a local resource with $EDITOR
 factory approve <run-id>        # approve a waiting run
 factory deny <run-id> "reason"  # deny a waiting run
 factory --no-web                # run a CLI-only stack without static dashboard serving
@@ -73,7 +76,13 @@ snapshot and exits. Use `FACTORY_BASE_URL` for a different API URL and
 Add `--no-web` when the deployment should expose only the API/control plane for
 terminal-native operation.
 Declarative authoring commands remain available (`factory validate`, `factory plan`,
-`factory tree`, and `factory run`).
+`factory workflow`, and `factory run`). `factory tree` remains a compatibility alias.
+Inside Workspace, select a resource and press Enter (or `e`) to open it in
+`$VISUAL`/`$EDITOR`. The file is saved with an optimistic hash check and compiled
+immediately; invalid edits remain visible as diagnostics and never produce an
+executable artifact. Inside Workflow, the graph is a projection of the selected
+`workflows/*.workflow.yaml` envelope, so semantic edits are made in that source
+file while `canvas/*.canvas.yaml` remains layout-only.
 
 ### Control-plane authentication
 
@@ -338,7 +347,7 @@ Project YAML is the source of truth for loop topology, agent boxes, work-unit
 contracts, and runtime policy. The database stores the compiled runtime index,
 immutable versions, run state, and 48-hour telemetry; it is not the authoring
 surface. Keep YAML in Git, review it like code, and use the Studio primarily to
-inspect the operational tree or open the legacy canvas when visual editing helps.
+inspect the operational workflow graph or open the legacy canvas when visual editing helps.
 
 The repository includes a complete example at
 [`examples/code-review-loop.yaml`](examples/code-review-loop.yaml). Validate or
@@ -368,6 +377,8 @@ positions; policy and connection references remain explicit on workflow steps.
 ```bash
 npm run factory -- validate examples/code-review-loop.yaml
 npm run factory -- plan examples/code-review-loop.yaml
+npm run factory -- workflow examples/code-review-loop.yaml
+# compatibility alias:
 npm run factory -- tree examples/code-review-loop.yaml
 npm run factory -- run examples/code-review-loop.yaml workflow-code-review
 ```
@@ -667,7 +678,7 @@ propose changes, while policy and human approval control promotion.
 ## Product surfaces
 
 - **Studio:** IDE-style declarative workspace with a project explorer, editable YAML
-  source, compile/apply diagnostics, operational tree, agent-box inspection, and an
+  source, compile/apply diagnostics, operational workflow graph, agent-box inspection, and an
   optional React Flow canvas for compatibility editing.
 - **Runs:** inspect status, cost, human touchpoints, node events, agent iterations,
   failures, and approval waits.

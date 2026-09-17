@@ -18,6 +18,10 @@ describe('FACTORY CLI argument handling', () => {
     });
     expect(parseFactoryArgs(['dashboard'])).toMatchObject({ command: 'dashboard' });
     expect(parseFactoryArgs(['dashboards'])).toMatchObject({ command: 'dashboard' });
+    expect(parseFactoryArgs(['workspace'])).toMatchObject({ command: 'workspace' });
+    expect(parseFactoryArgs(['workflow'])).toMatchObject({ command: 'workflow' });
+    expect(parseFactoryArgs(['tree', 'examples/code-review-loop.yaml'])).toMatchObject({ command: 'tree', resourcePath: 'examples/code-review-loop.yaml' });
+    expect(parseFactoryArgs(['edit', 'workflows/review.workflow.yaml'])).toMatchObject({ command: 'edit', resourcePath: 'workflows/review.workflow.yaml' });
     expect(parseFactoryArgs(['logs', 'app'])).toMatchObject({ command: 'logs', service: 'app' });
     expect(parseFactoryArgs(['observe', 'run-1', '--follow', '--interval', '500'])).toMatchObject({ command: 'observe', runId: 'run-1', follow: true, intervalMs: 500 });
     expect(parseFactoryArgs(['deny', 'run-1', 'Needs review'])).toMatchObject({ command: 'deny', runId: 'run-1', reason: 'Needs review' });
@@ -63,5 +67,18 @@ describe('FACTORY CLI argument handling', () => {
     expect(portalItemCount(snapshot, 'portals')).toBe(4);
     expect(renderTerminalPortal(snapshot, { page: 'home', cursor: 8 }, { clear: false })).toContain('Portals');
     expect(renderTerminalPortal(snapshot, { page: 'portals', cursor: 0 }, { clear: false })).toContain('Observe');
+  });
+
+  it('renders source-backed Workspace and Workflow authoring surfaces', () => {
+    const snapshot = {
+      runs: [], approvals: [], deployments: [],
+      projectId: 'project-local',
+      files: [{ path: 'workflows/review.workflow.yaml', sha256: 'abc123', content: '' }],
+      workflows: [{ id: 'review', name: 'Review', version: 1, status: 'draft', nodes: [], edges: [] }],
+    } as never;
+    expect(renderTerminalPortal(snapshot, { page: 'home', cursor: 0 }, { clear: false })).toContain('Workspace');
+    expect(renderTerminalPortal(snapshot, { page: 'workspace', cursor: 0 }, { clear: false })).toContain('workflows/review.workflow.yaml');
+    expect(renderTerminalPortal(snapshot, { page: 'workflow', cursor: 0 }, { clear: false })).toContain('WORKFLOW');
+    expect(renderTerminalPortal(snapshot, { page: 'workflow', cursor: 0 }, { clear: false })).toContain('executable graph projection');
   });
 });

@@ -1,4 +1,4 @@
-import type { AgentProposal, ApprovalRecord, ConnectionRecord, DeploymentRecord, FactoryMetrics, RunEvent, RunRecord, WorkflowDefinition } from '../src/domain/types.js';
+import type { AgentProposal, ApprovalRecord, ConnectionRecord, DeploymentRecord, FactoryMetrics, ProjectFileRecord, RunEvent, RunRecord, WorkflowDefinition } from '../src/domain/types.js';
 import { factoryBanner } from './factory-cli.js';
 
 export interface TerminalSnapshot {
@@ -6,6 +6,8 @@ export interface TerminalSnapshot {
   approvals: ApprovalRecord[];
   deployments: DeploymentRecord[];
   workflows?: WorkflowDefinition[];
+  projectId?: string;
+  files?: ProjectFileRecord[];
   connections?: ConnectionRecord[];
   proposals?: AgentProposal[];
   metrics?: FactoryMetrics;
@@ -13,7 +15,7 @@ export interface TerminalSnapshot {
   error?: string;
 }
 
-export type TerminalPortalPage = 'home' | 'workspace' | 'tree' | 'runs' | 'approvals' | 'deployments' | 'connections' | 'proposals' | 'factory' | 'portals' | 'run-detail';
+export type TerminalPortalPage = 'home' | 'workspace' | 'workflow' | 'tree' | 'runs' | 'approvals' | 'deployments' | 'connections' | 'proposals' | 'factory' | 'portals' | 'run-detail';
 
 export interface TerminalPortalState {
   page: TerminalPortalPage;
@@ -91,7 +93,8 @@ export function pendingApproval(snapshot: TerminalSnapshot): ApprovalRecord | un
 
 export function portalItemCount(snapshot: TerminalSnapshot, page: TerminalPortalPage): number {
   if (page === 'home') return 9;
-  if (page === 'workspace' || page === 'tree') return Math.max(1, snapshot.workflows?.length ?? 0);
+  if (page === 'workspace') return Math.max(1, snapshot.files?.length ?? 0);
+  if (page === 'workflow' || page === 'tree') return Math.max(1, snapshot.workflows?.length ?? 0);
   if (page === 'runs') return snapshot.runs.length;
   if (page === 'approvals') return snapshot.approvals.length;
   if (page === 'deployments') return snapshot.deployments.length;
@@ -118,8 +121,8 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
   if (state.page === 'home') {
     lines.push(`${terminalBlue}FACTORY CONTROL PLANE${terminalReset}`, `${terminalDim}Use ↑/↓ to choose a surface, Enter to open, Esc to return.${terminalReset}`, '');
     const items: Array<[string, string]> = [
-      ['Workspace', 'Files, YAML authoring, validate, plan, and run'],
-      ['Tree / DAG', 'Operational workflow structure'],
+      ['Workspace', 'Edit files, validate, compile, and run'],
+      ['Workflow', 'Author and inspect the executable workflow graph'],
       ['Runs', `${snapshot.runs.length} recorded executions`],
       ['Approvals', `${snapshot.approvals.filter((approval) => approval.decision === 'pending').length} pending decisions`],
       ['Deployments', `${snapshot.deployments.length} managed environments`],
@@ -130,13 +133,13 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
     ];
     items.forEach(([label, detail], index) => lines.push(`${selectedMarker(state.cursor === index)} ${label.padEnd(16)} ${terminalDim}${detail}${terminalReset}`));
   } else if (state.page === 'workspace') {
-    lines.push(`${terminalBlue}WORKSPACE${terminalReset} ${terminalDim}· file-backed authoring${terminalReset}`, `${terminalDim}Author source in YAML, then use the commands below to validate or run it.${terminalReset}`, '');
-    const workflows = snapshot.workflows ?? [];
-    if (workflows.length === 0) lines.push('  No workflows loaded.');
-    workflows.forEach((workflow, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(workflow.id, 26).padEnd(26)} ${short(workflow.name, 34).padEnd(34)} v${workflow.version} · ${colorStatus(workflow.status)}`));
-    lines.push('', '  factory validate <project.yaml>', '  factory plan <project.yaml>', '  factory tree <project.yaml>', '  factory run <project.yaml> <workflow-id>');
-  } else if (state.page === 'tree') {
-    lines.push(`${terminalPurple}TREE / DAG${terminalReset} ${terminalDim}· operational workflow structure${terminalReset}`, '');
+    lines.push(`${terminalBlue}WORKSPACE${terminalReset} ${terminalDim}· file-backed authoring${terminalReset}`, `${terminalDim}Select a resource file and press Enter or e to edit it in $EDITOR.${terminalReset}`, '');
+    const files = snapshot.files ?? [];
+    if (files.length === 0) lines.push('  No project files loaded.');
+    files.forEach((file, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(file.path, 64).padEnd(64)} ${terminalDim}${short(file.sha256, 12)}${terminalReset}`));
+    lines.push('', '  Save → compile → artifact is the authoring lifecycle.');
+  } else if (state.page === 'workflow' || state.page === 'tree') {
+    lines.push(`${terminalPurple}WORKFLOW${terminalReset} ${terminalDim}· executable graph projection${terminalReset}`, `${terminalDim}Enter or e opens the source Workflow envelope; semantic edits belong in YAML.${terminalReset}`, '');
     const workflows = snapshot.workflows ?? [];
     if (workflows.length === 0) lines.push('  No workflows loaded.');
     workflows.forEach((workflow, index) => {
@@ -173,7 +176,7 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
     lines.push(`${terminalPurple}PORTALS${terminalReset} ${terminalDim}· terminal quick-launch surfaces${terminalReset}`, '');
     const items: Array<[string, string]> = [
       ['Observe', 'Open the terminal runs and telemetry view'],
-      ['DAG', 'Open the terminal workflow tree'],
+      ['Workflow', 'Open the terminal workflow graph'],
       ['Deployments', 'Open terminal deployment operations'],
       ['Factory', 'Open terminal metrics and manifest'],
     ];
@@ -188,6 +191,6 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
       for (const event of (snapshot.events ?? []).slice(-20)) lines.push(`  ${timestamp(event.timestamp)} ${short(event.type, 34).padEnd(34)} ${event.signal}`);
     }
   }
-  lines.push('', `${terminalDim}↑/↓ navigate · Enter select · r refresh · Esc back · q quit${terminalReset}`);
+  lines.push('', `${terminalDim}↑/↓ navigate · Enter select/edit · e edit source · r refresh · Esc back · q quit${terminalReset}`);
   return lines.join('\n');
 }

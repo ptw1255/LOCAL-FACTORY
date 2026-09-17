@@ -1,10 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, readdir, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import { parseProjectYaml } from '../src/declarative/yaml.js';
-import { compileResourceFiles } from '../src/declarative/resources.js';
+import { compileResourceFiles, parseResourceFile } from '../src/declarative/resources.js';
 import { EventService } from '../src/observability/event-service.js';
 import { LocalWorkflowExecutor } from '../src/runtime/executor.js';
 import { JsonStore } from '../src/storage/json-store.js';
@@ -64,11 +64,104 @@ async function requestJson<T>(route: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+function editorInvocation(filePath: string): { command: string; args: string[] } {
+  const configured = process.env.VISUAL?.trim() || process.env.EDITOR?.trim() || (process.platform === 'win32' ? 'notepad' : 'vi');
+  // Keep the launcher dependency-free while allowing the common `code --wait`
+  // and `vim -f` forms. Quoted arguments are intentionally preserved as one
+  // token; editors that need a shell pipeline should be wrapped by the user.
+  const tokens = configured.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((token) => token.replace(/^"|"$/g, '')) ?? [];
+  const [command, ...args] = tokens;
+  if (command === undefined || command === '') throw new Error('VISUAL/EDITOR is empty; set it to a terminal editor such as vi or nano.');
+  return { command, args: [...args, filePath] };
+}
+
+async function editRemoteProjectFile(projectId: string, filePath: string): Promise<void> {
+  const current = await requestJson<import('../src/domain/types.js').ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files?path=${encodeURIComponent(filePath)}`);
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-author-'));
+  const temporaryPath = path.join(directory, path.basename(filePath));
+  await writeFile(temporaryPath, current.content ?? '', 'utf8');
+  try {
+    const editor = editorInvocation(temporaryPath);
+    const result = spawnSync(editor.command, editor.args, { stdio: 'inherit', env: process.env });
+    if (result.error !== undefined) throw new Error(`Unable to open ${editor.command}: ${result.error.message}`);
+    if (result.status !== 0) throw new Error(`${editor.command} exited with status ${String(result.status ?? 1)}.`);
+    const nextSource = await readFile(temporaryPath, 'utf8');
+    if (nextSource === (current.content ?? '')) {
+      console.log(`FACTORY no changes: ${filePath}`);
+      return;
+    }
+    await requestJson(`/api/projects/${encodeURIComponent(projectId)}/files`, {
+      method: 'PUT',
+      body: JSON.stringify({ path: filePath, content: nextSource, expectedSha256: current.sha256 }),
+    });
+    try {
+      const artifact = await requestJson<{ id: string }>(`/api/projects/${encodeURIComponent(projectId)}/compile`, {
+        method: 'POST',
+        body: JSON.stringify({ environment: process.env.FACTORY_ENVIRONMENT?.trim() || 'local' }),
+      });
+      console.log(`FACTORY saved ${filePath} and compiled artifact ${artifact.id}.`);
+    } catch (error) {
+      throw new Error(`Saved ${filePath}, but compilation failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function editLocalFile(filePath: string): Promise<void> {
+  const inputStat = await stat(filePath);
+  if (!inputStat.isFile()) throw new Error(`Only files can be edited: ${filePath}`);
+  const original = await readFile(filePath, 'utf8');
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-author-'));
+  const temporaryPath = path.join(directory, path.basename(filePath));
+  await writeFile(temporaryPath, original, 'utf8');
+  try {
+    const editor = editorInvocation(temporaryPath);
+    const result = spawnSync(editor.command, editor.args, { stdio: 'inherit', env: process.env });
+    if (result.error !== undefined) throw new Error(`Unable to open ${editor.command}: ${result.error.message}`);
+    if (result.status !== 0) throw new Error(`${editor.command} exited with status ${String(result.status ?? 1)}.`);
+    const updated = await readFile(temporaryPath, 'utf8');
+    if (updated === original) {
+      console.log(`FACTORY no changes: ${filePath}`);
+      return;
+    }
+    const relativePath = path.relative(process.cwd(), filePath).replaceAll(path.sep, '/');
+    if (/^(?:factory|project)\.ya?ml$/i.test(path.basename(filePath))) {
+      parseProjectYaml(updated, { tenantId: 'tenant-local' });
+    } else {
+      try {
+        parseResourceFile({ path: relativePath, source: updated });
+      } catch (resourceError) {
+        // The pre-envelope aggregate project format is still supported for
+        // local edits, including examples with a custom filename.
+        try {
+          parseProjectYaml(updated, { tenantId: 'tenant-local' });
+        } catch {
+          throw resourceError;
+        }
+      }
+    }
+    await writeFile(filePath, updated, 'utf8');
+    console.log(`FACTORY saved and validated ${filePath}.`);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function terminalSnapshot(runId?: string): Promise<TerminalSnapshot> {
+  const workspacePromise = requestJson<{ items: import('../src/domain/types.js').ProjectRecord[] }>('/api/projects')
+    .then(async (projects) => {
+      const preferredId = process.env.FACTORY_PROJECT_ID?.trim();
+      const project = projects.items.find((candidate) => candidate.id === preferredId) ?? projects.items[0];
+      if (project === undefined) return { files: [], projectId: undefined };
+      const files = await requestJson<{ items: import('../src/domain/types.js').ProjectFileRecord[] }>(`/api/projects/${encodeURIComponent(project.id)}/files`);
+      return { files: files.items, projectId: project.id };
+    })
+    .catch(() => ({ files: [] as import('../src/domain/types.js').ProjectFileRecord[], projectId: undefined as string | undefined }));
   if (runId !== undefined) {
-    const [run, events, approvals, deployments, workflows, connections, proposals, metrics] = await Promise.all([
+    const [run, events, approvals, deployments, workflows, connections, proposals, metrics, workspace] = await Promise.all([
       requestJson<import('../src/domain/types.js').RunRecord>(`/api/runs/${encodeURIComponent(runId)}`),
       requestJson<{ items: import('../src/domain/types.js').RunEvent[] }>(`/api/events?runId=${encodeURIComponent(runId)}`),
       requestJson<{ items: import('../src/domain/types.js').ApprovalRecord[] }>(`/api/approvals?runId=${encodeURIComponent(runId)}`),
@@ -77,10 +170,11 @@ async function terminalSnapshot(runId?: string): Promise<TerminalSnapshot> {
       requestJson<{ items: import('../src/domain/types.js').ConnectionRecord[] }>('/api/connections'),
       requestJson<{ items: import('../src/domain/types.js').AgentProposal[] }>('/api/agent/proposals'),
       requestJson<import('../src/domain/types.js').FactoryMetrics>('/api/factory/metrics'),
+      workspacePromise,
     ]);
-    return { runs: [run], approvals: approvals.items, deployments: deployments.items, workflows: workflows.items, connections: connections.items, proposals: proposals.items, metrics, events: events.items };
+    return { runs: [run], approvals: approvals.items, deployments: deployments.items, workflows: workflows.items, connections: connections.items, proposals: proposals.items, metrics, events: events.items, files: workspace.files, projectId: workspace.projectId };
   }
-  const [runs, approvals, deployments, workflows, connections, proposals, metrics] = await Promise.all([
+  const [runs, approvals, deployments, workflows, connections, proposals, metrics, workspace] = await Promise.all([
     requestJson<{ items: import('../src/domain/types.js').RunRecord[] }>('/api/runs'),
     requestJson<{ items: import('../src/domain/types.js').ApprovalRecord[] }>('/api/approvals'),
     requestJson<{ items: import('../src/domain/types.js').DeploymentRecord[] }>('/api/deployments'),
@@ -88,8 +182,9 @@ async function terminalSnapshot(runId?: string): Promise<TerminalSnapshot> {
     requestJson<{ items: import('../src/domain/types.js').ConnectionRecord[] }>('/api/connections'),
     requestJson<{ items: import('../src/domain/types.js').AgentProposal[] }>('/api/agent/proposals'),
     requestJson<import('../src/domain/types.js').FactoryMetrics>('/api/factory/metrics'),
+    workspacePromise,
   ]);
-  return { runs: runs.items, approvals: approvals.items, deployments: deployments.items, workflows: workflows.items, connections: connections.items, proposals: proposals.items, metrics };
+  return { runs: runs.items, approvals: approvals.items, deployments: deployments.items, workflows: workflows.items, connections: connections.items, proposals: proposals.items, metrics, files: workspace.files, projectId: workspace.projectId };
 }
 
 async function runObserve(args: FactoryArgs): Promise<void> {
@@ -147,6 +242,26 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     }
     render();
   };
+  const editSelectedFile = async (projectId: string, filePath: string): Promise<boolean> => {
+    let saved = false;
+    try {
+      // Raw mode captures the TUI keys; release it while the user's editor
+      // owns the terminal, then restore it when the editor exits.
+      process.stdin.setRawMode?.(false);
+      process.stdin.pause();
+      await editRemoteProjectFile(projectId, filePath);
+      saved = true;
+    } catch (error) {
+      snapshot = { ...snapshot, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      if (interactive) {
+        process.stdin.setRawMode?.(true);
+        process.stdin.resume();
+      }
+      render();
+      return saved;
+    }
+  };
   const moveCursor = (delta: number) => {
     const count = portalItemCount(snapshot, state.page);
     if (count === 0) return;
@@ -155,9 +270,20 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
   };
   const select = async () => {
     if (state.page === 'home') {
-      const nextPage: TerminalPortalPage[] = ['workspace', 'tree', 'runs', 'approvals', 'deployments', 'connections', 'proposals', 'factory', 'portals'];
+      const nextPage: TerminalPortalPage[] = ['workspace', 'workflow', 'runs', 'approvals', 'deployments', 'connections', 'proposals', 'factory', 'portals'];
       state = { page: nextPage[state.cursor]!, cursor: 0 };
       await refreshPage();
+      return;
+    }
+    if (state.page === 'workspace') {
+      const file = snapshot.files?.[state.cursor];
+      if (file !== undefined && snapshot.projectId !== undefined && await editSelectedFile(snapshot.projectId, file.path)) await refreshPage();
+      return;
+    }
+    if (state.page === 'workflow' || state.page === 'tree') {
+      const workflow = snapshot.workflows?.[state.cursor];
+      const workflowPath = workflow === undefined ? undefined : snapshot.files?.find((file) => file.path === `workflows/${workflow.id}.workflow.yaml` || file.path === `workflows/${workflow.id}.workflow.yml`)?.path ?? `workflows/${workflow.id}.workflow.yaml`;
+      if (workflowPath !== undefined && snapshot.projectId !== undefined && await editSelectedFile(snapshot.projectId, workflowPath)) await refreshPage();
       return;
     }
     if (state.page === 'runs') {
@@ -166,7 +292,7 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
       return;
     }
     if (state.page === 'portals') {
-      const nextPage: TerminalPortalPage[] = ['runs', 'tree', 'deployments', 'factory'];
+      const nextPage: TerminalPortalPage[] = ['runs', 'workflow', 'deployments', 'factory'];
       state = { page: nextPage[state.cursor]!, cursor: 0 };
       await refreshPage();
       return;
@@ -190,6 +316,7 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
         process.stdin.off('data', onData);
         resolve();
       } else if (key === 'r') void refreshPage();
+      else if (key === 'e') void select();
       else if (key === 'a') void decide('approve');
       else if (key === 'd') void decide('deny');
       else if (key === '\u001b[A' || key === 'k') moveCursor(-1);
@@ -228,6 +355,10 @@ async function runLifecycle(args: FactoryArgs): Promise<void> {
     case 'dashboard':
       await waitForDashboard();
       await runTui(args, 'portals');
+      return;
+    case 'workspace':
+      await waitForDashboard();
+      await runTui(args, 'workspace');
       return;
     case 'up':
       compose('up', args);
@@ -282,7 +413,7 @@ async function loadProject(filePath: string) {
   return compileResourceFiles(resources, { tenantId: 'tenant-local' });
 }
 
-function printTree(parsed: Awaited<ReturnType<typeof loadProject>>): void {
+function printWorkflow(parsed: Awaited<ReturnType<typeof loadProject>>): void {
   console.log(`${parsed.project.name} (${parsed.project.id})`);
   for (const workflow of parsed.workflows) {
     console.log(`├─ ${workflow.name} [${workflow.id}]`);
@@ -294,14 +425,25 @@ function printTree(parsed: Awaited<ReturnType<typeof loadProject>>): void {
 }
 
 async function runResourceCommand(args: FactoryArgs): Promise<void> {
-  if (args.resourcePath === undefined) throw new Error(`${args.command} requires a project.yaml or resource directory.`);
+  if (args.resourcePath === undefined) {
+    if (args.command === 'workflow') {
+      await waitForDashboard();
+      await runTui(args, 'workflow');
+      return;
+    }
+    throw new Error(`${args.command} requires a project.yaml or resource directory.`);
+  }
+  if (args.command === 'edit') {
+    await editLocalFile(args.resourcePath);
+    return;
+  }
   const parsed = await loadProject(args.resourcePath);
   if (args.command === 'validate') {
     console.log(`Valid: ${parsed.project.name} (${parsed.workflows.length} workflow${parsed.workflows.length === 1 ? '' : 's'})`);
     return;
   }
-  if (args.command === 'plan' || args.command === 'tree') {
-    printTree(parsed);
+  if (args.command === 'plan' || args.command === 'workflow' || args.command === 'tree') {
+    printWorkflow(parsed);
     return;
   }
   const workflow = parsed.workflows.find((candidate) => args.workflowId === undefined || candidate.id === args.workflowId) ?? parsed.workflows[0];
