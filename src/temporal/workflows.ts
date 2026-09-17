@@ -16,6 +16,12 @@ const { executeNodeActivity } = proxyActivities<typeof activities>({
     maximumAttempts: 3,
   },
 });
+// Tool-capable agent nodes are fail-closed on uncertain completion: retries
+// would replay provider-requested side effects without a durable tool result.
+const { executeAgentNodeActivity } = proxyActivities<typeof activities>({
+  startToCloseTimeout: '2 minutes',
+  retry: { maximumAttempts: 1 },
+});
 
 export const approveSignal = defineSignal<[string]>('approve');
 export const pauseSignal = defineSignal('pause');
@@ -130,7 +136,8 @@ export async function executeWorkflow(
       .find((spanId): spanId is string => spanId !== undefined);
     let activityResult: Awaited<ReturnType<typeof executeNodeActivity>>;
     try {
-      activityResult = await executeNodeActivity({
+      const execute = node.type === 'agentLoop' ? executeAgentNodeActivity : executeNodeActivity;
+      activityResult = await execute({
         runId: input.runId,
         workflowId: input.definition.id,
         workflowVersion: input.definition.version,

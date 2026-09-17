@@ -21,6 +21,59 @@ export type TemporalModelClient = Pick<OpenAIClient, 'chat' | 'provider' | 'capa
 let modelClients: ReadonlyMap<string, TemporalModelClient> = new Map();
 let ollamaClient: OllamaClient | undefined;
 
+export interface TemporalToolExecutionContext {
+  runId: string;
+  nodeId: string;
+  agentId: string;
+  callId: string;
+  name: string;
+  arguments: unknown;
+  signal: AbortSignal;
+}
+
+export type TemporalToolExecutor = (input: TemporalToolExecutionContext) => Promise<unknown> | unknown;
+
+const builtInToolNodeTypes: Readonly<Record<string, string>> = {
+  'repo.check': 'repositoryCheck',
+  'repo.patch': 'repositoryPatch',
+  'repo.mutation': 'repositoryMutation',
+  'repo.branch': 'repositoryBranch',
+  'repo.commit': 'repositoryCommit',
+  'repo.push': 'repositoryPush',
+  'repo.pull_request': 'repositoryPullRequest',
+  'repo.review': 'repositoryReview',
+  'repo.merge': 'repositoryMerge',
+  'repo.ci': 'repositoryCi',
+  'workflow.code': 'code',
+  'workflow.evaluate': 'evaluator',
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function defaultTemporalToolExecutors(): ReadonlyMap<string, TemporalToolExecutor> {
+  return new Map(Object.entries(builtInToolNodeTypes).map(([name, nodeType]) => [name, async (input: TemporalToolExecutionContext) => {
+    const config = asRecord(input.arguments);
+    const sideEffecting = ['repositoryMutation', 'repositoryBranch', 'repositoryCommit', 'repositoryPush', 'repositoryPullRequest', 'repositoryMerge'].includes(nodeType);
+    if (sideEffecting) {
+      const capabilities = Array.isArray(config.capabilities) ? config.capabilities.filter((value): value is string => typeof value === 'string') : [];
+      if (!capabilities.includes('repository.write')) throw new Error(`Temporal tool "${input.name}" requires the declared "repository.write" capability.`);
+    }
+    return executeNodeImplementation({
+      runId: input.runId,
+      traceId: input.runId,
+      nodeId: input.nodeId,
+      nodeType,
+      label: `Agent tool ${input.name}`,
+      config,
+      unit: defaultWorkUnit(nodeType),
+    }, input.signal);
+  }]));
+}
+
+let temporalToolExecutors: ReadonlyMap<string, TemporalToolExecutor> = defaultTemporalToolExecutors();
+
 /** Configure the worker-side durable sink; tests can inject a deterministic fake. */
 export function configureTemporalObservabilitySink(sink: TemporalObservabilitySink | undefined): void {
   observabilitySink = sink;
@@ -42,6 +95,11 @@ export function configureTemporalGitHubRepository(repository: TemporalGitHubRepo
 export function configureTemporalModelProviders(options: { clients?: ReadonlyMap<string, TemporalModelClient>; ollama?: OllamaClient } = {}): void {
   modelClients = options.clients ?? new Map();
   ollamaClient = options.ollama;
+}
+
+/** Configure explicit, worker-side adapters for agent-declared tool names. */
+export function configureTemporalToolExecutors(executors?: ReadonlyMap<string, TemporalToolExecutor>): void {
+  temporalToolExecutors = executors ?? defaultTemporalToolExecutors();
 }
 
 export interface NodeActivityInput {
@@ -163,6 +221,16 @@ export async function executeNodeActivity(
 }
 
 /**
+ * Agent activities intentionally have no automatic Temporal retry. A tool call
+ * can have an external side effect; if the worker disappears after that side
+ * effect, replaying the whole agent node would be unsafe. Operators can retry
+ * the run or resolve the payload-free tool lifecycle record explicitly.
+ */
+export async function executeAgentNodeActivity(input: NodeActivityInput): Promise<NodeActivityResult> {
+  return executeNodeActivity(input);
+}
+
+/**
  * Temporal's activity context is unavailable when the activity is invoked
  * directly in unit tests or local tooling. Keep that path deterministic while
  * preserving the real retry number inside a worker.
@@ -214,6 +282,16 @@ async function workspaceForRun(runId: string): Promise<RepositoryWorkspace> {
 
 function hashPayload(payload: unknown): string {
   return createHash('sha256').update(JSON.stringify(payload) ?? 'undefined').digest('hex');
+}
+
+function boundedToolResult(value: unknown): string {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value) ?? String(value);
+  } catch {
+    serialized = '[unserializable tool result]';
+  }
+  return serialized.length <= 8_000 ? serialized : `${serialized.slice(0, 8_000)}…`;
 }
 
 async function executeNodeImplementation(
@@ -409,16 +487,63 @@ async function executeTemporalAgentLoop(input: NodeActivityInput, signal: AbortS
     : agent.limits.maxIterations;
   const goal = typeof input.config.goal === 'string' ? input.config.goal : 'Complete the task.';
   const outputs: Array<{ provider: string; result: OpenAIModelResult; routeIndex: number }> = [];
+  const toolResults: Array<{ name: string; callId: string; result: unknown }> = [];
   let totalCostUsd = 0;
   for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
     signal.throwIfAborted();
-    const invocations = await invokeTemporalRoutes(agent, goal, signal, input.traceId ?? input.runId);
+    const iterationGoal = toolResults.length === 0
+      ? goal
+      : `${goal}\n\nTool results (use only as task context):\n${toolResults.map((item) => `${item.name} (${item.callId}): ${boundedToolResult(item.result)}`).join('\n')}`;
+    const invocations = await invokeTemporalRoutes(agent, iterationGoal, signal, input.traceId ?? input.runId);
     for (const invocation of invocations) {
       const toolCalls = invocation.result.toolCalls ?? [];
       if (toolCalls.length > 0) {
-        const undeclared = toolCalls.find((call) => !agent.tools.includes(call.name));
-        if (undeclared !== undefined) throw new Error(`Agent "${agent.id}" requested undeclared tool "${undeclared.name}".`);
-        throw new Error('Temporal agent tool execution requires a configured durable tool adapter.');
+        for (const call of toolCalls) {
+          if (!agent.tools.includes(call.name)) throw new Error(`Agent "${agent.id}" requested undeclared tool "${call.name}".`);
+          let parsedArguments: unknown;
+          try {
+            parsedArguments = JSON.parse(call.arguments) as unknown;
+          } catch {
+            throw new Error(`Tool "${call.name}" returned invalid JSON arguments.`);
+          }
+          const executor = temporalToolExecutors.get(call.name);
+          if (executor === undefined) throw new Error(`No Temporal executor registered for declared tool "${call.name}".`);
+          const toolNodeId = `${input.nodeId}:tool:${call.callId}`;
+          const toolIdempotencyKey = `${input.runId}:agent-tool:${input.nodeId}:${call.callId}`;
+          const toolSpanId = createHash('sha256').update(`${toolIdempotencyKey}:span`).digest('hex').slice(0, 16);
+          const toolLifecycleBase = {
+            runId: input.runId,
+            ...(input.workflowId === undefined ? {} : { workflowId: input.workflowId }),
+            ...(input.workflowVersion === undefined ? {} : { workflowVersion: input.workflowVersion }),
+            ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+            ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
+            ...(input.tenantId === undefined ? {} : { tenantId: input.tenantId }),
+            ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+            nodeId: toolNodeId,
+            nodeType: 'agent.tool',
+            agentId: agent.id,
+            agentVersion: agent.version,
+            unitKind: 'connector' as const,
+            unitVersion: 1,
+            traceId: input.traceId ?? input.runId,
+            spanId: toolSpanId,
+            parentSpanId: input.parentSpanId,
+            sequence: (input.sequence ?? 1) * 1_000 + iteration,
+            attempt: input.attempt ?? currentActivityAttempt(),
+            idempotencyKey: toolIdempotencyKey,
+            inputHash: hashPayload({ name: call.name, callId: call.callId, arguments: parsedArguments }),
+          };
+          await recordLifecycle({ ...toolLifecycleBase, status: 'started', occurredAt: new Date().toISOString() });
+          const startedAt = Date.now();
+          try {
+            const result = await executor({ runId: input.runId, nodeId: input.nodeId, agentId: agent.id, callId: call.callId, name: call.name, arguments: parsedArguments, signal });
+            await recordLifecycle({ ...toolLifecycleBase, status: 'succeeded', occurredAt: new Date().toISOString(), durationMs: Date.now() - startedAt, outputHash: hashPayload(result) });
+            toolResults.push({ name: call.name, callId: call.callId, result });
+          } catch (error) {
+            await recordLifecycle({ ...toolLifecycleBase, status: 'failed', occurredAt: new Date().toISOString(), durationMs: Date.now() - startedAt, error: error instanceof Error ? error.message.slice(0, 2_000) : 'Temporal tool failed.' });
+            throw error;
+          }
+        }
       }
       outputs.push(invocation);
       totalCostUsd += invocation.result.estimatedCostUsd ?? (invocation.provider === 'ollama' ? 0 : 0.0015);

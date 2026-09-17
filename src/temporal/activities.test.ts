@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
 import { WorkUnitTimeoutError } from '../runtime/work-unit-dispatcher.js';
-import { configureTemporalGitHubRepository, configureTemporalModelProviders, configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
+import { configureTemporalGitHubRepository, configureTemporalModelProviders, configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, configureTemporalToolExecutors, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 
 const execFileAsync = (file: string, args: string[], options: { cwd?: string } = {}) => new Promise<void>((resolve, reject) => {
@@ -188,6 +188,44 @@ describe('Temporal node activities', () => {
     } finally {
       configureTemporalModelProviders();
     }
+  });
+
+  it('executes declared Temporal tools with bounded results and payload-free lifecycle evidence', async () => {
+    const agent = structuredClone(seedWorkflow.agents[0]!);
+    agent.tools = ['review.request'];
+    agent.model = { provider: 'tool-provider', model: 'tool-v1', capabilities: ['text', 'tools'] };
+    agent.limits.maxIterations = 2;
+    let calls = 0;
+    const provider = {
+      provider: 'tool-provider',
+      capabilities: ['text', 'tools'] as const,
+      chat: vi.fn(async ({ goal }: { agent: typeof agent; goal: string; signal: AbortSignal; traceId?: string }) => {
+        calls += 1;
+        if (calls === 1) return { content: '', model: 'tool-v1', toolCalls: [{ callId: 'call-1', name: 'review.request', arguments: '{"target":"patch"}' }] };
+        expect(goal).toContain('review.request (call-1)');
+        return { content: 'review complete', model: 'tool-v1' };
+      }),
+    };
+    const lifecycle: Array<{ nodeId: string; nodeType: string; status: string; inputHash?: string; outputHash?: string }> = [];
+    configureTemporalModelProviders({ clients: new Map([['tool-provider', provider]]) });
+    configureTemporalToolExecutors(new Map([
+      ['review.request', async ({ arguments: args }) => ({ accepted: true, target: (args as { target?: unknown }).target })],
+    ]));
+    configureTemporalObservabilitySink({ record: (record) => { lifecycle.push(record); } });
+    try {
+      await expect(executeNodeActivity({
+        runId: 'run-agent-tool', nodeId: 'agent', nodeType: 'agentLoop', label: 'Agent',
+        config: { agent, goal: 'Review this patch', maxIterations: 2 }, unit: defaultWorkUnit('agentLoop'),
+      })).resolves.toMatchObject({ result: { output: 'review complete', iterations: 2 } });
+    } finally {
+      configureTemporalObservabilitySink(undefined);
+      configureTemporalToolExecutors();
+      configureTemporalModelProviders();
+    }
+    expect(lifecycle.filter((record) => record.nodeType === 'agent.tool').map((record) => record.status)).toEqual(['started', 'succeeded']);
+    expect(lifecycle.find((record) => record.nodeType === 'agent.tool' && record.status === 'started')).toMatchObject({ inputHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(lifecycle.find((record) => record.nodeType === 'agent.tool' && record.status === 'succeeded')).toMatchObject({ outputHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(JSON.stringify(lifecycle)).not.toContain('patch');
   });
 
   it('completes an approval activity after the workflow signal is received', async () => {
