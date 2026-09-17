@@ -1,12 +1,4 @@
 import {
-  addEdge,
-  applyEdgeChanges,
-  applyNodeChanges,
-  Background,
-  BackgroundVariant,
-  Controls,
-  MiniMap,
-  ReactFlow,
   type Connection,
   type Edge,
   type EdgeChange,
@@ -31,7 +23,7 @@ import {
 } from 'react';
 import { api } from './api';
 import { Icon, type IconName } from './icons';
-import { WorkflowNodeCard, type CanvasNode } from './WorkflowNodeCard';
+import type { CanvasNode } from './WorkflowNodeCard';
 import { defaultWorkUnit } from '../domain/catalog';
 import { validateWorkflowInput } from '../domain/input-schema';
 import type {
@@ -69,11 +61,34 @@ const STUDIO_FILE_STORAGE_PREFIX = 'factory.studioFile.';
 const STUDIO_TABS_STORAGE_PREFIX = 'factory.studioTabs.';
 const EXPLORER_WIDTH_STORAGE_PREFIX = 'factory.explorerWidth.';
 
-const nodeTypes = { workflow: WorkflowNodeCard };
 const LazyEditor = lazy(async () => {
   const module = await import('@monaco-editor/react');
   return { default: module.default };
 });
+const LazyCanvasProjection = lazy(async () => import('./CanvasProjection').then((module) => ({ default: module.CanvasProjection })));
+
+function applyCanvasNodeChanges(changes: NodeChange<CanvasNode>[], nodes: CanvasNode[]): CanvasNode[] {
+  let next = [...nodes];
+  for (const change of changes) {
+    if (change.type === 'remove') next = next.filter((node) => node.id !== change.id);
+    else if (change.type === 'add') next.push(change.item);
+    else if (change.type === 'replace') next = next.map((node) => node.id === change.id ? change.item : node);
+    else if (change.type === 'select') next = next.map((node) => node.id === change.id ? { ...node, selected: change.selected } : node);
+    else if (change.type === 'position') next = next.map((node) => node.id === change.id ? { ...node, ...(change.position === undefined ? {} : { position: change.position }), ...(change.positionAbsolute === undefined ? {} : { positionAbsolute: change.positionAbsolute }), ...(change.dragging === undefined ? {} : { dragging: change.dragging }) } : node);
+  }
+  return next;
+}
+
+function applyCanvasEdgeChanges(changes: EdgeChange<Edge>[], edges: Edge[]): Edge[] {
+  let next = [...edges];
+  for (const change of changes) {
+    if (change.type === 'remove') next = next.filter((edge) => edge.id !== change.id);
+    else if (change.type === 'add') next.push(change.item);
+    else if (change.type === 'replace') next = next.map((edge) => edge.id === change.id ? change.item : edge);
+    else if (change.type === 'select') next = next.map((edge) => edge.id === change.id ? { ...edge, selected: change.selected } : edge);
+  }
+  return next;
+}
 const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName }> = {
   // Keep the /studio route as a backwards-compatible deep link while exposing
   // the product surface as Workspace in navigation and copy.
@@ -701,7 +716,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
 
   const onNodesChange = useCallback(
     (changes: NodeChange<CanvasNode>[]) => {
-      setNodes((current) => applyNodeChanges(changes, current));
+      setNodes((current) => applyCanvasNodeChanges(changes, current));
       if (changes.some((change) => change.type !== 'select' && change.type !== 'dimensions')) {
         markChanged();
       }
@@ -710,7 +725,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   );
   const onEdgesChange = useCallback(
     (changes: EdgeChange<Edge>[]) => {
-      setEdges((current) => applyEdgeChanges(changes, current));
+      setEdges((current) => applyCanvasEdgeChanges(changes, current));
       if (changes.some((change) => change.type !== 'select')) markChanged();
     },
     [markChanged],
@@ -718,15 +733,12 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const onConnect = useCallback(
     (connection: Connection) => {
       setEdges((current) =>
-        addEdge(
-          {
-            ...connection,
-            id: `edge-${connection.source}-${connection.target}-${Date.now()}`,
-            type: 'smoothstep',
-            style: { stroke: '#6b7f9f', strokeWidth: 1.6 },
-          },
-          current,
-        ),
+        [...current, {
+          ...connection,
+          id: `edge-${connection.source}-${connection.target}-${Date.now()}`,
+          type: 'smoothstep',
+          style: { stroke: '#6b7f9f', strokeWidth: 1.6 },
+        }],
       );
       markChanged();
     },
@@ -1152,36 +1164,9 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
             <small className={agentError === null ? '' : 'field-error'}>{agentError ?? 'JSON array · validated when saved'}</small>
           </details>
         </aside>
-        <section className="flow-canvas" aria-label="Workflow canvas">
-          <div className="canvas-meta">
-            <span><Icon name="nodes" size={15} /> {nodes.length} nodes</span>
-            <span>{edges.length} connections</span>
-          </div>
-          <ReactFlow
-            colorMode="dark"
-            deleteKeyCode={['Backspace', 'Delete']}
-            edges={edges}
-            fitView
-            fitViewOptions={{ padding: 0.2 }}
-            nodeTypes={nodeTypes}
-            nodes={nodes}
-            onConnect={onConnect}
-            onEdgesChange={onEdgesChange}
-            onNodesChange={onNodesChange}
-            onSelectionChange={onSelectionChange}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="#263246" gap={24} size={1} variant={BackgroundVariant.Dots} />
-            <Controls position="bottom-left" showInteractive={false} />
-            <MiniMap
-              maskColor="rgba(8, 13, 22, 0.72)"
-              nodeColor="#33435e"
-              pannable
-              position="bottom-right"
-              zoomable
-            />
-          </ReactFlow>
-        </section>
+        <Suspense fallback={<div className="state-panel" role="status"><strong>Loading Canvas</strong><span>Preparing the visual projection.</span></div>}>
+          <LazyCanvasProjection nodes={nodes} edges={edges} onConnect={onConnect} onEdgesChange={onEdgesChange} onNodesChange={onNodesChange} onSelectionChange={onSelectionChange} />
+        </Suspense>
         <aside className="inspector">
           <div className="panel-title">
             <div><span className="eyebrow">Properties</span><h2>Inspector</h2></div>
