@@ -122,7 +122,10 @@ export class WorkUnitDispatcher {
     const inputPayload = context.inputs.length === 1 ? context.inputs[0] : context.inputs;
     validatePayload(unit.inputSchema, inputPayload, 'input', this.schemas);
 
-    const attempts = Math.max(1, unit.retryAttempts);
+    // A connector/consumer may have committed an external side effect before
+    // reporting an error. Never replay that boundary automatically; operators
+    // can use the idempotency key and recovery flow to resolve uncertainty.
+    const attempts = sideEffectingKinds.has(unit.kind) ? 1 : Math.max(1, unit.retryAttempts);
     let lastError: unknown;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       context.signal.throwIfAborted();
