@@ -54,6 +54,8 @@ function setTemporalStatus(status: 'running' | 'waiting' | 'paused' | 'succeeded
 
 export interface TemporalWorkflowInput {
   runId: string;
+  /** Stable OTEL trace identity created by the control-plane run record. */
+  traceId: string;
   definition: WorkflowDefinition;
   releaseBundleHash?: string;
   pinnedAgentVersions?: Record<string, number>;
@@ -139,7 +141,7 @@ async function executeAgentLoopActivities(
       nodeId: node.id,
       agent: agentDefinition,
       goal,
-      traceId: input.runId,
+      traceId: input.traceId,
       ...(parentSpanId === undefined ? {} : { parentSpanId }),
       iteration,
       maxIterations,
@@ -164,7 +166,7 @@ async function executeAgentLoopActivities(
           ...(input.definition.projectId === undefined ? {} : { projectId: input.definition.projectId }),
           nodeId: node.id,
           agent: agentDefinition,
-          traceId: input.runId,
+          traceId: input.traceId,
           parentSpanId: iterationResult.lifecycle.spanId,
           iteration,
           call,
@@ -294,7 +296,7 @@ export async function executeWorkflow(
           nodeType: node.type,
           label: node.label,
           config: activityConfig,
-          traceId: input.runId,
+          traceId: input.traceId,
           ...(parentSpanId === undefined ? {} : { parentSpanId }),
           sequence: completed.size + 1,
           inputs: input.definition.edges
@@ -367,7 +369,7 @@ async function executeCompensations(
         nodeType: plan.nodeType,
         label: `Compensate ${node.label}`,
         config: plan.config,
-        traceId: input.runId,
+        traceId: input.traceId,
         sequence,
         inputs: outputs.has(node.id) ? [outputs.get(node.id)] : [],
         unit: compensationUnit,

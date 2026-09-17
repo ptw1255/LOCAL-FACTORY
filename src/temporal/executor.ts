@@ -110,7 +110,7 @@ export class TemporalWorkflowExecutor {
       const handle = await this.startWorkflow({
         workflowId: run.temporalWorkflowId,
         taskQueue,
-        args: [{ runId: run.id, definition: run.workflowDefinition, releaseBundleHash: run.releaseBundleHash, pinnedAgentVersions: run.pinnedAgentVersions, ...(run.input === undefined ? {} : { input: run.input }) }],
+        args: [{ runId: run.id, traceId: run.traceId, definition: run.workflowDefinition, releaseBundleHash: run.releaseBundleHash, pinnedAgentVersions: run.pinnedAgentVersions, ...(run.input === undefined ? {} : { input: run.input }) }],
         searchAttributes: {
           FactoryId: ['agentic-workflow-factory'],
           WorkflowVersion: [String(workflow.version)],

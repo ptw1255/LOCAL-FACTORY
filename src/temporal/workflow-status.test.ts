@@ -64,16 +64,17 @@ describe('Temporal workflow status search attributes', () => {
   }
 
   it('updates Temporal status from running to succeeded', async () => {
-    const result = await executeWorkflow({ runId: 'workflow-status-success', definition: singleNodeDefinition() });
+    const result = await executeWorkflow({ runId: 'workflow-status-success', traceId: 'a'.repeat(32), definition: singleNodeDefinition() });
 
     expect(result.completedNodeIds).toHaveLength(1);
+    expect(temporal.activity).toHaveBeenCalledWith(expect.objectContaining({ traceId: 'a'.repeat(32) }));
     expect(temporal.statuses).toEqual([{ Status: ['running'] }, { Status: ['succeeded'] }]);
   });
 
   it('updates Temporal status to failed when an activity fails', async () => {
     temporal.fail.value = true;
 
-    await expect(executeWorkflow({ runId: 'workflow-status-failure', definition: singleNodeDefinition() })).rejects.toThrow('activity failed');
+    await expect(executeWorkflow({ runId: 'workflow-status-failure', traceId: 'b'.repeat(32), definition: singleNodeDefinition() })).rejects.toThrow('activity failed');
     expect(temporal.statuses).toEqual([{ Status: ['running'] }, { Status: ['failed'] }]);
   });
 
@@ -89,7 +90,7 @@ describe('Temporal workflow status search attributes', () => {
     ];
     temporal.results.set(trigger.id, 'yes');
 
-    const result = await executeWorkflow({ runId: 'workflow-status-branch', definition });
+    const result = await executeWorkflow({ runId: 'workflow-status-branch', traceId: 'c'.repeat(32), definition });
 
     expect(result.completedNodeIds).toEqual([trigger.id, yes.id]);
     expect(temporal.calls).toEqual([trigger.id, yes.id]);
@@ -115,7 +116,7 @@ describe('Temporal workflow status search attributes', () => {
     ];
     temporal.failOn.add(failNode.id);
 
-    await expect(executeWorkflow({ runId: 'workflow-status-compensation', definition })).rejects.toThrow('activity failed');
+    await expect(executeWorkflow({ runId: 'workflow-status-compensation', traceId: 'd'.repeat(32), definition })).rejects.toThrow('activity failed');
 
     expect(temporal.calls).toEqual([trigger.id, prepare.id, failNode.id, 'prepare:compensate']);
     expect(temporal.statuses.at(-1)).toEqual({ Status: ['failed'] });
