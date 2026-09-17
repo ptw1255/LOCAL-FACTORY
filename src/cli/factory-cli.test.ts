@@ -101,12 +101,31 @@ describe('FACTORY CLI argument handling', () => {
       workflows: [{ id: 'review', name: 'Review', version: 1, status: 'draft', nodes: [{ id: 'trigger', label: 'Manual trigger', type: 'manualTrigger', unit: { kind: 'deterministic' } }], edges: [] }],
     } as never;
     expect(renderTerminalPortal(snapshot, { page: 'home', cursor: 0 }, { clear: false })).toContain('Projects');
+    expect(renderTerminalPortal(snapshot, { page: 'home', cursor: 0 }, { clear: false })).toContain('terminal control plane · CORE');
+    expect(renderTerminalPortal(snapshot, { page: 'home', cursor: 0 }, { clear: false })).toContain('Active Project  Local workspace');
+    expect(renderTerminalPortal(snapshot, { page: 'home', cursor: 0 }, { clear: false })).toContain('[project-local]');
     expect(renderTerminalPortal(snapshot, { page: 'project', cursor: 0 }, { clear: false })).toContain('workflows/review.workflow.yaml');
     expect(renderTerminalPortal(snapshot, { page: 'project', cursor: 0 }, { clear: false })).toContain('n new Project');
     expect(renderTerminalPortal(snapshot, { page: 'workflow', cursor: 0 }, { clear: false })).toContain('WORKFLOW');
     expect(renderTerminalPortal(snapshot, { page: 'workflow', cursor: 0 }, { clear: false })).toContain('Manual trigger');
     expect(renderTerminalPortal(snapshot, { page: 'workflow-detail', cursor: 0, selectedWorkflowId: 'review' }, { clear: false })).toContain('WorkUnit/trigger');
     expect(renderTerminalPortal(snapshot, { page: 'work-unit-detail', cursor: 0, selectedWorkflowId: 'review', selectedNodeId: 'trigger' }, { clear: false })).toContain('WORKUNIT ENVELOPE');
+  });
+
+  it('renders an actionable zero-to-one Workflow state', () => {
+    const withProject = {
+      runs: [], approvals: [], deployments: [], workflows: [], files: [],
+      projectId: 'project-empty',
+      projects: [{ id: 'project-empty', tenantId: 'tenant-local', name: 'Empty project', description: '', createdAt: '2026-01-01T00:00:00.000Z' }],
+    } as never;
+    const emptyWorkflow = renderTerminalPortal(withProject, { page: 'workflow', cursor: 0 }, { clear: false });
+    expect(emptyWorkflow).toContain('Create first Workflow');
+    expect(emptyWorkflow).toContain('Enter or n creates');
+    expect(emptyWorkflow).toContain('manual trigger and output WorkUnit');
+
+    const withoutProject = renderTerminalPortal({ runs: [], approvals: [], deployments: [], workflows: [] }, { page: 'workflow', cursor: 0 }, { clear: false });
+    expect(withoutProject).toContain('Select or create a Project');
+    expect(withoutProject).toContain('Enter open Projects');
   });
 
   it('always gives Escape a deterministic route out of terminal pages', () => {

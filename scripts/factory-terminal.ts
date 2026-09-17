@@ -184,7 +184,8 @@ function selectedMarker(selected: boolean): string {
 }
 
 function renderPortalHeader(state: TerminalPortalState): string[] {
-  return [factoryBanner(), `${terminalDim}· terminal control plane · ${state.page.toUpperCase()}${terminalReset}`, ''];
+  const pageLabel = state.page === 'home' ? 'CORE' : state.page.toUpperCase();
+  return [factoryBanner(), `${terminalDim}· terminal control plane · ${pageLabel}${terminalReset}`, ''];
 }
 
 export function renderTerminalPortal(snapshot: TerminalSnapshot, state: TerminalPortalState, options: { clear?: boolean } = {}): string {
@@ -194,9 +195,18 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
   if (snapshot.error !== undefined) lines.push(`${terminalRed}Error:${terminalReset} ${snapshot.error}`, '');
   if (snapshot.notice !== undefined) lines.push(`${terminalGreen}${snapshot.notice}${terminalReset}`, '');
   if (state.page === 'home') {
-    lines.push(`${terminalBlue}FACTORY CONTROL PLANE${terminalReset}`, `${terminalDim}Use ↑/↓ to choose a surface, Enter to open, Esc to return.${terminalReset}`, '');
+    const activeProject = snapshot.projects?.find((project) => project.id === snapshot.projectId);
+    const projectContext = activeProject === undefined
+      ? `${terminalYellow}No Project selected${terminalReset}`
+      : `${activeProject.name} ${terminalDim}[${activeProject.id}]${terminalReset}`;
+    lines.push(
+      `${terminalBlue}CORE${terminalReset} ${terminalDim}· FACTORY control plane${terminalReset}`,
+      `  Active Project  ${projectContext}`,
+      `${terminalDim}Use ↑/↓ to choose a surface, Enter to open, Esc to return.${terminalReset}`,
+      '',
+    );
     const items: Array<[string, string]> = [
-      ['Projects', 'Select the file-backed Project boundary'],
+      ['Projects', activeProject === undefined ? 'Create or select the file-backed Project boundary' : `Current: ${activeProject.name}`],
       ['Workflow', 'Inspect WorkUnit envelopes and author with AI'],
       ['Runs', `${snapshot.runs.length} recorded executions`],
       ['Approvals', `${snapshot.approvals.filter((approval) => approval.decision === 'pending').length} pending decisions`],
@@ -228,7 +238,14 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
       '',
     );
     const workflows = snapshot.workflows ?? [];
-    if (workflows.length === 0) lines.push('  No workflows loaded.');
+    if (workflows.length === 0) {
+      if (project === undefined) lines.push(`${terminalYellow}  Select or create a Project before creating a Workflow.${terminalReset}`);
+      else lines.push(
+        `${selectedMarker(true)} Create first Workflow`,
+        `${terminalDim}    Enter or n creates a file-backed starter with a manual trigger and output WorkUnit.${terminalReset}`,
+        `${terminalDim}    After creation, press a to author the operational graph from your intent.${terminalReset}`,
+      );
+    }
     workflows.forEach((workflow, index) => {
       lines.push(`${selectedMarker(state.cursor === index)} ${workflow.name} [${workflow.id}] v${workflow.version} · ${colorStatus(workflow.status)}`);
       if (state.cursor !== index) return;
@@ -243,7 +260,9 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
         ? `       source: ${terminalYellow}runtime-only · create or import a file proposal${terminalReset}`
         : `       source: ${sourcePath}`);
     });
-    lines.push('', `${terminalDim}a author with AI · Enter inspect WorkUnits · o raw source · v validate · p run${terminalReset}`);
+    lines.push('', workflows.length === 0
+      ? `${terminalDim}${project === undefined ? 'Enter open Projects' : 'Enter/n create first Workflow'} · s switch Project · Esc Core${terminalReset}`
+      : `${terminalDim}n new Workflow · a author with AI · Enter inspect WorkUnits · o raw source · v validate · p run${terminalReset}`);
   } else if (state.page === 'workflow-detail') {
     const workflow = snapshot.workflows?.find((candidate) => candidate.id === state.selectedWorkflowId);
     lines.push(`${terminalPurple}WORKFLOW${terminalReset} ${terminalDim}· WorkUnit graph${terminalReset}`, '');
