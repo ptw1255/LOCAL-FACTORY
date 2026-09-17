@@ -258,6 +258,18 @@ export interface EvaluationDatasetRecord {
   description?: string;
   createdAt: string;
   cases: EvaluationDatasetCase[];
+  lastEvaluation?: {
+    datasetId: string;
+    datasetVersion: number;
+    totalCases: number;
+    passedCases: number;
+    nonPassingCases: number;
+    statusCounts: Record<ReplayReportStatus, number>;
+    passRate: number;
+    threshold: number;
+    promotionBlocked: boolean;
+    evaluatedAt: string;
+  };
 }
 
 export interface RunEvent {
