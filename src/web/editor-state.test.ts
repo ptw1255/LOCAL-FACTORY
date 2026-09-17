@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { filterProjectItems, nextExplorerIndex, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath } from './App';
+import { filterProjectItems, nextExplorerIndex, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -31,5 +31,11 @@ describe('IDE editor tab state', () => {
   it('keeps project-scoped operational items isolated', () => {
     const items = [{ id: 'run-a', projectId: 'project-a' }, { id: 'run-b', projectId: 'project-b' }];
     expect(filterProjectItems(items, 'project-a')).toEqual([{ id: 'run-a', projectId: 'project-a' }]);
+  });
+
+  it('moves selection to the first visible run when filters hide it', () => {
+    expect(retainSelection([{ id: 'run-a' }, { id: 'run-b' }], 'run-b')).toBe('run-b');
+    expect(retainSelection([{ id: 'run-a' }, { id: 'run-b' }], 'run-c')).toBe('run-a');
+    expect(retainSelection([], 'run-c')).toBeNull();
   });
 });

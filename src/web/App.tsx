@@ -245,6 +245,10 @@ export function filterProjectItems<T extends { projectId?: string }>(items: T[],
   return items.filter((item) => item.projectId === projectId);
 }
 
+export function retainSelection<T extends { id: string }>(items: T[], selectedId: string | null): string | null {
+  return selectedId !== null && items.some((item) => item.id === selectedId) ? selectedId : items[0]?.id ?? null;
+}
+
 export function projectSwitchRequiresConfirmation(currentProjectId: string | null, nextProjectId: string, dirty: boolean): boolean {
   return currentProjectId !== null && currentProjectId !== nextProjectId && dirty;
 }
@@ -2031,7 +2035,7 @@ function RunsView() {
         (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
       );
       setRuns(sorted);
-      setSelectedRunId((current) => current !== null && sorted.some((run) => run.id === current) ? current : sorted[0]?.id ?? null);
+      setSelectedRunId((current) => retainSelection(sorted, current));
       setRetentionHours(health.observability.retentionHours);
       setTimeFilterHours((current) => current === 48 ? health.observability.retentionHours : current);
       setEvidenceRetentionHours(health.observability.evidenceRetentionHours);
@@ -2115,14 +2119,19 @@ function RunsView() {
     }
   }
 
-  const filteredRuns = runs.filter((run) => {
+  const filteredRuns = useMemo(() => runs.filter((run) => {
     const matchesQuery = `${run.workflowName} ${run.id}`.toLowerCase().includes(query.toLowerCase());
     const matchesWorkflow = workflowFilter === 'all' || run.workflowId === workflowFilter;
     const matchesEnvironment = environmentFilter === 'all' || run.environment === environmentFilter;
     const matchesArtifact = artifactFilter === 'all' || run.artifactId === artifactFilter;
     const matchesTime = timeFilterHours <= 0 || new Date(run.startedAt).getTime() >= Date.now() - timeFilterHours * 60 * 60 * 1000;
     return matchesQuery && matchesWorkflow && matchesEnvironment && matchesArtifact && matchesTime && (statusFilter === 'all' || run.status === statusFilter);
-  });
+  }), [artifactFilter, environmentFilter, query, runs, statusFilter, timeFilterHours, workflowFilter]);
+
+  useEffect(() => {
+    const nextSelectedId = retainSelection(filteredRuns, selectedRunId);
+    if (nextSelectedId !== selectedRunId) setSelectedRunId(nextSelectedId);
+  }, [filteredRuns, selectedRunId]);
 
   const environments = [...new Set(runs.map((run) => run.environment).filter((value): value is string => value !== undefined && value !== ''))].sort();
   const artifacts = [...new Set(runs.map((run) => run.artifactId).filter((value): value is string => value !== undefined && value !== ''))].sort();
