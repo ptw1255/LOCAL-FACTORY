@@ -23,7 +23,8 @@ const configuredRepositoryWorkspace = process.env.REPOSITORY_WORKSPACE?.trim();
 const repositoryWorkspace = configuredRepositoryWorkspace === undefined || configuredRepositoryWorkspace === ''
   ? undefined
   : await RepositoryWorkspace.open(configuredRepositoryWorkspace);
-activities.configureTemporalRepositoryWorkspace(repositoryWorkspace);
+const configuredRunRoot = process.env.TEMPORAL_REPOSITORY_RUN_ROOT?.trim() || undefined;
+activities.configureTemporalRepositoryWorkspace(repositoryWorkspace, configuredRunRoot === undefined ? {} : { runRoot: configuredRunRoot });
 const connection = await NativeConnection.connect({ address });
 const worker = await Worker.create({
   connection,

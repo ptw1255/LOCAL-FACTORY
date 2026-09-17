@@ -415,9 +415,12 @@ EXECUTION_ENGINE=temporal docker compose --profile temporal up --build
 
 This starts Temporal on `localhost:7233` and a separate `temporal-worker` container
 using the compiled worker entrypoint. The default `docker compose up --build` path
-still uses the lighter local executor. Temporal activities currently fail closed for
-unsupported agent/repository kinds; full WorkUnit parity is tracked in issue #3 and
-bug #176.
+still uses the lighter local executor. Temporal repository activities resolve a
+run-scoped workspace instead of operating on the configured source checkout. Set
+`TEMPORAL_REPOSITORY_RUN_ROOT` to a durable worker volume when restart recovery
+must retain uncommitted run state; when unset, direct/local activity calls use a
+temporary run directory. Unsupported provider and repository WorkUnits still fail
+closed until their parity work is implemented.
 
 PostgreSQL stores workflow and run control-plane state in `platform_state` and keeps
 runtime logs, traces, and metrics in the indexed `observability_events` table. Legacy
