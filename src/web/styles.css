@@ -291,8 +291,11 @@ h1, h2, h3, p { margin-top: 0; }
 .workspace-command-hint { color: #71839b; }
 .workspace-command-hint kbd { background: #18263a; border: 1px solid #2b3d57; border-radius: 3px; color: #b7c7db; font-size: 9px; margin-left: 3px; padding: 2px 4px; }
 .ide-bottom-panel { border-top: 1px solid var(--border); margin-top: 12px; }
-.ide-bottom-panel.open { max-height: 45vh; min-height: 72px; overflow: auto; resize: vertical; }
+.ide-bottom-panel.open { height: var(--bottom-panel-height); max-height: 70vh; min-height: 120px; overflow: auto; resize: none; }
 .ide-bottom-panel.collapsed { overflow: hidden; }
+.ide-bottom-resize-handle { background: transparent; cursor: row-resize; height: 8px; margin: 0 -2px -2px; position: relative; }
+.ide-bottom-resize-handle::after { background: #2a3b55; border-radius: 2px; content: ''; height: 2px; left: 45%; position: absolute; top: 3px; width: 10%; }
+.ide-bottom-resize-handle:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .ide-bottom-tabs { align-items: center; color: var(--subtle); display: flex; font-size: 10px; gap: 8px; padding: 9px 0 7px; text-transform: uppercase; }
 .ide-bottom-tabs button { align-items: center; background: transparent; border: 0; color: var(--subtle); cursor: pointer; display: inline-flex; font: inherit; gap: 6px; padding: 4px 7px; }
 .ide-bottom-tabs button.active { color: #d9e5f5; }
