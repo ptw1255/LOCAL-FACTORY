@@ -198,9 +198,24 @@ function readObserveRunId(): string | null {
 }
 
 export function observeRunHash(runId: string | null): string {
-  return runId === null || runId.trim() === ''
-    ? '#/observe'
-    : `#/observe?${new URLSearchParams({ runId: runId.trim() }).toString()}`;
+  return observeScopeHash(runId);
+}
+
+/** Build a canonical, shareable Observe URL including optional scope filters. */
+export function observeScopeHash(runId: string | null, workflowId?: string, environment?: string): string {
+  const params = new URLSearchParams();
+  if (runId !== null && runId.trim() !== '') params.set('runId', runId.trim());
+  if (workflowId !== undefined && workflowId.trim() !== '' && workflowId !== 'all') params.set('workflowId', workflowId.trim());
+  if (environment !== undefined && environment.trim() !== '' && environment !== 'all') params.set('environment', environment.trim());
+  const query = params.toString();
+  return query === '' ? '#/observe' : `#/observe?${query}`;
+}
+
+function readObserveQueryValue(key: string): string | null {
+  const query = window.location.hash.split('?', 2)[1];
+  if (query === undefined) return null;
+  const value = new URLSearchParams(query).get(key)?.trim();
+  return value === undefined || value === '' ? null : value;
 }
 
 function readStudioMode(projectId: string): 'files' | 'tree' | 'canvas' {
@@ -2153,8 +2168,8 @@ function RunsView() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [workflowFilter, setWorkflowFilter] = useState(() => window.sessionStorage.getItem('factory.observeWorkflowFilter') ?? 'all');
-  const [environmentFilter, setEnvironmentFilter] = useState(() => window.sessionStorage.getItem('factory.observeEnvironmentFilter') ?? 'all');
+  const [workflowFilter, setWorkflowFilter] = useState(() => readObserveQueryValue('workflowId') ?? window.sessionStorage.getItem('factory.observeWorkflowFilter') ?? 'all');
+  const [environmentFilter, setEnvironmentFilter] = useState(() => readObserveQueryValue('environment') ?? window.sessionStorage.getItem('factory.observeEnvironmentFilter') ?? 'all');
   const [artifactFilter, setArtifactFilter] = useState('all');
   const [timeFilterHours, setTimeFilterHours] = useState(48);
   const [observeTab, setObserveTab] = useState<ObserveTab>('runs');
@@ -2209,7 +2224,7 @@ function RunsView() {
   }, [loadRuns, runs]);
 
   useEffect(() => {
-    const nextHash = observeRunHash(selectedRunId);
+    const nextHash = observeScopeHash(selectedRunId, workflowFilter, environmentFilter);
     if (window.location.hash !== nextHash) window.history.replaceState(null, '', nextHash);
     if (selectedRunId === null) {
       setSelectedRun(null);
@@ -2717,6 +2732,9 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
     sessionStorage.setItem('factory.observeWorkflowFilter', deployment.workflowId);
     sessionStorage.setItem('factory.observeEnvironmentFilter', deployment.environment);
     onNavigate('observe');
+    // Keep the operational scope in the URL so a refresh preserves the
+    // deployment-specific Observe view instead of relying on session storage.
+    window.history.replaceState(null, '', observeScopeHash(null, deployment.workflowId, deployment.environment));
   }
 
   async function compareArtifacts(deployment: DeploymentRecord, toArtifactId: string): Promise<void> {
