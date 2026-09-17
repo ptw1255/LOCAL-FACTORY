@@ -614,6 +614,10 @@ The file-first Workspace keeps Monaco and the React Flow Canvas behind lazy brow
 boundaries. Opening source files does not load the Canvas projection until it is
 selected, and the bundle budget is enforced in CI with `npm run check:bundle`.
 
+The navigation, editor/artifact/deployment/run state machines, projection
+boundaries, and Run preflight contract are documented in
+[`docs/ide-state-model.md`](docs/ide-state-model.md).
+
 Agent-loop nodes must reference an agent box declared in the workflow definition.
 Each box versions its purpose, instructions, skills, tools, model route, input/output
 schemas, connection and repository boundaries, budgets, termination rules, approval
