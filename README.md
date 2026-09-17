@@ -423,9 +423,12 @@ temporary run directory. Repository mutation, patch, branch, commit, push,
 pull-request, review, merge, and CI WorkUnits all use that same run-scoped
 workspace and persist their activity lifecycle evidence. Configure
 `GITHUB_REPOSITORY_OWNER`, `GITHUB_REPOSITORY_NAME`, and either `GITHUB_TOKEN` or
-the Vault-backed `GITHUB_SECRET_REF` for the GitHub delivery adapters. Provider
-agent-loop execution remains fail-closed on Temporal until its provider adapter
-parity is implemented.
+the Vault-backed `GITHUB_SECRET_REF` for the GitHub delivery adapters. The worker
+also registers the provider-neutral OpenAI, Anthropic, Gemini, Ollama, and
+OpenAI-compatible adapters; agent definitions are passed as immutable activity
+input containing only provider configuration and Vault references. Provider
+failures, unsupported capabilities, and undeclared tools fail closed without
+exposing credentials.
 
 PostgreSQL stores workflow and run control-plane state in `platform_state` and keeps
 runtime logs, traces, and metrics in the indexed `observability_events` table. Legacy

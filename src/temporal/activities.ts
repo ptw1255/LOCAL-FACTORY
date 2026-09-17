@@ -3,10 +3,12 @@ import { createHash } from 'node:crypto';
 import { activityInfo, cancellationSignal } from '@temporalio/activity';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
-import type { WorkUnitDefinition, WorkflowNode } from '../domain/types.js';
+import type { AgentDefinition, WorkUnitDefinition, WorkflowNode } from '../domain/types.js';
 import { parseRepositoryCheckSandbox, RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryWorkspace } from '../repository/workspace.js';
 import { RepositoryCiError, RepositoryMergeError, RepositoryReviewError, type GitHubRepositoryClient } from '../repository/github.js';
 import { WorkUnitDispatcher } from '../runtime/work-unit-dispatcher.js';
+import type { OllamaClient } from '../runtime/ollama.js';
+import type { OpenAIClient, OpenAIModelResult } from '../runtime/openai.js';
 import type { TemporalActivityLifecycle, TemporalObservabilitySink } from './observability.js';
 
 let observabilitySink: TemporalObservabilitySink | undefined;
@@ -15,6 +17,9 @@ let repositoryRunRoot: string | undefined;
 const runWorkspaces = new Map<string, RepositoryWorkspace>();
 type TemporalGitHubRepository = Pick<GitHubRepositoryClient, 'createOrGetPullRequest' | 'waitForPullRequestStatus' | 'mergePullRequest' | 'waitForChecks'>;
 let githubRepository: TemporalGitHubRepository | undefined;
+export type TemporalModelClient = Pick<OpenAIClient, 'chat' | 'provider' | 'capabilities'>;
+let modelClients: ReadonlyMap<string, TemporalModelClient> = new Map();
+let ollamaClient: OllamaClient | undefined;
 
 /** Configure the worker-side durable sink; tests can inject a deterministic fake. */
 export function configureTemporalObservabilitySink(sink: TemporalObservabilitySink | undefined): void {
@@ -31,6 +36,12 @@ export function configureTemporalRepositoryWorkspace(workspace: RepositoryWorksp
 /** Configure the worker-side GitHub adapter; tests can inject a deterministic fake. */
 export function configureTemporalGitHubRepository(repository: TemporalGitHubRepository | undefined): void {
   githubRepository = repository;
+}
+
+/** Configure provider adapters used by Temporal agent-loop activities. */
+export function configureTemporalModelProviders(options: { clients?: ReadonlyMap<string, TemporalModelClient>; ollama?: OllamaClient } = {}): void {
+  modelClients = options.clients ?? new Map();
+  ollamaClient = options.ollama;
 }
 
 export interface NodeActivityInput {
@@ -90,6 +101,7 @@ export async function executeNodeActivity(
   const spanId = createHash('sha256').update(`${input.runId}:${input.nodeId}:${sequence}`).digest('hex').slice(0, 16);
   const idempotencyKey = `${input.runId}:temporal:${input.nodeId}:${sequence}`;
   const attempt = input.attempt ?? currentActivityAttempt();
+  const activityAgent = input.nodeType === 'agentLoop' ? parseAgentDefinition(input.config.agent) : undefined;
   const startedAt = Date.now();
   const inputHash = hashPayload(input.inputs ?? []);
   const baseLifecycle = {
@@ -102,6 +114,7 @@ export async function executeNodeActivity(
     ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
     nodeId: input.nodeId,
     nodeType: input.nodeType,
+    ...(activityAgent === undefined ? {} : { agentId: activityAgent.id, agentVersion: activityAgent.version }),
     unitKind: unit.kind,
     unitVersion: unit.version,
     traceId,
@@ -337,9 +350,8 @@ async function executeNodeImplementation(
       // until the operator signal arrives; once dispatched, the human gate is
       // complete and carries no additional payload.
       return true;
-    case 'agentLoop': {
-      throw new TemporalActivityUnsupportedError(input.nodeType);
-    }
+    case 'agentLoop':
+      return executeTemporalAgentLoop(input, signal);
     case 'code': {
       const operation = typeof input.config.operation === 'string' ? input.config.operation : 'identity';
       const value = input.config.value ?? '';
@@ -387,6 +399,120 @@ async function assertPatchBinding(workspace: RepositoryWorkspace, inputs: unknow
       if (actualSha !== (typeof expected.sha256 === 'string' ? expected.sha256 : undefined)) throw new Error(`Repository commit content for "${selectedPath}" no longer matches the approved patch artifact.`);
     }
   }
+}
+
+async function executeTemporalAgentLoop(input: NodeActivityInput, signal: AbortSignal): Promise<Record<string, unknown>> {
+  const agent = parseAgentDefinition(input.config.agent);
+  if (agent === undefined) throw new Error('Agent loop references a missing agent definition.');
+  const maxIterations = typeof input.config.maxIterations === 'number'
+    ? Math.min(Math.max(1, Math.floor(input.config.maxIterations)), agent.limits.maxIterations)
+    : agent.limits.maxIterations;
+  const goal = typeof input.config.goal === 'string' ? input.config.goal : 'Complete the task.';
+  const outputs: Array<{ provider: string; result: OpenAIModelResult; routeIndex: number }> = [];
+  let totalCostUsd = 0;
+  for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+    signal.throwIfAborted();
+    const invocations = await invokeTemporalRoutes(agent, goal, signal, input.traceId ?? input.runId);
+    for (const invocation of invocations) {
+      const toolCalls = invocation.result.toolCalls ?? [];
+      if (toolCalls.length > 0) {
+        const undeclared = toolCalls.find((call) => !agent.tools.includes(call.name));
+        if (undeclared !== undefined) throw new Error(`Agent "${agent.id}" requested undeclared tool "${undeclared.name}".`);
+        throw new Error('Temporal agent tool execution requires a configured durable tool adapter.');
+      }
+      outputs.push(invocation);
+      totalCostUsd += invocation.result.estimatedCostUsd ?? (invocation.provider === 'ollama' ? 0 : 0.0015);
+    }
+    if (totalCostUsd > agent.limits.maxCostUsd) throw new Error(`Agent "${agent.id}" exceeded its maxCostUsd limit.`);
+  }
+  const last = outputs.at(-1);
+  if (last === undefined) throw new Error(`Agent "${agent.id}" did not produce a model result.`);
+  const strategy = agent.model.routing?.strategy ?? ((agent.model.routes?.length ?? 0) > 1 ? 'fallback' : 'single');
+  return {
+    iterations: maxIterations,
+    outcome: 'bounded-completion',
+    output: last.result.content,
+    agentId: agent.id,
+    agentVersion: agent.version,
+    provider: last.provider,
+    model: last.result.model,
+    routeIndex: last.routeIndex,
+    routingStrategy: strategy,
+    costUsd: Number(totalCostUsd.toFixed(6)),
+  };
+}
+
+async function invokeTemporalRoutes(agent: AgentDefinition, goal: string, signal: AbortSignal, traceId: string): Promise<Array<{ provider: string; result: OpenAIModelResult; routeIndex: number }>> {
+  const declaredRoutes = agent.model.routes ?? [];
+  const routes: Array<{ provider?: string; model?: string; endpoint?: string; secretRef?: string; capabilities?: AgentDefinition['model']['capabilities']; adapterVersion?: string }> = declaredRoutes.length === 0 ? [agent.model] : declaredRoutes;
+  const strategy = agent.model.routing?.strategy ?? (declaredRoutes.length > 1 ? 'fallback' : 'single');
+  const maxAttempts = Math.min(routes.length, Math.max(1, Math.floor(agent.model.routing?.maxAttempts ?? routes.length)));
+  const results: Array<{ provider: string; result: OpenAIModelResult; routeIndex: number }> = [];
+  let lastError: unknown;
+  for (let index = 0; index < maxAttempts; index += 1) {
+    const route = routes[index]!;
+    const routeAgent: AgentDefinition = declaredRoutes.length === 0
+      ? agent
+      : { ...agent, model: { ...agent.model, ...route, routes: undefined, routing: undefined } };
+    const provider = routeAgent.model.provider?.trim().toLowerCase();
+    if (provider === undefined || provider === '') {
+      lastError = new Error(`Agent "${agent.id}" provider route ${index + 1} is missing a provider.`);
+      if (strategy === 'fallback') continue;
+      throw lastError;
+    }
+    const allowedConnections = agent.boundaries.allowedConnections.map((value) => value.trim().toLowerCase()).filter(Boolean);
+    if (allowedConnections.length > 0 && !allowedConnections.includes(provider)) {
+      throw new Error(`Agent "${agent.id}" is not authorized to use the "${provider}" connection.`);
+    }
+    const client = provider === 'ollama'
+      ? ollamaClient === undefined ? undefined : ollamaAdapter(ollamaClient)
+      : modelClients.get(provider) ?? modelClients.get(provider === 'lm-studio' ? 'lmstudio' : provider);
+    if (client === undefined) {
+      lastError = new Error(`Temporal model provider "${provider}" is not configured.`);
+      if (strategy === 'fallback') continue;
+      throw lastError;
+    }
+    const requiredCapabilities = routeAgent.model.capabilities ?? [];
+    const supportedCapabilities = client.capabilities ?? [];
+    const missing = requiredCapabilities.filter((capability) => !supportedCapabilities.includes(capability));
+    if (missing.length > 0) {
+      lastError = new Error(`Provider "${provider}" does not support required capabilities: ${missing.join(', ')}.`);
+      if (strategy === 'fallback') continue;
+      throw lastError;
+    }
+    try {
+      const result = await client.chat({ agent: routeAgent, goal, signal, traceId });
+      if (strategy === 'ensemble') results.push({ provider, result, routeIndex: index });
+      else return [{ provider, result, routeIndex: index }];
+    } catch (error) {
+      lastError = error;
+      if (strategy !== 'fallback' && strategy !== 'ensemble') throw error;
+    }
+  }
+  if (results.length > 0) {
+    if (strategy !== 'ensemble' || results.length === 1) return results;
+    const first = results[0]!;
+    return [{ provider: results.map((value) => value.provider).join(','), routeIndex: first.routeIndex, result: { ...first.result, content: results.map((value) => `[${value.provider}] ${value.result.content}`).join('\n\n') } }];
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Agent "${agent.id}" did not produce a model result.`);
+}
+
+function parseAgentDefinition(value: unknown): AgentDefinition | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const candidate = value as Partial<AgentDefinition>;
+  if (typeof candidate.id !== 'string' || typeof candidate.version !== 'number' || candidate.model === undefined || candidate.limits === undefined || candidate.boundaries === undefined || candidate.tools === undefined) return undefined;
+  return candidate as AgentDefinition;
+}
+
+function ollamaAdapter(client: OllamaClient): TemporalModelClient {
+  return {
+    provider: 'ollama',
+    capabilities: ['text', 'usage'],
+    chat: async (input) => {
+      const result = await client.chat(input);
+      return result;
+    },
+  };
 }
 
 function stableValue(value: unknown): string {

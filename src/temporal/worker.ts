@@ -5,7 +5,7 @@ import { NativeConnection, Worker } from '@temporalio/worker';
 
 import * as activities from './activities.js';
 import { configureTemporalObservabilitySink } from './activities.js';
-import { configureTemporalGitHubRepository } from './activities.js';
+import { configureTemporalGitHubRepository, configureTemporalModelProviders, type TemporalModelClient } from './activities.js';
 import { PlatformTemporalObservabilitySink } from './observability.js';
 import { JsonStore } from '../storage/json-store.js';
 import { PostgresStore } from '../storage/postgres-store.js';
@@ -13,6 +13,11 @@ import type { PlatformStore } from '../storage/store.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 import { GitHubRepositoryClient } from '../repository/github.js';
 import { VaultSecretBroker } from '../connections/vault-secret-broker.js';
+import { HttpOllamaClient } from '../runtime/ollama.js';
+import { OpenAISDKClient } from '../runtime/openai-sdk.js';
+import { OpenAICompatibleClient } from '../runtime/openai-compatible.js';
+import { AnthropicClient } from '../runtime/anthropic.js';
+import { GeminiClient } from '../runtime/gemini.js';
 
 const address = process.env.TEMPORAL_ADDRESS ?? 'localhost:7233';
 const namespace = process.env.TEMPORAL_NAMESPACE ?? 'default';
@@ -41,6 +46,18 @@ const githubRepository = configuredGithubOwner !== undefined && configuredGithub
   ? new GitHubRepositoryClient({ owner: configuredGithubOwner, repo: configuredGithubRepo, ...(configuredGithubToken === undefined || configuredGithubToken === '' ? {} : { token: configuredGithubToken }), ...(configuredGithubSecretRef === undefined || configuredGithubSecretRef === '' || secretBroker === undefined ? {} : { secretRef: configuredGithubSecretRef, secretBroker }) })
   : undefined;
 activities.configureTemporalGitHubRepository(githubRepository);
+const ollama = new HttpOllamaClient();
+const providers = new Map<string, TemporalModelClient>([
+  ['openai', new OpenAISDKClient({ secretBroker })],
+  ['anthropic', new AnthropicClient({ secretBroker })],
+  ['gemini', new GeminiClient({ secretBroker })],
+  ['openai-compatible', new OpenAICompatibleClient({ secretBroker })],
+  ['lmstudio', new OpenAICompatibleClient({ provider: 'lmstudio', secretBroker })],
+  ['lm-studio', new OpenAICompatibleClient({ provider: 'lm-studio', secretBroker })],
+  ['vllm', new OpenAICompatibleClient({ provider: 'vllm', secretBroker })],
+  ['localai', new OpenAICompatibleClient({ provider: 'localai', secretBroker })],
+]);
+configureTemporalModelProviders({ clients: providers, ollama });
 const connection = await NativeConnection.connect({ address });
 const worker = await Worker.create({
   connection,
@@ -56,5 +73,6 @@ try {
   configureTemporalObservabilitySink(undefined);
   activities.configureTemporalRepositoryWorkspace(undefined);
   configureTemporalGitHubRepository(undefined);
+  configureTemporalModelProviders();
   await store.close?.();
 }

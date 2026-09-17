@@ -17,6 +17,8 @@ export interface TemporalActivityLifecycle {
   projectId?: string;
   nodeId: string;
   nodeType: string;
+  agentId?: string;
+  agentVersion?: number;
   unitKind: string;
   unitVersion: number;
   traceId: string;
@@ -71,6 +73,8 @@ export class PlatformTemporalObservabilitySink implements TemporalObservabilityS
         ...(lifecycle.workflowVersion === undefined ? {} : { 'workflow.version': lifecycle.workflowVersion }),
         ...(lifecycle.releaseBundleHash === undefined ? {} : { 'release.bundle.hash': lifecycle.releaseBundleHash }),
         ...(lifecycle.pinnedAgentVersions === undefined ? {} : { 'agent.versions': JSON.stringify(lifecycle.pinnedAgentVersions) }),
+        ...(lifecycle.agentId === undefined ? {} : { 'agent.id': lifecycle.agentId }),
+        ...(lifecycle.agentVersion === undefined ? {} : { 'agent.version': lifecycle.agentVersion }),
         'work.unit.kind': lifecycle.unitKind,
         'work.unit.version': lifecycle.unitVersion,
         ...(lifecycle.durationMs === undefined ? {} : { 'work.unit.duration_ms': lifecycle.durationMs }),
@@ -103,6 +107,8 @@ export class PlatformTemporalObservabilitySink implements TemporalObservabilityS
         ...(lifecycle.workflowVersion === undefined ? {} : { 'workflow.version': lifecycle.workflowVersion }),
         ...(lifecycle.releaseBundleHash === undefined ? {} : { 'release.bundle.hash': lifecycle.releaseBundleHash }),
         ...(lifecycle.pinnedAgentVersions === undefined ? {} : { 'agent.versions': JSON.stringify(lifecycle.pinnedAgentVersions) }),
+        ...(lifecycle.agentId === undefined ? {} : { 'agent.id': lifecycle.agentId }),
+        ...(lifecycle.agentVersion === undefined ? {} : { 'agent.version': lifecycle.agentVersion }),
         'runtime.engine': 'temporal',
         'work.unit.kind': lifecycle.unitKind,
         'work.unit.version': lifecycle.unitVersion,

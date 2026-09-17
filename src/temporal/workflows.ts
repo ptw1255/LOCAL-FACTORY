@@ -100,6 +100,10 @@ export async function executeWorkflow(
         typeof node.config.maxIterations === 'number' ? node.config.maxIterations : agent.limits.maxIterations,
         agent.limits.maxIterations,
       );
+      // The definition is immutable run input and contains only Vault references,
+      // never resolved credentials. Pass it to the activity so provider routing
+      // remains identical to the local execution plane.
+      activityConfig.agent = agent;
     }
 
     const parentSpanId = input.definition.edges
