@@ -1,7 +1,7 @@
 import { Client, Connection } from '@temporalio/client';
 
 import type { RunRecord, WorkflowDefinition } from '../domain/types.js';
-import type { TemporalWorkflowResult } from './workflows.js';
+import { requiresTemporalApproval, type TemporalWorkflowResult } from './workflows.js';
 import { createQueuedRun, releaseBundleHash, type RunCreationOptions } from '../runtime/executor.js';
 import type { PlatformStore } from '../storage/store.js';
 import type { EventService } from '../observability/event-service.js';
@@ -155,7 +155,7 @@ export class TemporalWorkflowExecutor {
   public async approve(runId: string): Promise<RunRecord> {
     const run = await this.requireRun(runId);
     const handle = this.handleFor(run);
-    const node = run.workflowDefinition.nodes.find((candidate) => (candidate.type === 'approval' || candidate.config.requiresApproval === true) && !run.completedNodeIds.includes(candidate.id));
+    const node = run.workflowDefinition.nodes.find((candidate) => requiresTemporalApproval(candidate, run.workflowDefinition) && !run.completedNodeIds.includes(candidate.id));
     const compensation = node === undefined
       ? run.workflowDefinition.nodes.find((candidate) => candidate.unit?.compensation?.config.requiresApproval === true && !run.approvedNodeIds.includes(`${candidate.id}:compensate`))
       : undefined;
