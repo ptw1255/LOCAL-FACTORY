@@ -573,6 +573,12 @@ uncompressed image budget with `npm run check:image`; that check is intentionall
 separate because it requires a Docker daemon and remains optional for local setups
 without Docker Desktop.
 
+The credential-free IDE browser smoke suite runs with `npm run test:browser`. It
+builds the production web app, starts an isolated JSON-backed server, and checks the
+Workspace modes, command palette, bottom output panel, Observe tabs, and Deployments
+empty state. CI installs Chromium and runs this gate without Docker, PostgreSQL,
+Vault, model credentials, or external services.
+
 The default suite keeps the PostgreSQL restart probe opt-in so contributors do not
 need a database daemon. To exercise the supported local persistence boundary, start
 the Compose database and run the integration file explicitly:
