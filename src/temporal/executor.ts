@@ -170,7 +170,10 @@ export class TemporalWorkflowExecutor {
     const run = await this.requireRun(runId);
     if (!['queued', 'running'].includes(run.status)) throw new Error('Only queued or running runs can be paused.');
     await this.handleFor(run).signal('pause');
-    return this.updateRun(runId, (target) => { target.status = 'paused'; }, 'run.paused', 'Temporal workflow paused at a safe WorkUnit boundary.');
+    return this.updateRun(runId, (target) => {
+      if (isTerminalRunStatus(target.status)) return false;
+      target.status = 'paused';
+    }, 'run.paused', 'Temporal workflow paused at a safe WorkUnit boundary.');
   }
 
   /** Resume a paused Temporal workflow from its durable checkpoint. */
@@ -178,7 +181,10 @@ export class TemporalWorkflowExecutor {
     const run = await this.requireRun(runId);
     if (run.status !== 'paused') throw new Error('Only paused runs can be resumed.');
     await this.handleFor(run).signal('resume');
-    return this.updateRun(runId, (target) => { target.status = 'running'; }, 'run.resumed', 'Temporal workflow resumed from its persisted checkpoint.');
+    return this.updateRun(runId, (target) => {
+      if (isTerminalRunStatus(target.status)) return false;
+      target.status = 'running';
+    }, 'run.resumed', 'Temporal workflow resumed from its persisted checkpoint.');
   }
 
   public async cancel(runId: string): Promise<RunRecord> {
@@ -273,4 +279,8 @@ export class TemporalWorkflowExecutor {
       return run;
     });
   }
+}
+
+function isTerminalRunStatus(status: RunRecord['status']): boolean {
+  return ['succeeded', 'failed', 'timed_out', 'cancelled'].includes(status);
 }
