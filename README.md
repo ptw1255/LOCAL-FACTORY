@@ -558,6 +558,20 @@ are never returned by the health API. The app accepts `OBSERVABILITY_RETENTION_H
 backend must also be configured with its own 48-hour TTL; the factory cannot delete
 records from arbitrary third-party storage.
 
+If the generic backend should sit behind an OpenTelemetry Collector without
+starting Phoenix, use the independent `observability-generic` profile. It accepts
+traces, logs, and metrics, applies the same redaction boundary, and forwards all
+three signals to `GENERIC_OTLP_ENDPOINT`:
+
+```bash
+GENERIC_OTLP_ENDPOINT=https://otel.example.com \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-generic:4318 \
+  docker compose --profile observability-generic up --build
+```
+
+The generic backend owns its own retention policy; keep it at 48 hours when the
+factory's short-retention contract is required.
+
 For a local OpenTelemetry Collector boundary, point the app at the Collector's
 OTLP/HTTP receiver and start the same profile:
 

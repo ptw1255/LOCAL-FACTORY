@@ -1,0 +1,58 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+    spike_limit_mib: 32
+  batch:
+    timeout: 1s
+  # Keep the same privacy boundary as the Phoenix profile. The factory also
+  # redacts before export; this protects a generic backend if a producer regresses.
+  attributes/redact:
+    actions:
+      - key: authorization
+        action: delete
+      - key: api.key
+        action: delete
+      - key: api_key
+        action: delete
+      - key: token
+        action: delete
+      - key: secret
+        action: delete
+      - key: gen_ai.prompt
+        action: delete
+      - key: gen_ai.completion
+        action: delete
+      - key: llm.prompt
+        action: delete
+      - key: llm.output
+        action: delete
+
+exporters:
+  otlphttp/generic:
+    endpoint: ${env:GENERIC_OTLP_ENDPOINT}
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, batch]
+      exporters: [otlphttp/generic, debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, batch]
+      exporters: [otlphttp/generic, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/redact, batch]
+      exporters: [otlphttp/generic, debug]
