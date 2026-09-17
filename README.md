@@ -482,6 +482,16 @@ The smoke test starts the observability Compose profile, checks app health and t
 48-hour retention setting, posts a trace through the Collector, verifies Phoenix,
 and removes the temporary containers when it finishes.
 
+Temporal's restart boundary is also available as an opt-in Docker smoke test:
+
+```bash
+TEMPORAL_DOCKER_SMOKE=1 npm run test:temporal-smoke
+```
+
+It starts the Temporal profile, runs a deterministic wait workflow, restarts the
+worker while the run is in flight, verifies terminal success and lifecycle
+evidence, checks for duplicate completed WorkUnits, and tears down the profile.
+
 Temporal agent activities accept declared tool calls through a worker-side
 registry. The built-in `repo.*`, `workflow.code`, and `workflow.evaluate` tools
 are bounded by the same WorkUnit and repository capability checks as ordinary
