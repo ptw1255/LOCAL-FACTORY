@@ -30,6 +30,7 @@ export interface NodeActivityInput {
   label: string;
   config: Record<string, unknown>;
   traceId?: string;
+  parentSpanId?: string;
   sequence?: number;
   /** Optional deterministic override for direct callers/tests; Temporal workers use activityInfo().attempt. */
   attempt?: number;
@@ -85,6 +86,7 @@ export async function executeNodeActivity(
     unitVersion: unit.version,
     traceId,
     spanId,
+    ...(input.parentSpanId === undefined ? {} : { parentSpanId: input.parentSpanId }),
     sequence,
     attempt,
     idempotencyKey,
