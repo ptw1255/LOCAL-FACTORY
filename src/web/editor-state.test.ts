@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed';
-import { canvasOnlyChangesPresentation, clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceNodeForLine, sourceSyntaxDiagnostics, tryAcquireRunLock, workflowToCanvas } from './App';
+import { canvasOnlyChangesPresentation, clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextBottomPanelTab, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceNodeForLine, sourceSyntaxDiagnostics, tryAcquireRunLock, workflowToCanvas } from './App';
 import type { CanvasNode } from './WorkflowNodeCard';
 
 describe('IDE editor tab state', () => {
@@ -76,6 +76,15 @@ describe('IDE editor tab state', () => {
     expect(nextObserveTab('traces', 'Home')).toBe('runs');
     expect(nextObserveTab('runs', 'End')).toBe('metrics');
     expect(nextObserveTab('runs', 'Enter')).toBeNull();
+  });
+
+  it('wraps Workspace bottom panel tab navigation and supports Home/End', () => {
+    expect(nextBottomPanelTab('problems', 'ArrowRight')).toBe('output');
+    expect(nextBottomPanelTab('output', 'ArrowRight')).toBe('problems');
+    expect(nextBottomPanelTab('problems', 'ArrowLeft')).toBe('output');
+    expect(nextBottomPanelTab('output', 'Home')).toBe('problems');
+    expect(nextBottomPanelTab('problems', 'End')).toBe('output');
+    expect(nextBottomPanelTab('problems', 'Enter')).toBeNull();
   });
 
   it('wraps modal dialog focus in either direction and handles focus outside the dialog', () => {

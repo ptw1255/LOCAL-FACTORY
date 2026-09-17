@@ -48,6 +48,18 @@ test.describe('IDE workspace', () => {
     await expect(page.getByRole('heading', { name: 'Project definition' })).toBeVisible();
   });
 
+  test('navigates bottom panel tabs with roving keyboard focus', async ({ page }) => {
+    const problems = page.getByRole('tab', { name: /Problems/ });
+    const output = page.getByRole('tab', { name: /Run Output/ });
+    await problems.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(output).toBeFocused();
+    await expect(output).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Home');
+    await expect(problems).toBeFocused();
+    await expect(problems).toHaveAttribute('aria-selected', 'true');
+  });
+
   test('opens Run preflight for workflows with required input and restores focus', async ({ page, request }) => {
     const workflowResponse = await request.get('/api/workflows/workflow-agent-intake');
     expect(workflowResponse.ok()).toBeTruthy();

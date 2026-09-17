@@ -324,6 +324,25 @@ export function nextObserveTab(tab: ObserveTab, key: string): ObserveTab | null 
   return nextIndex < 0 ? null : tabs[nextIndex]!;
 }
 
+export type BottomPanelTab = 'problems' | 'output';
+
+/** Roving keyboard navigation for the Workspace bottom panel tabs. */
+export function nextBottomPanelTab(tab: BottomPanelTab, key: string): BottomPanelTab | null {
+  const tabs: BottomPanelTab[] = ['problems', 'output'];
+  const index = tabs.indexOf(tab);
+  if (index < 0) return null;
+  const nextIndex = key === 'ArrowRight'
+    ? (index + 1) % tabs.length
+    : key === 'ArrowLeft'
+      ? (index - 1 + tabs.length) % tabs.length
+      : key === 'Home'
+        ? 0
+        : key === 'End'
+          ? tabs.length - 1
+          : -1;
+  return nextIndex < 0 ? null : tabs[nextIndex]!;
+}
+
 /** Return the next focus target for a modal dialog's Tab sequence. */
 export function nextDialogFocusIndex(index: number, direction: -1 | 1, count: number): number {
   if (count <= 0) return -1;
@@ -2402,10 +2421,24 @@ function OperationalTree({
         {quickOpen ? <div className="quick-open-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setQuickOpen(false); }} role="presentation"><section aria-label="Command palette" aria-modal="true" className="quick-open-dialog" ref={quickOpenDialogRef} role="dialog"><div className="quick-open-input"><Icon name="search" size={14} /><input aria-label="Search commands and files" autoComplete="off" onChange={(event) => setQuickQuery(event.target.value)} placeholder="Search commands or files…" ref={quickOpenInputRef} value={quickQuery} /></div><div className="quick-open-results"><div className="quick-open-heading">Commands</div>{([{ label: 'Apply source', hint: 'Save and compile active file', action: () => void applyYaml() }, { label: 'Validate workflow', hint: 'Run workflow validation', action: onValidate }, { label: 'Run workflow', hint: 'Start a workflow run', action: onRun }, { label: 'Open Observe', hint: 'Inspect runs and telemetry', action: onObserve }, ...(hintDismissed ? [{ label: 'Show workspace guide', hint: 'Reopen the quick-start hint', action: onReopenGuide }] : [])] as const).filter((command) => `${command.label} ${command.hint}`.toLowerCase().includes(quickQuery.trim().toLowerCase())).map((command) => <button className="quick-open-item" key={command.label} onClick={() => { setQuickOpen(false); command.action(); }} type="button"><Icon name="code" size={13} /><span><strong>{command.label}</strong><small>{command.hint}</small></span></button>)}<div className="quick-open-heading">Files</div>{quickMatches.map((file) => <button className="quick-open-item" key={file.path} onClick={() => { setQuickOpen(false); void selectFile(file); }} type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={13} /><span><strong>{file.path}</strong><small>{file.sha256 === '' ? 'Workspace file' : `Updated ${formatDate(file.updatedAt)}`}</small></span></button>)}{quickMatches.length === 0 ? <p className="inline-empty">No matching files.</p> : null}</div><div className="quick-open-footer"><span>Tab focus · Enter run · Esc close</span><kbd>⌘/Ctrl P</kbd></div></section></div> : null}
         <div className={`ide-bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`} style={{ '--bottom-panel-height': `${bottomPanelHeight}px` } as CSSProperties}>
           <div aria-label="Workspace output" className="ide-bottom-tabs" role="tablist">
-            <button aria-controls="workspace-problems-panel" aria-selected={bottomTab === 'problems'} className={bottomTab === 'problems' ? 'active' : ''} id="workspace-problems-tab" onClick={() => { setBottomTab('problems'); setBottomOpen(true); }} role="tab" type="button">
+            <button aria-controls="workspace-problems-panel" aria-selected={bottomTab === 'problems'} className={bottomTab === 'problems' ? 'active' : ''} id="workspace-problems-tab" onClick={() => { setBottomTab('problems'); setBottomOpen(true); }} onKeyDown={(event) => {
+              const nextTab = nextBottomPanelTab('problems', event.key);
+              if (nextTab === null) return;
+              event.preventDefault();
+              setBottomTab(nextTab);
+              setBottomOpen(true);
+              window.requestAnimationFrame(() => document.getElementById(`workspace-${nextTab}-tab`)?.focus());
+            }} role="tab" tabIndex={bottomTab === 'problems' ? 0 : -1} type="button">
               Problems <span className={visibleProblems.length === 0 ? 'panel-count clean' : 'panel-count'}>{visibleProblems.length}</span>
             </button>
-            <button aria-controls="workspace-output-panel" aria-selected={bottomTab === 'output'} className={bottomTab === 'output' ? 'active' : ''} id="workspace-output-tab" onClick={() => { setBottomTab('output'); setBottomOpen(true); }} role="tab" type="button">
+            <button aria-controls="workspace-output-panel" aria-selected={bottomTab === 'output'} className={bottomTab === 'output' ? 'active' : ''} id="workspace-output-tab" onClick={() => { setBottomTab('output'); setBottomOpen(true); }} onKeyDown={(event) => {
+              const nextTab = nextBottomPanelTab('output', event.key);
+              if (nextTab === null) return;
+              event.preventDefault();
+              setBottomTab(nextTab);
+              setBottomOpen(true);
+              window.requestAnimationFrame(() => document.getElementById(`workspace-${nextTab}-tab`)?.focus());
+            }} role="tab" tabIndex={bottomTab === 'output' ? 0 : -1} type="button">
               Run Output <span className="panel-count clean">{recentRuns.length}</span>
             </button>
             <button aria-expanded={bottomOpen} aria-label={bottomOpen ? 'Collapse bottom panel' : 'Expand bottom panel'} className="bottom-panel-toggle" onClick={() => setBottomOpen((value) => !value)} type="button">{bottomOpen ? '⌄' : '⌃'}</button>
