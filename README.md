@@ -482,6 +482,15 @@ The smoke test starts the observability Compose profile, checks app health and t
 48-hour retention setting, posts a trace through the Collector, verifies Phoenix,
 and removes the temporary containers when it finishes.
 
+Temporal agent activities accept declared tool calls through a worker-side
+registry. The built-in `repo.*`, `workflow.code`, and `workflow.evaluate` tools
+are bounded by the same WorkUnit and repository capability checks as ordinary
+nodes; custom adapters can be supplied with
+`configureTemporalToolExecutors`. Tool lifecycle records contain hashes and
+stable call IDs, never raw arguments or results. Agent activities use a
+no-automatic-retry boundary so an uncertain side effect fails closed instead of
+being replayed by Temporal.
+
 Deployments to `production`, `prod`, `preprod`, or `staging` are promotion-gated:
 the action must reference a succeeded run for the same workflow that has both a
 reviewable repository patch and a passing `repositoryCi` evidence record, plus a
