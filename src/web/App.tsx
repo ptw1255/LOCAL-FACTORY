@@ -1220,6 +1220,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       </div> : <OperationalTree
         mode={studioMode}
         onModeChange={setStudioMode}
+        validation={validation}
         dirty={yamlDirty}
         onDirtyChange={setYamlDirty}
         onCanvas={() => setStudioMode('canvas')}
@@ -1253,6 +1254,7 @@ function OperationalTree({
   workflow,
   source,
   mode,
+  validation,
   onModeChange,
   onCanvas,
   onObserve,
@@ -1267,6 +1269,7 @@ function OperationalTree({
   workflow: WorkflowDefinition;
   source: string;
   mode: 'files' | 'tree';
+  validation: ValidationResult | null;
   onModeChange: (mode: 'files' | 'tree' | 'canvas') => void;
   onCanvas: () => void;
   onObserve: () => void;
@@ -1438,6 +1441,14 @@ function OperationalTree({
     return `${node.id} ${node.label} ${node.type} ${agent?.name ?? ''} ${agent?.purpose ?? ''}`.toLowerCase().includes(treeQuery);
   });
   const visibleTreeAgents = workflow.agents.filter((agent) => treeQuery === '' || `${agent.id} ${agent.name} ${agent.purpose} ${agent.model.model ?? agent.model.routingAlias ?? ''}`.toLowerCase().includes(treeQuery));
+  const validationByNode = new Map<string, ValidationIssue[]>(
+    (validation?.issues ?? []).filter((issue): issue is ValidationIssue & { nodeId: string } => issue.nodeId !== undefined).reduce((entries, issue) => {
+      const current = entries.get(issue.nodeId) ?? [];
+      current.push(issue);
+      entries.set(issue.nodeId, current);
+      return entries;
+    }, new Map<string, ValidationIssue[]>()),
+  );
 
   async function applyYaml(): Promise<boolean> {
     setBusy(true);
@@ -1523,11 +1534,13 @@ function OperationalTree({
             const sourceFile = agent === undefined
               ? files.find((file) => file.path.includes(workflow.id) && file.path.includes('.workflow.'))
               : files.find((file) => file.path.includes(agent.id) && file.path.includes('.agent.'));
+            const nodeIssues = validationByNode.get(node.id) ?? [];
+            const highestIssue = nodeIssues.some((issue) => issue.level === 'error') ? 'error' : nodeIssues.length > 0 ? 'warning' : undefined;
             return (
               <li key={node.id}>
                 <span className={`tree-rail ${index === workflow.nodes.length - 1 ? 'last' : ''}`} />
                 <span className={`tree-icon tree-kind-${node.unit?.kind ?? 'deterministic'}`}><Icon name={node.type === 'agentLoop' ? 'agent' : node.type === 'approval' ? 'human' : 'code'} size={14} /></span>
-                <button className="tree-node" disabled={sourceFile === undefined} onClick={() => { if (sourceFile !== undefined) void selectFile(sourceFile); }} title={sourceFile === undefined ? 'No matching source file' : `Open ${sourceFile.path}`} type="button"><div><strong>{node.label}</strong><span className="tree-kind-label">{node.unit?.kind ?? 'work unit'}</span></div><small>{node.type} · {node.unit?.timeoutMs ?? 0}ms timeout · {node.unit?.retryAttempts ?? 1} retries</small>{agent === undefined ? null : <div className="tree-agent"><Icon name="agent" size={12} /> {agent.name} · {agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</div>}</button>
+                <button className="tree-node" disabled={sourceFile === undefined} onClick={() => { if (sourceFile !== undefined) void selectFile(sourceFile); }} title={sourceFile === undefined ? 'No matching source file' : `Open ${sourceFile.path}`} type="button"><div><strong>{node.label}</strong><span className="tree-kind-label">{node.unit?.kind ?? 'work unit'}</span>{highestIssue === undefined ? null : <span className={`status-badge status-${highestIssue}`} title={nodeIssues.map((issue) => issue.message).join(' ')}>{nodeIssues.length} {highestIssue}</span>}</div><small>{node.type} · {node.unit?.timeoutMs ?? 0}ms timeout · {node.unit?.retryAttempts ?? 1} retries</small>{agent === undefined ? null : <div className="tree-agent"><Icon name="agent" size={12} /> {agent.name} · {agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</div>}</button>
               </li>
             );
           })}
