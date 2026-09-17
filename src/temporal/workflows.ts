@@ -39,12 +39,13 @@ const { executeAgentToolActivity } = proxyActivities<typeof activities>({
 export const approveSignal = defineSignal<[string]>('approve');
 export const pauseSignal = defineSignal('pause');
 export const resumeSignal = defineSignal('resume');
+export const statusSignal = defineSignal<['cancelled' | 'failed']>('status');
 
-export function temporalStatusSearchAttributes(status: 'running' | 'waiting' | 'paused' | 'succeeded' | 'failed'): { Status: [string] } {
+export function temporalStatusSearchAttributes(status: 'running' | 'waiting' | 'paused' | 'succeeded' | 'failed' | 'cancelled'): { Status: [string] } {
   return { Status: [status] };
 }
 
-function setTemporalStatus(status: 'running' | 'waiting' | 'paused' | 'succeeded' | 'failed'): void {
+function setTemporalStatus(status: 'running' | 'waiting' | 'paused' | 'succeeded' | 'failed' | 'cancelled'): void {
   // Keep the server-side Status search attribute aligned with durable workflow
   // transitions. The initial value is supplied by the client; these upserts
   // cover transitions that happen inside the workflow history.
@@ -222,6 +223,9 @@ export async function executeWorkflow(
   setHandler(resumeSignal, () => {
     paused = false;
     setTemporalStatus('running');
+  });
+  setHandler(statusSignal, (status) => {
+    setTemporalStatus(status);
   });
 
   while (completed.size < activated.size) {

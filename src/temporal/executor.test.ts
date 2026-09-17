@@ -189,8 +189,31 @@ describe('TemporalWorkflowExecutor', () => {
     const denied = await executor.deny(run.id, { reason: 'Risk review rejected the action.' });
     expect(denied).toEqual(expect.objectContaining({ status: 'failed', error: 'Risk review rejected the action.' }));
     expect(handle.cancel).toHaveBeenCalledOnce();
+    expect(handle.signal).toHaveBeenCalledWith('status', 'failed');
     const terminalEvents = (await events.list(run.id)).filter((event) => ['run.cancelled', 'run.failed'].includes(event.type));
     expect(terminalEvents.map((event) => event.type)).toEqual(['run.failed']);
+  });
+
+  it('does not cancel a Temporal run that is already terminal', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-cancel-terminal-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-cancel-terminal');
+    const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-temporal-cancel-terminal';
+    const run = await executor.start(workflow);
+    await store.mutate((state) => {
+      const target = state.runs.find((candidate) => candidate.id === run.id);
+      if (target !== undefined) target.status = 'succeeded';
+    });
+
+    const result = await executor.cancel(run.id);
+
+    expect(result.status).toBe('succeeded');
+    expect(handle.cancel).not.toHaveBeenCalled();
+    expect(handle.signal).not.toHaveBeenCalledWith('status', 'cancelled');
   });
 
   it('records a correlated approval event and ignores repeated approval delivery', async () => {
