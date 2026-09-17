@@ -6,6 +6,21 @@ import { createQueuedRun, releaseBundleHash, type RunCreationOptions } from '../
 import type { PlatformStore } from '../storage/store.js';
 import type { EventService } from '../observability/event-service.js';
 
+const TEMPORAL_START_ATTEMPTS = 8;
+
+function temporalStartBackoff(attempt: number): number {
+  return Math.min(2_000, 250 * 2 ** attempt);
+}
+
+function isNamespaceNotReady(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /namespace not found/i.test(message);
+}
+
+function delay(durationMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
+}
+
 /** Minimal handle surface used by the control plane and easy to fake in tests. */
 export interface TemporalWorkflowHandleLike {
   readonly workflowId: string;
@@ -73,7 +88,7 @@ export class TemporalWorkflowExecutor {
       attributes: { 'runtime.engine': 'temporal', 'temporal.task_queue': taskQueue, 'workflow.version': workflow.version, ...(run.releaseBundleHash === undefined ? {} : { 'release.bundle.hash': run.releaseBundleHash }) },
     });
     try {
-      const handle = await this.options.client.workflow.start('executeWorkflow', {
+      const handle = await this.startWorkflow({
         workflowId: run.temporalWorkflowId,
         taskQueue,
         args: [{ runId: run.id, definition: run.workflowDefinition, releaseBundleHash: run.releaseBundleHash, pinnedAgentVersions: run.pinnedAgentVersions, ...(run.input === undefined ? {} : { input: run.input }) }],
@@ -106,6 +121,23 @@ export class TemporalWorkflowExecutor {
       await this.markFailed(run.id, error instanceof Error ? error.message : 'Temporal workflow could not be started.');
       throw error;
     }
+  }
+
+  /**
+   * Auto-setup may expose the Temporal frontend before its default namespace
+   * cache is ready. Retry only that transient startup response so one
+   * persisted run eventually owns one workflow execution.
+   */
+  private async startWorkflow(options: Parameters<TemporalWorkflowClientLike['workflow']['start']>[1]): Promise<TemporalWorkflowHandleLike> {
+    for (let attempt = 0; attempt < TEMPORAL_START_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.options.client.workflow.start('executeWorkflow', options);
+      } catch (error) {
+        if (!isNamespaceNotReady(error) || attempt === TEMPORAL_START_ATTEMPTS - 1) throw error;
+        await delay(temporalStartBackoff(attempt));
+      }
+    }
+    throw new Error('Temporal workflow start attempts exhausted.');
   }
 
   /** Start a fresh Temporal execution from a terminal failure while preserving provenance. */

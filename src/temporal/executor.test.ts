@@ -70,6 +70,40 @@ describe('TemporalWorkflowExecutor', () => {
     expect(recovered).toBe(0);
   });
 
+  it('retries a transient namespace-not-found response without creating another run', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-namespace-retry-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-namespace-retry');
+    let attempts = 0;
+    const start = vi.fn(async (_type: string, options: { workflowId: string }) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("Namespace not found: 'default'");
+      expect(options.workflowId).toMatch(/^factory-/);
+      return handle;
+    });
+    const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+
+    const run = await executor.start(structuredClone(seedWorkflow));
+
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(start.mock.calls[0]?.[1].workflowId).toBe(start.mock.calls[1]?.[1].workflowId);
+    expect(await store.read((state) => state.runs.filter((candidate) => candidate.id === run.id))).toHaveLength(1);
+  });
+
+  it('does not retry non-transient Temporal start failures', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-start-failure-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const start = vi.fn(async () => { throw new Error('permission denied'); });
+    const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn() } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+
+    await expect(executor.start(structuredClone(seedWorkflow))).rejects.toThrow('permission denied');
+    expect(start).toHaveBeenCalledOnce();
+  });
+
   it('reattaches persisted Temporal runs after a process restart', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-recover-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
