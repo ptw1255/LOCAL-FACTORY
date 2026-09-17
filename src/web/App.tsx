@@ -472,6 +472,8 @@ function workflowToCanvas(
           category: catalogItem?.category ?? 'Operations',
           description: catalogItem?.description ?? 'Workflow operation',
           config: node.config,
+          ...(node.sourcePath === undefined ? {} : { sourcePath: node.sourcePath }),
+          ...(node.sourceLine === undefined ? {} : { sourceLine: node.sourceLine }),
           unit: node.unit,
         },
       };
@@ -498,6 +500,8 @@ function canvasToWorkflow(
     label: node.data.label,
     position: node.position,
     config: node.data.config,
+    ...(node.data.sourcePath === undefined ? {} : { sourcePath: node.data.sourcePath }),
+    ...(node.data.sourceLine === undefined ? {} : { sourceLine: node.data.sourceLine }),
     unit: node.data.unit,
   }));
   const workflowEdges: WorkflowEdge[] = edges.map((edge) => ({
@@ -1240,6 +1244,12 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         dirty={yamlDirty}
         onDirtyChange={setYamlDirty}
         onCanvas={() => setStudioMode('canvas')}
+        onCanvasNode={(nodeId) => {
+          setSelectedNodeId(nodeId);
+          setSelectedEdgeId(null);
+          setNodes((current) => current.map((node) => ({ ...node, selected: node.id === nodeId })));
+          setStudioMode('canvas');
+        }}
         onValidate={() => void validateWorkflow()}
         onRun={() => void runWorkflow()}
         onObserve={() => onNavigate('observe')}
@@ -1275,6 +1285,7 @@ function OperationalTree({
   validation,
   onModeChange,
   onCanvas,
+  onCanvasNode,
   onValidate,
   onRun,
   onObserve,
@@ -1292,6 +1303,7 @@ function OperationalTree({
   validation: ValidationResult | null;
   onModeChange: (mode: 'files' | 'tree' | 'canvas') => void;
   onCanvas: () => void;
+  onCanvasNode: (nodeId: string) => void;
   onValidate: () => void;
   onRun: () => void;
   onObserve: () => void;
@@ -1429,6 +1441,15 @@ function OperationalTree({
     } catch (loadError) {
       setError(errorText(loadError));
     }
+  }
+
+  function openSource(path: string, line?: number): void {
+    window.sessionStorage.setItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`, path);
+    const query = new URLSearchParams({ file: path });
+    if (line !== undefined && Number.isSafeInteger(line) && line > 0) query.set('line', String(line));
+    window.history.replaceState(null, '', `#/studio?${query.toString()}`);
+    const file = files.find((candidate) => candidate.path === path);
+    if (file !== undefined) void selectFile(file);
   }
 
   function closeTab(filePath: string): void {
@@ -1652,16 +1673,17 @@ function OperationalTree({
           {visibleTreeNodes.map((node, index) => {
             const agentId = node.type === 'agentLoop' && typeof node.config.agentId === 'string' ? node.config.agentId : undefined;
             const agent = agentId === undefined ? undefined : agentById.get(agentId);
-            const sourceFile = agent === undefined
-              ? files.find((file) => file.path.includes(workflow.id) && file.path.includes('.workflow.'))
-              : files.find((file) => file.path.includes(agent.id) && file.path.includes('.agent.'));
+            const sourcePath = node.sourcePath ?? (agent === undefined
+              ? files.find((file) => file.path.includes(workflow.id) && file.path.includes('.workflow.'))?.path
+              : files.find((file) => file.path.includes(agent.id) && file.path.includes('.agent.'))?.path);
+            const sourceFile = sourcePath === undefined ? undefined : files.find((file) => file.path === sourcePath);
             const nodeIssues = validationByNode.get(node.id) ?? [];
             const highestIssue = nodeIssues.some((issue) => issue.level === 'error') ? 'error' : nodeIssues.length > 0 ? 'warning' : undefined;
             return (
               <li key={node.id}>
                 <span className={`tree-rail ${index === workflow.nodes.length - 1 ? 'last' : ''}`} />
                 <span className={`tree-icon tree-kind-${node.unit?.kind ?? 'deterministic'}`}><Icon name={node.type === 'agentLoop' ? 'agent' : node.type === 'approval' ? 'human' : 'code'} size={14} /></span>
-                <button className="tree-node" disabled={sourceFile === undefined} onClick={() => { if (sourceFile !== undefined) void selectFile(sourceFile); }} title={sourceFile === undefined ? 'No matching source file' : `Open ${sourceFile.path}`} type="button"><div><strong>{node.label}</strong><span className="tree-kind-label">{node.unit?.kind ?? 'work unit'}</span>{highestIssue === undefined ? null : <span className={`status-badge status-${highestIssue}`} title={nodeIssues.map((issue) => issue.message).join(' ')}>{nodeIssues.length} {highestIssue}</span>}</div><small>{node.type} · {node.unit?.timeoutMs ?? 0}ms timeout · {node.unit?.retryAttempts ?? 1} retries</small>{agent === undefined ? null : <div className="tree-agent"><Icon name="agent" size={12} /> {agent.name} · {agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</div>}</button>
+                <div className="tree-node-row"><button className="tree-node" disabled={sourceFile === undefined} onClick={() => { if (sourceFile !== undefined) openSource(sourceFile.path, node.sourceLine); }} title={sourceFile === undefined ? 'No matching source file' : `Open ${sourceFile.path}${node.sourceLine === undefined ? '' : `:${node.sourceLine}`}`} type="button"><div><strong>{node.label}</strong><span className="tree-kind-label">{node.unit?.kind ?? 'work unit'}</span>{highestIssue === undefined ? null : <span className={`status-badge status-${highestIssue}`} title={nodeIssues.map((issue) => issue.message).join(' ')}>{nodeIssues.length} {highestIssue}</span>}</div><small>{node.type} · {node.unit?.timeoutMs ?? 0}ms timeout · {node.unit?.retryAttempts ?? 1} retries{node.sourceLine === undefined ? '' : ` · source line ${node.sourceLine}`}</small>{agent === undefined ? null : <div className="tree-agent"><Icon name="agent" size={12} /> {agent.name} · {agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</div>}</button><button aria-label={`Open ${node.label} on canvas`} className="icon-button tree-canvas-link" onClick={() => onCanvasNode(node.id)} title="Open on Canvas" type="button"><Icon name="studio" size={13} /></button></div>
               </li>
             );
           })}
