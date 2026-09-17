@@ -21,6 +21,8 @@ export const approveSignal = defineSignal<[string]>('approve');
 export interface TemporalWorkflowInput {
   runId: string;
   definition: WorkflowDefinition;
+  releaseBundleHash?: string;
+  pinnedAgentVersions?: Record<string, number>;
   input?: unknown;
 }
 
@@ -89,6 +91,10 @@ export async function executeWorkflow(
       .find((spanId): spanId is string => spanId !== undefined);
     const activityResult = await executeNodeActivity({
       runId: input.runId,
+      workflowId: input.definition.id,
+      workflowVersion: input.definition.version,
+      ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+      ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
       ...(input.definition.tenantId === undefined ? {} : { tenantId: input.definition.tenantId }),
       ...(input.definition.projectId === undefined ? {} : { projectId: input.definition.projectId }),
       nodeId: node.id,

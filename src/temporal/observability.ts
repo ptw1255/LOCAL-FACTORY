@@ -9,6 +9,10 @@ export type TemporalLifecycleStatus = 'started' | 'succeeded' | 'failed';
 /** Serializable lifecycle data emitted by a Temporal activity attempt. */
 export interface TemporalActivityLifecycle {
   runId: string;
+  workflowId?: string;
+  workflowVersion?: number;
+  releaseBundleHash?: string;
+  pinnedAgentVersions?: Record<string, number>;
   tenantId?: string;
   projectId?: string;
   nodeId: string;
@@ -63,6 +67,10 @@ export class PlatformTemporalObservabilitySink implements TemporalObservabilityS
       ...(lifecycle.outputHash === undefined ? {} : { outputHash: lifecycle.outputHash }),
       ...(lifecycle.error === undefined ? {} : { error: lifecycle.error.slice(0, 2_000) }),
       metadata: {
+        ...(lifecycle.workflowId === undefined ? {} : { 'workflow.id': lifecycle.workflowId }),
+        ...(lifecycle.workflowVersion === undefined ? {} : { 'workflow.version': lifecycle.workflowVersion }),
+        ...(lifecycle.releaseBundleHash === undefined ? {} : { 'release.bundle.hash': lifecycle.releaseBundleHash }),
+        ...(lifecycle.pinnedAgentVersions === undefined ? {} : { 'agent.versions': JSON.stringify(lifecycle.pinnedAgentVersions) }),
         'work.unit.kind': lifecycle.unitKind,
         'work.unit.version': lifecycle.unitVersion,
         ...(lifecycle.durationMs === undefined ? {} : { 'work.unit.duration_ms': lifecycle.durationMs }),
@@ -91,6 +99,10 @@ export class PlatformTemporalObservabilitySink implements TemporalObservabilityS
         [telemetryAttributes.traceId]: lifecycle.traceId,
         [telemetryAttributes.spanId]: lifecycle.spanId,
         [telemetryAttributes.unitId]: lifecycle.nodeId,
+        ...(lifecycle.workflowId === undefined ? {} : { 'workflow.id': lifecycle.workflowId }),
+        ...(lifecycle.workflowVersion === undefined ? {} : { 'workflow.version': lifecycle.workflowVersion }),
+        ...(lifecycle.releaseBundleHash === undefined ? {} : { 'release.bundle.hash': lifecycle.releaseBundleHash }),
+        ...(lifecycle.pinnedAgentVersions === undefined ? {} : { 'agent.versions': JSON.stringify(lifecycle.pinnedAgentVersions) }),
         'runtime.engine': 'temporal',
         'work.unit.kind': lifecycle.unitKind,
         'work.unit.version': lifecycle.unitVersion,

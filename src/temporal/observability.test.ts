@@ -106,4 +106,15 @@ describe('PlatformTemporalObservabilitySink', () => {
     const events = await store.listEvents('run-temporal');
     expect(events.find((event) => event.nodeId === 'child')).toEqual(expect.objectContaining({ parentSpanId: 'p'.repeat(16) }));
   });
+
+  it('links workflow and agent release identity into Temporal evidence and telemetry', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-observability-release-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const sink = new PlatformTemporalObservabilitySink(store);
+    await sink.record(lifecycle({ workflowId: 'workflow-release', workflowVersion: 4, releaseBundleHash: 'sha256:release', pinnedAgentVersions: { planner: 2 } }));
+    const evidence = (await store.listEvidence('run-temporal'))[0];
+    const event = (await store.listEvents('run-temporal'))[0];
+    expect(evidence?.metadata).toEqual(expect.objectContaining({ 'workflow.id': 'workflow-release', 'workflow.version': 4, 'release.bundle.hash': 'sha256:release', 'agent.versions': JSON.stringify({ planner: 2 }) }));
+    expect(event?.attributes).toEqual(expect.objectContaining({ 'workflow.id': 'workflow-release', 'workflow.version': 4, 'release.bundle.hash': 'sha256:release' }));
+  });
 });
