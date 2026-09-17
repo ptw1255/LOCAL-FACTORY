@@ -64,8 +64,13 @@ export function planCompensations(definition: WorkflowDefinition, completedNodeI
 }
 
 /** Approval boundary shared by explicit human gates and side-effect WorkUnits. */
-export function requiresTemporalApproval(node: WorkflowDefinition['nodes'][number]): boolean {
-  return node.type === 'approval' || node.config.requiresApproval === true;
+export function requiresTemporalApproval(node: WorkflowDefinition['nodes'][number], definition?: WorkflowDefinition): boolean {
+  if (node.type === 'approval' || node.config.requiresApproval === true) return true;
+  if (node.type !== 'agentLoop' || definition === undefined) return false;
+  const agentId = typeof node.config.agentId === 'string' ? node.config.agentId : undefined;
+  const agent = agentId === undefined ? undefined : definition.agents.find((candidate) => candidate.id === agentId);
+  if (agent === undefined) return false;
+  return agent.approval.beforeSideEffects && agent.tools.length > 0 || agent.approval.beforeTools.length > 0;
 }
 
 function boundedWorkflowToolResult(value: unknown): string {
@@ -207,7 +212,7 @@ export async function executeWorkflow(
     if (node === undefined) {
       throw new Error('No executable node is available for the active graph.');
     }
-    if (requiresTemporalApproval(node)) {
+    if (requiresTemporalApproval(node, input.definition)) {
       await condition(() => approved.has(node.id) || paused);
       await condition(() => !paused);
       if (!approved.has(node.id)) continue;
