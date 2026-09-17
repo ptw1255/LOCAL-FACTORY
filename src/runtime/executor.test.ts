@@ -100,6 +100,11 @@ describe('LocalWorkflowExecutor', () => {
     await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
     const succeeded = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id));
     expect(succeeded?.unitOutputs.evaluate).toEqual({ score: 1, threshold: 1, passed: true, mode: 'fieldEquals' });
+    expect((await events.list(run.id)).find((event) => event.type === 'evaluator.completed')).toEqual(expect.objectContaining({
+      signal: 'metric',
+      spanKind: 'evaluator',
+      attributes: expect.objectContaining({ 'evaluator.mode': 'fieldEquals', 'evaluator.passed': true, 'evaluator.score': 1, 'metric.name': 'evaluator.score' }),
+    }));
     const failedWorkflow = structuredClone(workflow);
     failedWorkflow.id = 'workflow-evaluator-fail';
     const evaluator = failedWorkflow.nodes.find((node) => node.id === 'evaluate');
