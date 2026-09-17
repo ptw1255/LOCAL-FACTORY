@@ -96,7 +96,6 @@ services:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
       - "4318:4318"
-      - "4317:4317"
     depends_on:
       phoenix:
         condition: service_started
