@@ -125,6 +125,15 @@ function readExplorerWidth(projectId: string): number {
   return Number.isFinite(parsed) ? Math.min(360, Math.max(160, Math.round(parsed))) : 190;
 }
 
+export function renameOpenPath(paths: string[], previousPath: string, nextPath: string): string[] {
+  return paths.map((path) => path === previousPath ? nextPath : path);
+}
+
+export function removeOpenPath(paths: string[], removedPath: string, fallbackPath: string): string[] {
+  const remaining = paths.filter((path) => path !== removedPath);
+  return remaining.length === 0 ? [fallbackPath] : remaining;
+}
+
 function readStudioLine(): number | undefined {
   const query = window.location.hash.split('?', 2)[1];
   const value = query === undefined ? undefined : Number(new URLSearchParams(query).get('line'));
@@ -1558,7 +1567,12 @@ function OperationalTree({
     if (dirty && !window.confirm('Rename the file with unsaved changes?')) return;
     const nextPath = window.prompt('Rename file', file.path)?.trim();
     if (nextPath === undefined || nextPath === '' || nextPath === file.path) return;
-    try { await api.renameProjectFile(projectId, file.path, nextPath); await refreshFiles(); setSelectedPath(nextPath); }
+    try {
+      await api.renameProjectFile(projectId, file.path, nextPath);
+      setOpenPaths((current) => renameOpenPath(current, file.path, nextPath));
+      await refreshFiles();
+      setSelectedPath(nextPath);
+    }
     catch (renameError) { setError(errorText(renameError)); }
   }
 
@@ -1571,11 +1585,13 @@ function OperationalTree({
       await refreshFiles();
       const remaining = files.filter((candidate) => candidate.path !== file.path);
       const next = remaining[0]?.path ?? 'project.yaml';
+      setOpenPaths((current) => removeOpenPath(current, file.path, next));
       setSelectedPath(next);
       onDirtyChange(false);
       if (window.confirm(`${file.path} was moved to trash. Restore it now?`)) {
         await api.restoreProjectFile(projectId, removed.trashId);
         await refreshFiles();
+        setOpenPaths((current) => current.includes(file.path) ? current : [...current, file.path]);
         setSelectedPath(file.path);
       }
     } catch (deleteError) { setError(errorText(deleteError)); }
