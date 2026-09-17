@@ -343,6 +343,24 @@ describe('platform API', () => {
     expect(listing.json<{ items: Array<{ path: string }> }>().items.some((file) => file.path === 'factory.yaml')).toBe(true);
   });
 
+  it('marks aggregate declarative endpoints as deprecated during the compatibility window', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const exported = await app.inject({ method: 'GET', url: '/api/projects/project-local/declarative.yaml', headers });
+    expect(exported.statusCode).toBe(200);
+    expect(exported.headers.deprecation).toBe('true');
+    expect(exported.headers.link).toContain('/api/projects/project-local/files');
+
+    const imported = await app.inject({
+      method: 'POST',
+      url: '/api/projects/project-local/declarative',
+      headers,
+      payload: { source: exported.body },
+    });
+    expect(imported.statusCode).toBe(200);
+    expect(imported.headers.deprecation).toBe('true');
+    expect(imported.headers.link).toContain('/api/projects/project-local/files');
+  });
+
   it('preserves workflow versions and run history during migration', async () => {
     const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
     const historicalRun = createQueuedRun(seedWorkflow);
