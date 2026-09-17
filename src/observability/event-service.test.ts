@@ -175,6 +175,19 @@ describe('EventService retention', () => {
     expect(completed.traceId).toBe(started.traceId);
   });
 
+  it('anchors events from different nodes under the run root span', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const service = new EventService(new JsonStore(path.join(directory, 'state.json')));
+    const root = await service.emit('run-tree', 'run.started', 'started', { signal: 'trace' });
+    const first = await service.emit('run-tree', 'unit.started', 'first started', { nodeId: 'first', signal: 'trace' });
+    const second = await service.emit('run-tree', 'unit.started', 'second started', { nodeId: 'second', signal: 'trace' });
+
+    expect(first.parentSpanId).toBe(root.spanId);
+    expect(second.parentSpanId).toBe(root.spanId);
+    expect(first.traceId).toBe(root.traceId);
+    expect(second.traceId).toBe(root.traceId);
+  });
+
   it('inherits the official OpenTelemetry async parent context', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const service = new EventService(new JsonStore(path.join(directory, 'state.json')));
