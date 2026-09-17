@@ -320,6 +320,22 @@ export interface DeploymentTransition {
   reason?: string;
 }
 
+export interface DeploymentApprovalRecord {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  deploymentId: string;
+  artifactId: string;
+  runId: string;
+  bindingHash: string;
+  decision: 'pending' | 'approved' | 'denied' | 'expired';
+  requestedAt: string;
+  expiresAt: string;
+  actor?: string;
+  reason?: string;
+  decidedAt?: string;
+}
+
 export interface DeploymentRecord {
   id: string;
   tenantId: string;

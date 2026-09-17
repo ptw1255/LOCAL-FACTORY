@@ -9,6 +9,7 @@ import type {
   ApprovalRecord,
   DeploymentRecord,
   DeploymentEnvelope,
+  DeploymentApprovalRecord,
   RunRecord,
   ProjectRecord,
   ProjectFileRecord,
@@ -202,8 +203,11 @@ export const api = {
   deployments: () => request<ItemsResponse<DeploymentRecord>>('/api/deployments'),
   deploymentEnvelopes: () => request<ItemsResponse<DeploymentEnvelope>>('/api/deployments?format=envelope'),
   deploymentEvidence: (deploymentId: string) => request<ItemsResponse<OperationEvidence>>(`/api/evidence?deploymentId=${encodeURIComponent(deploymentId)}`),
-  deploymentAction: (id: string, action: DeploymentRecord['history'][number]['action'], options: { artifactId?: string; expectedUpdatedAt?: string; idempotencyKey?: string } = {}) =>
+  deploymentAction: (id: string, action: DeploymentRecord['history'][number]['action'], options: { artifactId?: string; expectedUpdatedAt?: string; idempotencyKey?: string; runId?: string; approvalId?: string } = {}) =>
     request<DeploymentRecord>(`/api/deployments/${encodeURIComponent(id)}/action`, { method: 'POST', body: JSON.stringify({ action, ...options }) }),
+  deploymentApprovals: () => request<ItemsResponse<DeploymentApprovalRecord>>('/api/deployment-approvals'),
+  decideDeploymentApproval: (deploymentId: string, approvalId: string, action: 'approve' | 'deny', reason?: string) =>
+    request<DeploymentApprovalRecord>(`/api/deployments/${encodeURIComponent(deploymentId)}/approval`, { method: 'POST', body: JSON.stringify({ action, approvalId, ...(reason === undefined ? {} : { reason }) }) }),
   reconcileDeployment: (id: string) =>
     request<DeploymentRecord>(`/api/deployments/${encodeURIComponent(id)}/reconcile`, { method: 'POST', body: '{}' }),
   createDeployment: (input: { workflowId: string; environment: string; artifactId: string; trigger: string }) =>
