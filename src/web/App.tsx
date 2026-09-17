@@ -1224,6 +1224,8 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         dirty={yamlDirty}
         onDirtyChange={setYamlDirty}
         onCanvas={() => setStudioMode('canvas')}
+        onValidate={() => void validateWorkflow()}
+        onRun={() => void runWorkflow()}
         onObserve={() => onNavigate('observe')}
         onSourceChange={(value) => { setYamlSource(value); setYamlDirty(true); }}
         onSourceLoaded={(value) => { setYamlSource(value); setYamlDirty(false); }}
@@ -1257,6 +1259,8 @@ function OperationalTree({
   validation,
   onModeChange,
   onCanvas,
+  onValidate,
+  onRun,
   onObserve,
   projectId,
   dirty,
@@ -1272,6 +1276,8 @@ function OperationalTree({
   validation: ValidationResult | null;
   onModeChange: (mode: 'files' | 'tree' | 'canvas') => void;
   onCanvas: () => void;
+  onValidate: () => void;
+  onRun: () => void;
   onObserve: () => void;
   projectId: string;
   dirty: boolean;
@@ -1298,6 +1304,9 @@ function OperationalTree({
   const [problems, setProblems] = useState<SourceDiagnostic[]>([]);
   const fileEventCursor = useRef<string | undefined>(undefined);
   const editorRef = useRef<{ revealLineInCenter: (line: number) => void; setPosition: (position: { lineNumber: number; column: number }) => void; focus: () => void } | null>(null);
+  const saveShortcutRef = useRef<() => Promise<boolean>>(async () => false);
+  const validateShortcutRef = useRef(onValidate);
+  const runShortcutRef = useRef(onRun);
   const pendingProblem = useRef<SourceDiagnostic | null>(null);
 
   useEffect(() => {
@@ -1480,6 +1489,12 @@ function OperationalTree({
     onRegisterSave(applyYaml);
   }, [onRegisterSave, selectedPath, source, files]);
 
+  // Monaco registers keybindings once at mount. Keep the handlers current so
+  // shortcuts operate on the latest source, validation state, and workflow.
+  saveShortcutRef.current = applyYaml;
+  validateShortcutRef.current = onValidate;
+  runShortcutRef.current = onRun;
+
   function openProblem(problem: SourceDiagnostic): void {
     setBottomTab('problems');
     setBottomOpen(true);
@@ -1516,8 +1531,8 @@ function OperationalTree({
       <section className="yaml-panel ide-editor">
         <div className="ide-tab-bar"><span className="ide-tab active"><Icon name="code" size={13} /> {selectedPath} {dirty ? <span className="ide-tab-dot" /> : null}</span><span className="ide-branch">factory.agentic/v1</span></div>
         <div className="ide-editor-heading"><div><span className="eyebrow">Declarative source</span><h2>Project definition</h2><p>Author the loop in YAML. Apply compiles it into the runtime model.</p></div><div className="ide-editor-actions"><span className={dirty ? 'ide-dirty' : 'ide-clean'}>{dirty ? 'Unsaved changes' : 'Synced'}</span><button className="button primary" disabled={!dirty || busy} onClick={() => void applyYaml()} type="button"><Icon name="save" size={14} /> {busy ? 'Applying…' : 'Apply YAML'}</button><button className="icon-button" onClick={onCanvas} title="Open canvas compatibility view" type="button"><Icon name="studio" size={15} /></button></div></div>
-        <div className="yaml-editor-wrap"><Editor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => { setProblems([]); setError(null); onSourceChange(value ?? ''); }} onMount={(editor) => { editorRef.current = editor; }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} /></div>
-        {error === null ? <small className="ide-hint">Review the compiled tree on the right, then apply the file when it is ready. Invalid definitions never replace the active runtime.</small> : <div className="ide-error"><Icon name="warning" size={14} /> {error}</div>}
+        <div className="yaml-editor-wrap"><Editor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => { setProblems([]); setError(null); onSourceChange(value ?? ''); }} onMount={(editor, monaco) => { editorRef.current = editor; editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { void saveShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { validateShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => { runShortcutRef.current(); }); }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} /></div>
+        {error === null ? <small className="ide-hint">Review the compiled tree on the right, then apply the file when it is ready. Invalid definitions never replace the active runtime. Shortcuts: Cmd/Ctrl+S apply · Cmd/Ctrl+Enter validate · Cmd/Ctrl+Shift+Enter run.</small> : <div className="ide-error"><Icon name="warning" size={14} /> {error}</div>}
         <div className={`ide-bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`}>
           <div className="ide-bottom-tabs"><button className={bottomTab === 'problems' ? 'active' : ''} onClick={() => { setBottomTab('problems'); setBottomOpen(true); }} type="button">Problems <span className={visibleProblems.length === 0 ? 'panel-count clean' : 'panel-count'}>{visibleProblems.length}</span></button><button className={bottomTab === 'output' ? 'active' : ''} onClick={() => { setBottomTab('output'); setBottomOpen(true); }} type="button">Run Output <span className="panel-count clean">{recentRuns.length}</span></button><button aria-label={bottomOpen ? 'Collapse bottom panel' : 'Expand bottom panel'} className="bottom-panel-toggle" onClick={() => setBottomOpen((value) => !value)} type="button">{bottomOpen ? '⌄' : '⌃'}</button></div>
           {bottomOpen ? <div className="ide-bottom-content">{bottomTab === 'problems' ? (visibleProblems.length === 0 ? <span>No problems detected in the current source.</span> : <ul className="ide-problems">{visibleProblems.map((problem, index) => <li key={`${problem.path}-${problem.line}-${problem.column}-${problem.code}-${index}`}><button className="ide-problem" onClick={() => openProblem(problem)} type="button"><span className="ide-problem-location">{problem.path}:{problem.line}:{problem.column}</span><span className="ide-problem-code">{problem.code}</span><span className="field-error">{problem.message}</span></button></li>)}</ul>) : <div className="ide-run-output">{recentRuns.length === 0 ? <span>No runs for this project yet.</span> : <>{recentRuns.slice(0, 1).map((run) => <div className="ide-run-summary" key={run.id}><StatusBadge status={run.status} /><span>{run.workflowName} · {formatDate(run.startedAt)}</span><button className="text-button" onClick={onObserve} type="button">Open Observe <Icon name="chevron" size={12} /></button></div>)}<ul>{runEvents.map((event) => <li key={event.id}><StatusBadge status={event.severityText ?? event.signal} /><span>{event.message}</span><time>{formatDate(event.timestamp)}</time></li>)}</ul></>}</div>}</div> : null}
