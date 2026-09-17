@@ -226,6 +226,35 @@ export class LocalWorkflowExecutor {
     return retry;
   }
 
+  /** Request a cooperative pause at the next safe WorkUnit boundary. */
+  public async pause(runId: string): Promise<RunRecord> {
+    const run = await this.store.mutate((state) => {
+      const target = state.runs.find((candidate) => candidate.id === runId);
+      if (target === undefined) throw new Error('Run not found.');
+      if (!['queued', 'running'].includes(target.status)) {
+        throw new Error('Only queued or running runs can be paused.');
+      }
+      target.status = 'paused';
+      return target;
+    });
+    await this.events.emit(runId, 'run.paused', 'Workflow run paused at a safe WorkUnit boundary.');
+    return run;
+  }
+
+  /** Resume a locally persisted run without replaying completed WorkUnits. */
+  public async resume(runId: string): Promise<RunRecord> {
+    const run = await this.store.mutate((state) => {
+      const target = state.runs.find((candidate) => candidate.id === runId);
+      if (target === undefined) throw new Error('Run not found.');
+      if (target.status !== 'paused') throw new Error('Only paused runs can be resumed.');
+      target.status = 'queued';
+      return target;
+    });
+    await this.events.emit(runId, 'run.resumed', 'Workflow run resumed from its persisted checkpoint.');
+    void this.execute(runId);
+    return run;
+  }
+
   public async approve(runId: string, options: { actor?: string; reason?: string } = {}): Promise<RunRecord> {
     let expired = false;
     const run = await this.store.mutate((state) => {
@@ -406,7 +435,7 @@ export class LocalWorkflowExecutor {
         if (context.run === undefined || context.workflow === undefined) {
           throw new Error('Run or workflow definition no longer exists.');
         }
-        if (context.run.status === 'cancelled') {
+        if (context.run.status === 'cancelled' || context.run.status === 'paused') {
           return;
         }
 
@@ -1559,7 +1588,7 @@ export class LocalWorkflowExecutor {
       if (run === undefined) {
         throw new Error('Run not found.');
       }
-      if (run.status === 'cancelled') {
+      if (run.status === 'cancelled' || run.status === 'paused') {
         return { value: false, emit: false };
       }
       run.status = 'succeeded';

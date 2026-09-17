@@ -159,6 +159,16 @@ export const api = {
       method: 'POST',
       body: '{}',
     }),
+  pauseRun: (id: string) =>
+    request<RunRecord>(`/api/runs/${encodeURIComponent(id)}/pause`, {
+      method: 'POST',
+      body: '{}',
+    }),
+  resumeRun: (id: string) =>
+    request<RunRecord>(`/api/runs/${encodeURIComponent(id)}/resume`, {
+      method: 'POST',
+      body: '{}',
+    }),
   events: (runId: string) =>
     request<ItemsResponse<RunEvent>>(`/api/events?runId=${encodeURIComponent(runId)}`),
   projectFileEvents: (projectId: string, since?: string) =>

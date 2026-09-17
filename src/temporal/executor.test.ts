@@ -106,6 +106,26 @@ describe('TemporalWorkflowExecutor', () => {
     expect((await events.list(run.id)).some((event) => event.type === 'run.cancelled')).toBe(true);
   });
 
+  it('pauses and resumes a Temporal workflow through durable signals', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-pause-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-pause');
+    const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-temporal-pause';
+    const run = await executor.start(workflow);
+
+    const paused = await executor.pause(run.id);
+    expect(paused.status).toBe('paused');
+    expect(handle.signal).toHaveBeenLastCalledWith('pause');
+    const resumed = await executor.resume(run.id);
+    expect(resumed.status).toBe('running');
+    expect(handle.signal).toHaveBeenLastCalledWith('resume');
+    expect((await events.list(run.id)).map((event) => event.type)).toEqual(expect.arrayContaining(['run.paused', 'run.resumed']));
+  });
+
   it('retries a terminal Temporal run with pinned provenance', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-retry-'));
     const store = new JsonStore(path.join(directory, 'state.json'));

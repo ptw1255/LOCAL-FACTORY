@@ -17,6 +17,8 @@ const { executeNodeActivity } = proxyActivities<typeof activities>({
 });
 
 export const approveSignal = defineSignal<[string]>('approve');
+export const pauseSignal = defineSignal('pause');
+export const resumeSignal = defineSignal('resume');
 
 export interface TemporalWorkflowInput {
   runId: string;
@@ -47,11 +49,19 @@ export async function executeWorkflow(
   }
   const activated = new Set([trigger.id]);
   const approved = new Set<string>();
+  let paused = false;
   setHandler(approveSignal, (nodeId) => {
     approved.add(nodeId);
   });
+  setHandler(pauseSignal, () => {
+    paused = true;
+  });
+  setHandler(resumeSignal, () => {
+    paused = false;
+  });
 
   while (completed.size < activated.size) {
+    await condition(() => !paused);
     const node = input.definition.nodes.find((candidate) => {
       if (!activated.has(candidate.id) || completed.has(candidate.id)) {
         return false;
@@ -67,7 +77,9 @@ export async function executeWorkflow(
       throw new Error('No executable node is available for the active graph.');
     }
     if (node.type === 'approval') {
-      await condition(() => approved.has(node.id));
+      await condition(() => approved.has(node.id) || paused);
+      await condition(() => !paused);
+      if (!approved.has(node.id)) continue;
     }
 
     const activityConfig = { ...node.config };

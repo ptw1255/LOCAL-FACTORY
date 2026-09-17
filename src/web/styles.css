@@ -219,7 +219,7 @@ h1, h2, h3, p { margin-top: 0; }
   padding: 4px 7px;
   text-transform: uppercase;
 }
-.status-draft, .status-queued { background: #222c3d; color: #aab8cb; }
+.status-draft, .status-queued, .status-paused { background: #222c3d; color: #aab8cb; }
 .status-healthy, .status-succeeded, .status-ready { background: #12362d; border-color: #235c4c; color: #70dfb8; }
 .status-running { background: #122c4c; border-color: #244d79; color: #7eb7ff; }
 .status-waiting, .status-degraded, .status-needs-review { background: #3a3117; border-color: #66562b; color: #ebcf72; }
@@ -622,6 +622,7 @@ kbd { background: #1a2638; border: 1px solid #35445c; border-radius: 4px; box-sh
 .run-state-dot.status-succeeded { background: var(--accent); }
 .run-state-dot.status-failed, .run-state-dot.status-cancelled { background: var(--red); }
 .run-state-dot.status-waiting { background: var(--yellow); }
+.run-state-dot.status-paused { background: #aab8cb; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 5px rgba(104, 163, 255, .12); } }
 .run-main, .run-side { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .run-main strong { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
