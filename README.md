@@ -306,6 +306,9 @@ The repository includes a complete example at
 [`examples/code-review-loop.yaml`](examples/code-review-loop.yaml). Validate or
 inspect any project definition with the local CLI:
 
+For a guided first run—from Docker startup through source authoring, Observe,
+deployment, and restart—see [`docs/onboarding.md`](docs/onboarding.md).
+
 The file-backed format uses `factory.yaml` as the Project entrypoint and keeps
 resources independently reviewable: `workflows/*.workflow.yaml`,
 `agents/*.agent.yaml`, `units/*.unit.yaml`, `policies/*.policy.yaml`,
