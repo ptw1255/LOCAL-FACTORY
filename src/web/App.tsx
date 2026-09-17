@@ -824,6 +824,23 @@ export function canvasOnlyChangesPresentation(
   return true;
 }
 
+interface CanvasHistorySnapshot {
+  nodes: CanvasNode[];
+  edges: Edge[];
+}
+
+interface CanvasHistoryState {
+  past: CanvasHistorySnapshot[];
+  future: CanvasHistorySnapshot[];
+}
+
+function canvasSnapshotFingerprint(snapshot: CanvasHistorySnapshot): string {
+  return JSON.stringify({
+    nodes: snapshot.nodes.map((node) => ({ id: node.id, position: node.position, data: node.data })),
+    edges: snapshot.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle, targetHandle: edge.targetHandle, label: edge.label })),
+  });
+}
+
 function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => void; projectId: string }) {
   const [catalog, setCatalog] = useState<NodeCatalogItem[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
@@ -831,6 +848,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [workflow, setWorkflow] = useState<WorkflowDefinition | null>(null);
   const [nodes, setNodes] = useState<CanvasNode[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  const canvasHistory = useRef<CanvasHistoryState>({ past: [], future: [] });
   const latestCompiledArtifact = useRef<ArtifactRecord | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -882,6 +900,10 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   useEffect(() => {
     window.localStorage.setItem(`${STUDIO_MODE_STORAGE_PREFIX}${projectId}`, studioMode);
   }, [projectId, studioMode]);
+
+  useEffect(() => {
+    canvasHistory.current = { past: [], future: [] };
+  }, [projectId, workflow?.id]);
 
   const loadStudio = useCallback(async () => {
     setLoading(true);
@@ -948,6 +970,47 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     setNotice(null);
   }, []);
 
+  const recordCanvasHistory = useCallback(() => {
+    canvasHistory.current.past.push({ nodes: structuredClone(nodes), edges: structuredClone(edges) });
+    // Keep history bounded so a long drag/edit session cannot grow without
+    // limit in the browser tab.
+    if (canvasHistory.current.past.length > 100) canvasHistory.current.past.shift();
+    canvasHistory.current.future = [];
+  }, [edges, nodes]);
+
+  const undoCanvas = useCallback(() => {
+    const current = { nodes, edges };
+    let previous = canvasHistory.current.past.pop();
+    // React Flow can emit a controlled position/replace event immediately
+    // after an explicit add/remove action. It is not a user-visible history
+    // step, so collapse snapshots identical to the current projection.
+    while (previous !== undefined && canvasSnapshotFingerprint(previous) === canvasSnapshotFingerprint(current) && canvasHistory.current.past.length > 0) {
+      previous = canvasHistory.current.past.pop();
+    }
+    if (previous === undefined) return;
+    canvasHistory.current.future.push({ nodes: structuredClone(nodes), edges: structuredClone(edges) });
+    setNodes(structuredClone(previous.nodes));
+    setEdges(structuredClone(previous.edges));
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    markChanged();
+  }, [edges, markChanged, nodes]);
+
+  const redoCanvas = useCallback(() => {
+    const current = { nodes, edges };
+    let next = canvasHistory.current.future.pop();
+    while (next !== undefined && canvasSnapshotFingerprint(next) === canvasSnapshotFingerprint(current) && canvasHistory.current.future.length > 0) {
+      next = canvasHistory.current.future.pop();
+    }
+    if (next === undefined) return;
+    canvasHistory.current.past.push({ nodes: structuredClone(nodes), edges: structuredClone(edges) });
+    setNodes(structuredClone(next.nodes));
+    setEdges(structuredClone(next.edges));
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    markChanged();
+  }, [edges, markChanged, nodes]);
+
   useEffect(() => {
     if (workflow !== null) {
       setAgentDraft(JSON.stringify(workflow.agents, null, 2));
@@ -984,22 +1047,25 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
 
   const onNodesChange = useCallback(
     (changes: NodeChange<CanvasNode>[]) => {
+      if (changes.some((change) => change.type !== 'select' && change.type !== 'dimensions')) recordCanvasHistory();
       setNodes((current) => applyCanvasNodeChanges(changes, current));
       if (changes.some((change) => change.type !== 'select' && change.type !== 'dimensions')) {
         markChanged();
       }
     },
-    [markChanged],
+    [markChanged, recordCanvasHistory],
   );
   const onEdgesChange = useCallback(
     (changes: EdgeChange<Edge>[]) => {
+      if (changes.some((change) => change.type !== 'select')) recordCanvasHistory();
       setEdges((current) => applyCanvasEdgeChanges(changes, current));
       if (changes.some((change) => change.type !== 'select')) markChanged();
     },
-    [markChanged],
+    [markChanged, recordCanvasHistory],
   );
   const onConnect = useCallback(
     (connection: Connection) => {
+      recordCanvasHistory();
       setEdges((current) =>
         [...current, {
           ...connection,
@@ -1010,7 +1076,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       );
       markChanged();
     },
-    [markChanged],
+    [markChanged, recordCanvasHistory],
   );
 
   function onSelectionChange(selection: OnSelectionChangeParams) {
@@ -1053,6 +1119,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
 
   function addNode(item: NodeCatalogItem) {
     if (workflow === null) return;
+    recordCanvasHistory();
     const activeWorkflow = workflow;
     const sameTypeCount = nodes.filter((node) => node.data.nodeType === item.type).length;
     const id = `${item.type}-${Date.now()}`;
@@ -1092,6 +1159,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
 
   function updateNodeLabel(event: ChangeEvent<HTMLInputElement>) {
     const label = event.target.value;
+    recordCanvasHistory();
     setNodes((current) =>
       current.map((node) =>
         node.id === selectedNodeId ? { ...node, data: { ...node.data, label } } : node,
@@ -1109,6 +1177,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         return;
       }
       setConfigError(null);
+      recordCanvasHistory();
       setNodes((current) =>
         current.map((node) =>
           node.id === selectedNodeId
@@ -1131,6 +1200,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         return;
       }
       setUnitError(null);
+      recordCanvasHistory();
       setNodes((current) => current.map((node) =>
         node.id === selectedNodeId ? { ...node, data: { ...node.data, unit: parsed as CanvasNode['data']['unit'] } } : node,
       ));
@@ -1141,6 +1211,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   }
 
   function updateEdgeCondition(condition: string) {
+    recordCanvasHistory();
     setEdges((current) =>
       current.map((edge) => (edge.id === selectedEdgeId ? { ...edge, label: condition } : edge)),
     );
@@ -1148,6 +1219,8 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   }
 
   function removeSelection() {
+    if (selectedNodeId === null && selectedEdgeId === null) return;
+    recordCanvasHistory();
     if (selectedNodeId !== null) {
       setNodes((current) => current.filter((node) => node.id !== selectedNodeId));
       setEdges((current) =>
@@ -1532,7 +1605,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
           </details>
         </aside>
         <LazyChunkBoundary><Suspense fallback={<div className="state-panel" role="status"><strong>Loading Canvas</strong><span>Preparing the visual projection.</span></div>}>
-          <LazyCanvasProjection nodes={nodes} edges={edges} onConnect={onConnect} onEdgesChange={onEdgesChange} onNodeDoubleClick={openCanvasNodeSource} onNodesChange={onNodesChange} onSelectionChange={onSelectionChange} />
+          <LazyCanvasProjection canRedo={canvasHistory.current.future.length > 0} canUndo={canvasHistory.current.past.length > 0} nodes={nodes} edges={edges} onConnect={onConnect} onEdgesChange={onEdgesChange} onNodeDoubleClick={openCanvasNodeSource} onNodesChange={onNodesChange} onRedo={redoCanvas} onSelectionChange={onSelectionChange} onUndo={undoCanvas} />
         </Suspense></LazyChunkBoundary>
         <aside className="inspector">
           <div className="panel-title">

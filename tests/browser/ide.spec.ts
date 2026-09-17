@@ -63,6 +63,13 @@ test.describe('IDE workspace', () => {
     const transform = page.locator('button.palette-item').filter({ hasText: 'Transform' }).first();
     await expect(transform).toBeVisible();
     await transform.click();
+    const transformNodes = page.locator('.react-flow__node article.workflow-node').filter({ hasText: 'Transform' });
+    await expect(transformNodes.last()).toHaveCount(1);
+    const transformCountAfterAdd = await transformNodes.count();
+    await page.getByRole('button', { name: 'Undo Canvas edit' }).click();
+    await expect(transformNodes).toHaveCount(transformCountAfterAdd - 1);
+    await page.getByRole('button', { name: 'Redo Canvas edit' }).click();
+    await expect(transformNodes).toHaveCount(transformCountAfterAdd);
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.locator('.toast').filter({ hasText: 'Saved version' })).toBeVisible();
 
