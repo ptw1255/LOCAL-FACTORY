@@ -393,6 +393,14 @@ export function clampBottomPanelHeight(value: number): number {
   return Math.min(640, Math.max(120, Math.round(value)));
 }
 
+/** Keep deployment log expansion bounded and payload-free at the UI boundary. */
+export function recentRunLogs(events: RunEvent[], limit = 40): RunEvent[] {
+  return events
+    .filter((event) => event.signal === 'log')
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp))
+    .slice(-Math.max(1, limit));
+}
+
 function formatDate(value?: string): string {
   if (value === undefined) return '—';
   return new Intl.DateTimeFormat(undefined, {
@@ -2788,6 +2796,9 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   const [deployments, setDeployments] = useState<DeploymentRecord[]>([]);
   const [deploymentEnvelopes, setDeploymentEnvelopes] = useState<DeploymentEnvelope[]>([]);
   const [deploymentEvidence, setDeploymentEvidence] = useState<Record<string, OperationEvidence[]>>({});
+  const [deploymentRunLogs, setDeploymentRunLogs] = useState<Record<string, RunEvent[]>>({});
+  const [deploymentLogLoading, setDeploymentLogLoading] = useState<Record<string, boolean>>({});
+  const [deploymentLogErrors, setDeploymentLogErrors] = useState<Record<string, string>>({});
   const [deploymentApprovals, setDeploymentApprovals] = useState<DeploymentApprovalRecord[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [successfulRuns, setSuccessfulRuns] = useState<RunRecord[]>([]);
@@ -2805,6 +2816,27 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   const [healthFilter, setHealthFilter] = useState('all');
   const projectId = window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? 'project-local';
   const [form, setForm] = useState({ artifactId: '', workflowId: '', environment: 'local', trigger: 'manual' });
+
+  async function loadDeploymentLogs(deploymentId: string, deploymentRuns: RunRecord[]): Promise<void> {
+    if (deploymentLogLoading[deploymentId] === true) return;
+    setDeploymentLogLoading((current) => ({ ...current, [deploymentId]: true }));
+    setDeploymentLogErrors((current) => {
+      const next = { ...current };
+      delete next[deploymentId];
+      return next;
+    });
+    try {
+      const responses = await Promise.allSettled(deploymentRuns.map((run) => api.events(run.id)));
+      const failed = responses.find((response): response is PromiseRejectedResult => response.status === 'rejected');
+      if (failed !== undefined && responses.every((response) => response.status === 'rejected')) throw failed.reason;
+      const events = responses.flatMap((response) => response.status === 'fulfilled' ? response.value.items : []);
+      setDeploymentRunLogs((current) => ({ ...current, [deploymentId]: recentRunLogs(events) }));
+    } catch (logError) {
+      setDeploymentLogErrors((current) => ({ ...current, [deploymentId]: errorText(logError) }));
+    } finally {
+      setDeploymentLogLoading((current) => ({ ...current, [deploymentId]: false }));
+    }
+  }
 
   function openObserveRun(runId: string): void {
     sessionStorage.setItem('selectedRunId', runId);
@@ -3040,6 +3072,7 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
               .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
               .slice(0, 5);
             const deploymentSignals = deploymentEvidence[deployment.id] ?? [];
+            const deploymentLogs = deploymentRunLogs[deployment.id] ?? [];
             return (
               <article className="connection-card" key={deployment.id}>
                 <header><span className="connector-logo"><Icon name="factory" size={18} /></span><div><h2>{workflowName}</h2><span>{deployment.environment} · artifact {deployment.artifactId.slice(0, 18)}</span></div><div className="deployment-status"><StatusBadge status={deployment.observedState} />{stale ? <span className="stale-indicator">stale</span> : null}</div></header>
@@ -3048,6 +3081,7 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
                 <details className="deployment-history deployment-health-details"><summary>Health evidence ({deploymentSignals.length})</summary>{deploymentSignals.length === 0 ? <p className="inline-empty">No reconciler evidence recorded.</p> : <ul>{deploymentSignals.slice(0, 8).map((signal) => <li key={signal.id}><StatusBadge status={signal.status} /><span>{signal.operation} · {signal.unitId}</span><time>{formatDate(signal.occurredAt)}</time>{signal.error === undefined ? null : <small>{signal.error}</small>}</li>)}</ul>}</details>
                 {artifactDiff?.deploymentId === deployment.id ? <details className="deployment-history artifact-diff" open><summary>Artifact diff</summary>{artifactDiffLoading ? <p>Loading artifact comparison…</p> : <><div className="artifact-diff-summary"><span>{artifactDiff.diff.changedSources.length} source changes</span><span>{artifactDiff.diff.changedWorkflows.length} workflow changes</span><span>{artifactDiff.diff.addedWorkflows.length} added</span><span>{artifactDiff.diff.removedWorkflows.length} removed</span></div>{artifactDiff.diff.changedSources.length === 0 && artifactDiff.diff.changedWorkflows.length === 0 && artifactDiff.diff.addedWorkflows.length === 0 && artifactDiff.diff.removedWorkflows.length === 0 ? <p className="inline-empty">No semantic changes.</p> : <ul>{artifactDiff.diff.changedSources.map((source) => <li key={source.path}><span>{source.path}</span><small>source changed</small></li>)}{artifactDiff.diff.changedWorkflows.map((workflowId) => <li key={workflowId}><span>{workflowId}</span><small>workflow changed</small></li>)}{artifactDiff.diff.addedWorkflows.map((workflowId) => <li key={`added-${workflowId}`}><span>{workflowId}</span><small>workflow added</small></li>)}{artifactDiff.diff.removedWorkflows.map((workflowId) => <li key={`removed-${workflowId}`}><span>{workflowId}</span><small>workflow removed</small></li>)}</ul>}</>}</details> : null}
                 <details className="deployment-history"><summary>Recent runs ({deploymentRuns.length})</summary>{deploymentRuns.length === 0 ? <p className="inline-empty">No runs recorded for this workflow and environment.</p> : <ul>{deploymentRuns.map((run) => <li key={run.id}><StatusBadge status={run.status} /><span>{run.id.slice(0, 18)} · artifact {run.artifactId?.slice(0, 12) ?? 'unbound'}</span><time>{formatDate(run.startedAt)}</time><button className="text-button deployment-history-link" onClick={() => openObserveRun(run.id)} type="button">Observe <Icon name="chevron" size={11} /></button></li>)}</ul>}</details>
+                <details className="deployment-history deployment-log-details" onToggle={(event) => { if (event.currentTarget.open) void loadDeploymentLogs(deployment.id, deploymentRuns); }}><summary>Run logs{deploymentLogs.length === 0 ? '' : ` (${deploymentLogs.length})`}</summary>{deploymentLogLoading[deployment.id] === true ? <p className="inline-empty">Loading redacted run logs…</p> : deploymentLogErrors[deployment.id] !== undefined ? <p className="form-error">{deploymentLogErrors[deployment.id]}</p> : deploymentRuns.length === 0 ? <p className="inline-empty">No run logs recorded for this workflow and environment.</p> : deploymentLogs.length === 0 ? <p className="inline-empty">No log events recorded for the recent runs.</p> : <><p className="deployment-log-note">Lifecycle messages only; prompt, output, and secrets remain redacted.</p><ul aria-label={`Run logs for ${deployment.workflowId}`}>{deploymentLogs.map((event) => <li key={event.id}><StatusBadge status={event.severityText ?? event.signal} /><span><strong>{event.type}</strong> · {event.message}</span><time>{formatDate(event.timestamp)}</time></li>)}</ul></>}</details>
                 {approvals.length === 0 ? null : <details className="deployment-history deployment-approvals"><summary>Promotion approvals ({approvals.length})</summary><ul>{approvals.map((approval) => <li key={approval.id}><strong>{approval.decision}</strong><span>{approval.artifactId.slice(0, 18)} · run {approval.runId.slice(0, 14)}</span><time>{formatDate(approval.requestedAt)}</time>{approval.decision === 'pending' ? <span className="form-actions"><button className="text-button" disabled={busyId === deployment.id} onClick={() => void decideApproval(deployment.id, approval, 'approve')} type="button">Approve</button><button className="text-button" disabled={busyId === deployment.id} onClick={() => void decideApproval(deployment.id, approval, 'deny')} type="button">Deny</button></span> : null}{approval.reason === undefined ? null : <small>{approval.reason}</small>}</li>)}</ul></details>}
                 <details className="deployment-history"><summary>Transition history ({deployment.history.length})</summary>{deployment.history.length === 0 ? <p className="inline-empty">No transitions recorded.</p> : <ul>{deployment.history.map((transition) => <li key={transition.id}><strong>{transition.action}</strong><span>{transition.outcome} · {transition.actor}</span><time>{formatDate(transition.occurredAt)}</time>{transition.reason === undefined ? null : <small>{transition.reason}</small>}{transition.runId === undefined ? null : <button className="text-button deployment-history-link" onClick={() => openObserveRun(transition.runId!)} type="button">Observe run {transition.runId} <Icon name="chevron" size={11} /></button>}</li>)}</ul>}</details>
                 {deployable.length === 0 ? null : <select aria-label={`Compare artifact for ${deployment.workflowId}`} defaultValue="" disabled={artifactDiffLoading} onChange={(event) => { void compareArtifacts(deployment, event.target.value); }}><option value="">Compare artifact…</option>{deployable.map((artifact) => <option key={artifact.id} value={artifact.id}>{artifact.environment} · {artifact.id.slice(0, 12)}</option>)}</select>}
