@@ -67,4 +67,30 @@ describe('GitHubRepositoryClient', () => {
     expect(result.status).toBe('success');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+
+  it('normalizes pull request reviews and merge state without exposing credentials', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: 'open', merged: false, html_url: 'https://github.com/example/repo/pull/9' }), { status: 200, headers: { 'x-github-request-id': 'req-pr-status' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { id: 1, user: { login: 'reviewer' }, state: 'approved', submitted_at: '2026-01-01T00:00:00Z' },
+        { id: 2, user: { login: 'reviewer-2' }, state: 'commented' },
+      ]), { status: 200 }));
+    const result = await new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher }).getPullRequestStatus(9);
+    expect(result).toMatchObject({ number: 9, state: 'open', approvals: 1, changesRequested: 0, url: 'https://github.com/example/repo/pull/9', requestId: 'req-pr-status' });
+    expect(result.reviews).toEqual(expect.arrayContaining([expect.objectContaining({ id: 1, state: 'APPROVED', user: 'reviewer' })]));
+    expect(fetcher.mock.calls.every(([, request]) => request?.body === undefined)).toBe(true);
+  });
+
+  it('polls pull request approval into a bounded terminal status', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: 'open', merged: false }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: 'open', merged: false }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 3, state: 'APPROVED' }]), { status: 200 }));
+    const updates: string[] = [];
+    const result = await new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher }).waitForPullRequestStatus({ number: 10, requiredApprovals: 1, timeoutMs: 200, intervalMs: 10, onPoll: ({ status }) => { updates.push(status); } });
+    expect(result.status).toBe('approved');
+    expect(updates).toEqual(['pending', 'approved']);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
 });
