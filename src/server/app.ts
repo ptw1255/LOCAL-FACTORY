@@ -1036,11 +1036,13 @@ export async function createApp(
 
   app.post<{ Body: unknown }>('/api/evaluation-datasets', async (request, reply) => {
     const scope = scopeFromRequest(request);
-    const body = request.body as { name?: unknown; description?: unknown; reportIds?: unknown };
+    const body = request.body as { name?: unknown; description?: unknown; labels?: unknown; reportIds?: unknown };
     if (typeof body?.name !== 'string' || body.name.trim() === '') return reply.status(422).send({ message: 'A dataset name is required.' });
     const datasetName = body.name.trim();
     if (body.description !== undefined && typeof body.description !== 'string') return reply.status(422).send({ message: 'Dataset description must be a string.' });
+    if (body.labels !== undefined && (!Array.isArray(body.labels) || !body.labels.every((label) => typeof label === 'string' && label.trim() !== ''))) return reply.status(422).send({ message: 'labels must be an array of non-empty strings.' });
     if (body.reportIds !== undefined && (!Array.isArray(body.reportIds) || !body.reportIds.every((id) => typeof id === 'string' && id.trim() !== ''))) return reply.status(422).send({ message: 'reportIds must be an array of report IDs.' });
+    const labels = body.labels === undefined ? [] : [...new Set((body.labels as string[]).map((label) => label.trim()))];
     const requestedReportIds = body.reportIds === undefined ? undefined : [...new Set((body.reportIds as string[]).map((id) => id.trim()))];
     try {
       return await store.mutate((state) => {
@@ -1050,6 +1052,9 @@ export async function createApp(
         if (requestedReportIds !== undefined && reports.length !== requestedReportIds.length) throw new Error('One or more replay reports were not found in the requested project scope.');
         if (reports.length === 0) throw new Error('At least one replay report is required to materialize an evaluation dataset.');
         const createdAt = new Date().toISOString();
+        const version = state.evaluationDatasets
+          .filter((dataset) => dataset.tenantId === scope.tenantId && dataset.projectId === scope.projectId && dataset.name === datasetName)
+          .reduce((latest, dataset) => Math.max(latest, dataset.version ?? 1), 0) + 1;
         const cases: EvaluationDatasetCase[] = reports.map((report) => ({
           id: `evaluation-case-${randomUUID()}`,
           reportId: report.id,
@@ -1067,6 +1072,8 @@ export async function createApp(
           tenantId: scope.tenantId,
           projectId: scope.projectId,
           name: datasetName,
+          version,
+          labels,
           ...(typeof body.description === 'string' && body.description.trim() === '' ? {} : typeof body.description === 'string' ? { description: body.description.trim() } : {}),
           createdAt,
           cases,

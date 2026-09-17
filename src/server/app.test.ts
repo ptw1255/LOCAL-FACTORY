@@ -556,14 +556,17 @@ describe('platform API', () => {
     const reports = await app.inject({ method: 'GET', url: `/api/replays?sourceRunId=${sourceRunId}` });
     expect(reports.statusCode).toBe(200);
     expect(reports.json<{ items: Array<{ id: string }> }>().items).toEqual([expect.objectContaining({ id: report.id })]);
-    const datasetResponse = await app.inject({ method: 'POST', url: '/api/evaluation-datasets', payload: { name: 'Replay regression set', reportIds: [report.id] } });
+    const datasetResponse = await app.inject({ method: 'POST', url: '/api/evaluation-datasets', payload: { name: 'Replay regression set', labels: ['nightly', 'regression'], reportIds: [report.id] } });
     expect(datasetResponse.statusCode).toBe(200);
-    const dataset = datasetResponse.json<{ id: string; cases: Array<{ reportId: string; status: string; sourceOutputHash?: string }> }>();
-    expect(dataset).toEqual(expect.objectContaining({ id: expect.stringMatching(/^evaluation-dataset-/), cases: [expect.objectContaining({ reportId: report.id, status: 'passed', sourceOutputHash: expect.any(String) })] }));
+    const dataset = datasetResponse.json<{ id: string; version: number; labels: string[]; cases: Array<{ reportId: string; status: string; sourceOutputHash?: string }> }>();
+    expect(dataset).toEqual(expect.objectContaining({ id: expect.stringMatching(/^evaluation-dataset-/), version: 1, labels: ['nightly', 'regression'], cases: [expect.objectContaining({ reportId: report.id, status: 'passed', sourceOutputHash: expect.any(String) })] }));
     expect(JSON.stringify(dataset)).not.toContain('stable');
     const fetched = await app.inject({ method: 'GET', url: `/api/evaluation-datasets/${dataset.id}` });
     expect(fetched.statusCode).toBe(200);
     expect(fetched.json()).toEqual(dataset);
+    const nextDatasetResponse = await app.inject({ method: 'POST', url: '/api/evaluation-datasets', payload: { name: 'Replay regression set', labels: ['release'], reportIds: [report.id] } });
+    expect(nextDatasetResponse.statusCode).toBe(200);
+    expect(nextDatasetResponse.json<{ version: number; labels: string[] }>()).toEqual(expect.objectContaining({ version: 2, labels: ['release'] }));
   });
 });
 
