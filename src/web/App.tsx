@@ -1328,6 +1328,7 @@ function OperationalTree({
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
   const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => new Set());
   const [treeSearch, setTreeSearch] = useState('');
+  const [treeKindFilter, setTreeKindFilter] = useState<'all' | 'workunits' | 'agents'>('all');
   const [bottomPanelState] = useState(() => readBottomPanelState(projectId));
   const [bottomTab, setBottomTab] = useState<'problems' | 'output'>(bottomPanelState.tab);
   const [bottomOpen, setBottomOpen] = useState(bottomPanelState.open);
@@ -1534,12 +1535,13 @@ function OperationalTree({
   const folders = [...new Set(visibleFiles.flatMap((file) => file.path.split('/').slice(0, -1).map((_part, index, parts) => parts.slice(0, index + 1).join('/'))))];
   const treeQuery = treeSearch.trim().toLowerCase();
   const visibleTreeNodes = workflow.nodes.filter((node) => {
+    if (treeKindFilter === 'agents') return false;
     if (treeQuery === '') return true;
     const agentId = node.type === 'agentLoop' && typeof node.config.agentId === 'string' ? node.config.agentId : '';
     const agent = agentById.get(agentId);
     return `${node.id} ${node.label} ${node.type} ${agent?.name ?? ''} ${agent?.purpose ?? ''}`.toLowerCase().includes(treeQuery);
   });
-  const visibleTreeAgents = workflow.agents.filter((agent) => treeQuery === '' || `${agent.id} ${agent.name} ${agent.purpose} ${agent.model.model ?? agent.model.routingAlias ?? ''}`.toLowerCase().includes(treeQuery));
+  const visibleTreeAgents = workflow.agents.filter((agent) => treeKindFilter !== 'workunits' && (treeQuery === '' || `${agent.id} ${agent.name} ${agent.purpose} ${agent.model.model ?? agent.model.routingAlias ?? ''}`.toLowerCase().includes(treeQuery)));
   const treeChildren = new Map<string, WorkflowNode[]>();
   for (const edge of workflow.edges) {
     const child = workflow.nodes.find((node) => node.id === edge.target);
@@ -1719,6 +1721,7 @@ function OperationalTree({
       <section className="operational-tree-panel ide-tree-panel">
         <div className="operational-heading"><div><span className="eyebrow">Operational tree</span><h2>{workflow.name}</h2><p>{workflow.description || 'Declarative workflow definition'}</p></div><span className="status-badge status-draft">v{workflow.version}</span></div>
         <label className="ide-file-search tree-search"><span className="sr-only">Filter operational tree</span><input aria-label="Filter operational tree" onChange={(event) => setTreeSearch(event.target.value)} placeholder="Filter tree" type="search" value={treeSearch} /></label>
+        <label className="ide-file-search tree-kind-filter"><span className="sr-only">Filter resource kind</span><select aria-label="Filter resource kind" onChange={(event) => setTreeKindFilter(event.target.value as 'all' | 'workunits' | 'agents')} value={treeKindFilter}><option value="all">All resources</option><option value="workunits">Work units</option><option value="agents">Agent boxes</option></select></label>
         <div className="tree-root"><span className="tree-icon"><Icon name="factory" size={15} /></span><div><strong>{workflow.name}</strong><small>{visibleTreeNodes.length} of {workflow.nodes.length} work units · {visibleTreeAgents.length} of {workflow.agents.length} agent boxes</small></div></div>
         <ol className="operational-tree">
           {treeRoots.map((node) => renderTreeNode(node, 0))}
