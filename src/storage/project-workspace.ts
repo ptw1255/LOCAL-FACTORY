@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, stat, lstat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, lstat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { DeletedProjectFileRecord, ProjectDirectoryRecord, ProjectFileRecord } from '../domain/types.js';
@@ -12,6 +12,12 @@ export interface ProjectWorkspaceScope {
 export interface ProjectWorkspaceListing {
   files: ProjectFileRecord[];
   directories: ProjectDirectoryRecord[];
+}
+
+export interface ProjectWorkspaceWrite {
+  path: string;
+  content: string;
+  expectedSha256?: string;
 }
 
 /**
@@ -58,6 +64,45 @@ export class ProjectWorkspace {
     if (expectedSha256 !== undefined && current?.sha256 !== expectedSha256) return { status: 'conflict' };
     await writeFile(target, content, 'utf8');
     return { status: 'saved', file: await this.read(scope, filePath) };
+  }
+
+  /**
+   * Apply several file writes as one conflict-checked operation. All expected
+   * hashes are validated before the first write; if a filesystem error occurs
+   * while writing, prior contents are restored before the error is surfaced.
+   */
+  public async saveMany(scope: ProjectWorkspaceScope, writes: ProjectWorkspaceWrite[]): Promise<{ status: 'saved' | 'conflict'; files?: ProjectFileRecord[] }> {
+    if (writes.length === 0) return { status: 'saved', files: [] };
+    const paths = new Set<string>();
+    for (const write of writes) {
+      if (paths.has(write.path)) throw new Error(`Duplicate file path in batch: ${write.path}`);
+      paths.add(write.path);
+    }
+    const current = await Promise.all(writes.map((write) => this.read(scope, write.path)));
+    for (const [index, write] of writes.entries()) {
+      const existing = current[index];
+      if (write.expectedSha256 !== undefined && existing?.sha256 !== write.expectedSha256) return { status: 'conflict' };
+    }
+    const targets = await Promise.all(writes.map((write) => this.safeTarget(scope, write.path, true)));
+    const written: number[] = [];
+    try {
+      for (const [index, target] of targets.entries()) {
+        const write = writes[index]!;
+        await mkdir(path.dirname(target), { recursive: true });
+        await this.rejectSymlinks(path.dirname(await this.ensureProjectRoot(scope)), path.relative(await this.ensureProjectRoot(scope), target), true);
+        await writeFile(target, write.content, 'utf8');
+        written.push(index);
+      }
+    } catch (error) {
+      for (const index of written.reverse()) {
+        const target = targets[index]!;
+        const previous = current[index];
+        if (previous?.content === undefined) await unlink(target).catch(() => undefined);
+        else await writeFile(target, previous.content, 'utf8').catch(() => undefined);
+      }
+      throw error;
+    }
+    return { status: 'saved', files: await Promise.all(writes.map((write) => this.read(scope, write.path).then((file) => file!))) };
   }
 
   public async rename(scope: ProjectWorkspaceScope, oldPath: string, newPath: string): Promise<{ status: 'renamed' | 'missing' | 'conflict'; path?: string; newPath?: string }> {

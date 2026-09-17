@@ -1247,7 +1247,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
           const nextVersion = workflow.version + 1;
           const sourceWorkflow: WorkflowDefinition = { ...projected, version: nextVersion };
           const { patchWorkUnitResource, patchWorkflowResource, renderWorkUnitResource, workUnitResourceId } = await import('../declarative/migration');
-          await api.saveProjectFile(projectId, workflowPath, patchWorkflowResource(currentWorkflowFile.content, sourceWorkflow), currentWorkflowFile.sha256);
+          const sourceWrites: Array<{ path: string; content: string; expectedSha256?: string }> = [{ path: workflowPath, content: patchWorkflowResource(currentWorkflowFile.content, sourceWorkflow), expectedSha256: currentWorkflowFile.sha256 }];
           for (const node of sourceWorkflow.nodes) {
             if (node.unit === undefined) continue;
             const priorUnit = workflow.nodes.find((candidate) => candidate.id === node.id)?.unit;
@@ -1261,8 +1261,11 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
             const unitSource = currentUnitFile?.content === undefined
               ? renderWorkUnitResource(unitId, unit)
               : patchWorkUnitResource(currentUnitFile.content, unit);
-            await api.saveProjectFile(projectId, unitPath, unitSource, currentUnitFile?.sha256);
+            sourceWrites.push({ path: unitPath, content: unitSource, ...(currentUnitFile?.sha256 === undefined ? {} : { expectedSha256: currentUnitFile.sha256 }) });
           }
+          // Validate every source hash before applying any write so a stale
+          // editor cannot leave workflow and WorkUnit modules half-updated.
+          await api.saveProjectFiles(projectId, sourceWrites);
           compiledArtifact = await api.compileProject(projectId, runEnvironment);
           saved = compiledArtifact.workflows.find((candidate) => candidate.id === workflow.id) ?? (() => {
             throw new Error(`Compiled workflow ${workflow.id} was not returned by the resource compiler.`);

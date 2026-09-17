@@ -600,6 +600,51 @@ export async function createApp(
     },
   );
 
+  app.put<{ Params: { projectId: string }; Body: unknown }>(
+    '/api/projects/:projectId/files/batch',
+    async (request, reply) => {
+      const scope = { ...scopeFromRequest(request), projectId: request.params.projectId };
+      const body = request.body as { files?: unknown };
+      if (!Array.isArray(body?.files) || body.files.length === 0 || body.files.length > 128) return reply.status(422).send({ message: 'A batch must contain between 1 and 128 files.' });
+      const files = body.files.map((value) => value !== null && typeof value === 'object' ? value as { path?: unknown; content?: unknown; expectedSha256?: unknown } : undefined);
+      if (files.some((file) => file === undefined || typeof file.path !== 'string' || typeof file.content !== 'string' || file.path.trim() === '')) return reply.status(422).send({ message: 'Each batch file requires a path and text content.' });
+      const writes = files as Array<{ path: string; content: string; expectedSha256?: unknown }>;
+      for (const file of writes) {
+        const pathError = projectFilePathError(file.path, file.content);
+        if (pathError !== undefined) return reply.status(422).send({ message: pathError });
+      }
+      const projectExists = await store.read((state) => state.projects.some((project) => project.id === scope.projectId && project.tenantId === scope.tenantId));
+      if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
+      const normalizedWrites = writes.map((file) => ({ path: file.path, content: file.content, ...(typeof file.expectedSha256 === 'string' ? { expectedSha256: file.expectedSha256 } : {}) }));
+      if (projectWorkspace !== undefined) {
+        const existingPaths = new Set((await Promise.all(normalizedWrites.map((file) => projectWorkspace.read(scope, file.path)))).flatMap((file) => file === undefined ? [] : [file.path]));
+        const saved = await projectWorkspace.saveMany(scope, normalizedWrites);
+        if (saved.status === 'conflict' || saved.files === undefined) return reply.status(409).send({ message: 'One or more files changed since they were loaded; refresh before saving.' });
+        for (const file of saved.files) await emitWorkspaceFileEvent(scope, existingPaths.has(file.path) ? 'updated' : 'created', file.path, file.sha256);
+        return { files: saved.files };
+      }
+      const existingPaths = new Set(await store.read((state) => state.files.filter((file) => file.projectId === scope.projectId && file.tenantId === scope.tenantId && normalizedWrites.some((write) => write.path === file.path)).map((file) => file.path)));
+      const result = await store.mutate((state) => {
+        const currentByPath = new Map(state.files.filter((file) => file.projectId === scope.projectId && file.tenantId === scope.tenantId).map((file) => [file.path, file]));
+        for (const file of normalizedWrites) {
+          const current = currentByPath.get(file.path);
+          if (file.expectedSha256 !== undefined && current?.sha256 !== file.expectedSha256) return undefined;
+        }
+        const now = new Date().toISOString();
+        const savedFiles = normalizedWrites.map((file) => ({ ...file, tenantId: scope.tenantId, projectId: scope.projectId, sha256: createHash('sha256').update(file.content).digest('hex'), updatedAt: now }));
+        for (const file of savedFiles) {
+          const index = state.files.findIndex((candidate) => candidate.projectId === scope.projectId && candidate.tenantId === scope.tenantId && candidate.path === file.path);
+          if (index < 0) state.files.push(file);
+          else state.files[index] = file;
+        }
+        return savedFiles;
+      });
+      if (result === undefined) return reply.status(409).send({ message: 'One or more files changed since they were loaded; refresh before saving.' });
+      for (const file of result) await emitWorkspaceFileEvent(scope, existingPaths.has(file.path) ? 'updated' : 'created', file.path, file.sha256);
+      return { files: result };
+    },
+  );
+
   app.patch<{ Params: { projectId: string }; Body: unknown }>('/api/projects/:projectId/files', async (request, reply) => {
     const scope = scopeFromRequest(request);
     const body = request.body as { path?: unknown; newPath?: unknown };
