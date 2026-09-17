@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { nextExplorerIndex, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath } from './App';
+import { filterProjectItems, nextExplorerIndex, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -26,5 +26,10 @@ describe('IDE editor tab state', () => {
     expect(projectSwitchRequiresConfirmation('project-a', 'project-a', true)).toBe(false);
     expect(projectSwitchRequiresConfirmation(null, 'project-b', true)).toBe(false);
     expect(projectSwitchRequiresConfirmation('project-a', 'project-b', false)).toBe(false);
+  });
+
+  it('keeps project-scoped operational items isolated', () => {
+    const items = [{ id: 'run-a', projectId: 'project-a' }, { id: 'run-b', projectId: 'project-b' }];
+    expect(filterProjectItems(items, 'project-a')).toEqual([{ id: 'run-a', projectId: 'project-a' }]);
   });
 });
