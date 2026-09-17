@@ -552,7 +552,10 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [dirty, setDirty] = useState(false);
   const [agentDraft, setAgentDraft] = useState('[]');
   const [agentError, setAgentError] = useState<string | null>(null);
+  const [hasSaved, setHasSaved] = useState(() => window.localStorage.getItem(`factory.onboarding.${projectId}.saved`) === 'true');
+  const [hasCompiled, setHasCompiled] = useState(() => window.localStorage.getItem(`factory.onboarding.${projectId}.compiled`) === 'true');
   const [hasRun, setHasRun] = useState(() => window.localStorage.getItem(`factory.onboarding.${projectId}.run`) === 'true');
+  const [hasObserved, setHasObserved] = useState(() => window.localStorage.getItem(`factory.onboarding.${projectId}.observed`) === 'true');
   const [hintDismissed, setHintDismissed] = useState(() => window.localStorage.getItem(`factory.onboarding.${projectId}.dismissed`) === 'true');
   const [yamlSource, setYamlSource] = useState('');
   const [yamlDirty, setYamlDirty] = useState(false);
@@ -856,6 +859,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       );
       setDirty(false);
       window.localStorage.setItem(`factory.onboarding.${projectId}.saved`, 'true');
+      setHasSaved(true);
       setNotice({ tone: 'success', text: `Saved version ${saved.version}.` });
       return saved;
     } catch (saveError) {
@@ -924,12 +928,18 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       window.localStorage.setItem(`factory.onboarding.${projectId}.run`, 'true');
       setHasRun(true);
       sessionStorage.setItem('selectedRunId', run.id);
-      onNavigate('observe');
+      openObserve();
     } catch (runError) {
       setNotice({ tone: 'error', text: errorText(runError) });
     } finally {
       setBusyAction(null);
     }
+  }
+
+  function openObserve(): void {
+    window.localStorage.setItem(`factory.onboarding.${projectId}.observed`, 'true');
+    setHasObserved(true);
+    onNavigate('observe');
   }
 
   async function runWorkflow() {
@@ -974,6 +984,9 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     );
   }
 
+  const onboardingCompleted = [hasSaved, hasCompiled, hasRun, hasObserved].filter(Boolean).length;
+  const onboardingSummary = `${onboardingCompleted}/4 complete · ${hasObserved ? 'Observe is ready.' : hasRun ? 'Open Observe to inspect the run.' : hasCompiled ? 'Run the compiled workflow next.' : hasSaved ? 'Apply YAML to compile the project.' : 'Save a file to begin.'}`;
+
   return (
     <div className="studio-page">
       <div className="studio-toolbar">
@@ -1016,7 +1029,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       {hintDismissed ? (
         <button className="workspace-hint-reopen" onClick={() => { window.localStorage.removeItem(`factory.onboarding.${projectId}.dismissed`); setHintDismissed(false); }} type="button">Show workspace guide</button>
       ) : (
-        <div className="workspace-hint" role="status"><span><strong>Quick start</strong> Save a file, compile it, then Run and open Observe. {hasRun ? 'This project has a completed run.' : 'No run recorded for this project yet.'}</span><button aria-label="Dismiss workspace guide" onClick={() => { window.localStorage.setItem(`factory.onboarding.${projectId}.dismissed`, 'true'); setHintDismissed(true); }} type="button"><Icon name="close" size={13} /></button></div>
+        <div className="workspace-hint" role="status"><span><strong>Quick start</strong> {onboardingSummary}</span><button aria-label="Dismiss workspace guide" onClick={() => { window.localStorage.setItem(`factory.onboarding.${projectId}.dismissed`, 'true'); setHintDismissed(true); }} type="button"><Icon name="close" size={13} /></button></div>
       )}
       {notice !== null ? (
         <div className={`toast toast-${notice.tone}`} role="status">
@@ -1252,10 +1265,12 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         }}
         onValidate={() => void validateWorkflow()}
         onRun={() => void runWorkflow()}
-        onObserve={() => onNavigate('observe')}
+        onObserve={openObserve}
         onSourceChange={(value) => { setYamlSource(value); setYamlDirty(true); }}
         onSourceLoaded={(value) => { setYamlSource(value); setYamlDirty(false); }}
         onSourceImported={(nextWorkflows, source) => {
+          window.localStorage.setItem(`factory.onboarding.${projectId}.compiled`, 'true');
+          setHasCompiled(true);
           setWorkflows(nextWorkflows);
           const next = nextWorkflows.find((item) => item.id === workflow.id) ?? nextWorkflows[0] ?? null;
           setWorkflow(next);
