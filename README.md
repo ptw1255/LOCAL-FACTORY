@@ -122,6 +122,11 @@ with AI, Enter to inspect WorkUnits, `v` to compile, and `p` to run. Escape is g
 navigation: it cancels a prompt, leaves advanced source editing, walks from WorkUnit to
 Workflow to home, and returns from a run to Runs.
 
+The Core landing page always shows the active Project name and ID. A Project with no
+Workflows gets an explicit **Create first Workflow** row: press Enter or `n` to create
+the minimal file-backed manual-trigger → output graph, then press `a` to author it from
+your intent. If no Project is selected, Enter routes back to Projects first.
+
 The non-interactive equivalent is:
 
 ```bash

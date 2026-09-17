@@ -498,6 +498,11 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
       if (workflow !== undefined) {
         state = { page: 'workflow-detail', cursor: 0, selectedWorkflowId: workflow.id };
         render();
+      } else if (activeProjectId === undefined) {
+        state = { page: 'project', cursor: 0 };
+        await refreshPage();
+      } else {
+        await performAuthoring(createWorkflow);
       }
       return;
     }
