@@ -711,12 +711,14 @@ export function App() {
           <div className="mobile-brand"><Icon name="spark" /> Workflow Factory</div>
           <span className="system-dot" />
         </div>
-        {view === 'studio' ? <StudioView key={projectId} onNavigate={setView} projectId={projectId} /> : null}
-        {view === 'observe' ? <RunsView key={projectId} /> : null}
-        {view === 'connections' ? <ConnectionsView key={projectId} /> : null}
-        {view === 'proposals' ? <ProposalsView key={projectId} onOpenStudio={() => setView('studio')} /> : null}
-        {view === 'factory' ? <FactoryView key={projectId} onNavigate={setView} /> : null}
-        {view === 'deployments' ? <DeploymentsView key={projectId} onNavigate={setView} /> : null}
+        <LazyChunkBoundary key={view}>
+          {view === 'studio' ? <StudioView key={projectId} onNavigate={setView} projectId={projectId} /> : null}
+          {view === 'observe' ? <RunsView key={projectId} /> : null}
+          {view === 'connections' ? <ConnectionsView key={projectId} /> : null}
+          {view === 'proposals' ? <ProposalsView key={projectId} onOpenStudio={() => setView('studio')} /> : null}
+          {view === 'factory' ? <FactoryView key={projectId} onNavigate={setView} /> : null}
+          {view === 'deployments' ? <DeploymentsView key={projectId} onNavigate={setView} /> : null}
+        </LazyChunkBoundary>
       </main>
     </div>
   );
