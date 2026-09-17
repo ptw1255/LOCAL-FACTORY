@@ -46,6 +46,19 @@ export class DeploymentReconciler {
     return this.store.read((state) => state.deployments.filter((deployment) => deployment.tenantId === scope.tenantId && deployment.projectId === scope.projectId));
   }
 
+  /** Reconcile every persisted deployment once for a control-plane poll. */
+  public async reconcileAll(): Promise<{ reconciled: number; failed: number }> {
+    const targets = await this.store.read((state) => state.deployments.map((deployment) => ({
+      id: deployment.id,
+      scope: { tenantId: deployment.tenantId, projectId: deployment.projectId },
+    })));
+    const results = await Promise.allSettled(targets.map((target) => this.reconcile(target.id, target.scope)));
+    return {
+      reconciled: results.filter((result) => result.status === 'fulfilled').length,
+      failed: results.filter((result) => result.status === 'rejected').length,
+    };
+  }
+
   public async create(input: { scope: DeploymentScope; workflowId: string; environment: string; artifactId: string; trigger: string; actor?: string }): Promise<DeploymentRecord> {
     return this.store.mutate((state) => {
       const artifact = this.findArtifact(state.artifacts, input.artifactId, input.scope);

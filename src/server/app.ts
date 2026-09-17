@@ -261,6 +261,11 @@ export async function createApp(
   const connections = new ConnectionService(store, secretBroker);
   const proposals = new ProposalService(store);
   const deployments = new DeploymentReconciler(store, 30_000, options.deploymentAdapter, 3, events);
+  const deploymentReconcileIntervalMs = positiveNumber(process.env.DEPLOYMENT_RECONCILE_INTERVAL_MS, 30_000);
+  const deploymentReconcileTimer = setInterval(() => {
+    void deployments.reconcileAll().catch((error: unknown) => app.log.warn({ error }, 'Deployment reconciliation poll failed.'));
+  }, deploymentReconcileIntervalMs);
+  deploymentReconcileTimer.unref?.();
   if (store.close !== undefined) {
     app.addHook('onClose', async () => store.close?.());
   }
@@ -269,6 +274,7 @@ export async function createApp(
   retentionTimer.unref?.();
   app.addHook('onClose', async () => {
     clearInterval(retentionTimer);
+    clearInterval(deploymentReconcileTimer);
     await events.close();
   });
 
