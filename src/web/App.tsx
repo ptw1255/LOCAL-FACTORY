@@ -40,6 +40,7 @@ import type {
   DeploymentRecord,
   DeploymentTransition,
   DeploymentEnvelope,
+  DeploymentApprovalRecord,
   OperationEvidence,
   NodeCatalogItem,
   ProjectRecord,
@@ -2249,6 +2250,7 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   const [deployments, setDeployments] = useState<DeploymentRecord[]>([]);
   const [deploymentEnvelopes, setDeploymentEnvelopes] = useState<DeploymentEnvelope[]>([]);
   const [deploymentEvidence, setDeploymentEvidence] = useState<Record<string, OperationEvidence[]>>({});
+  const [deploymentApprovals, setDeploymentApprovals] = useState<DeploymentApprovalRecord[]>([]);
   const [artifacts, setArtifacts] = useState<ArtifactRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2271,10 +2273,11 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
     if (!quiet) setLoading(true);
     setError(null);
     try {
-      const [deploymentResponse, envelopeResponse, artifactResponse] = await Promise.all([api.deployments(), api.deploymentEnvelopes(), api.artifacts(projectId)]);
+      const [deploymentResponse, envelopeResponse, artifactResponse, approvalResponse] = await Promise.all([api.deployments(), api.deploymentEnvelopes(), api.artifacts(projectId), api.deploymentApprovals()]);
       setDeployments(deploymentResponse.items);
       setDeploymentEnvelopes(envelopeResponse.items);
       setArtifacts(artifactResponse.items);
+      setDeploymentApprovals(approvalResponse.items);
       const evidenceResponses = await Promise.allSettled(deploymentResponse.items.map(async (deployment) => [deployment.id, (await api.deploymentEvidence(deployment.id)).items] as const));
       setDeploymentEvidence(Object.fromEntries(evidenceResponses.flatMap((response) => response.status === 'fulfilled' ? [response.value] : [])));
       setForm((current) => ({ ...current, artifactId: current.artifactId || artifactResponse.items[0]?.id || '', workflowId: current.workflowId || artifactResponse.items[0]?.workflows[0]?.id || '' }));
@@ -2293,9 +2296,10 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   const refreshDeploymentState = useCallback(async () => {
     const current = await api.deployments();
     await Promise.allSettled(current.items.map((deployment) => api.reconcileDeployment(deployment.id)));
-    const [refreshed, refreshedEnvelopes] = await Promise.all([api.deployments(), api.deploymentEnvelopes()]);
+    const [refreshed, refreshedEnvelopes, approvalResponse] = await Promise.all([api.deployments(), api.deploymentEnvelopes(), api.deploymentApprovals()]);
     setDeployments(refreshed.items);
     setDeploymentEnvelopes(refreshedEnvelopes.items);
+    setDeploymentApprovals(approvalResponse.items);
     const evidenceResponses = await Promise.allSettled(refreshed.items.map(async (deployment) => [deployment.id, (await api.deploymentEvidence(deployment.id)).items] as const));
     setDeploymentEvidence(Object.fromEntries(evidenceResponses.flatMap((response) => response.status === 'fulfilled' ? [response.value] : [])));
   }, []);
@@ -2337,6 +2341,17 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
       setShowCreate(false);
     } catch (createError) { setFormError(errorText(createError)); }
     finally { setCreating(false); }
+  }
+
+  async function decideApproval(deploymentId: string, approval: DeploymentApprovalRecord, action: 'approve' | 'deny'): Promise<void> {
+    if (!window.confirm(`${action === 'approve' ? 'Approve' : 'Deny'} deployment promotion for ${approval.artifactId}?`)) return;
+    setBusyId(deploymentId);
+    setError(null);
+    try {
+      const updated = await api.decideDeploymentApproval(deploymentId, approval.id, action);
+      setDeploymentApprovals((current) => current.map((candidate) => candidate.id === updated.id ? updated : candidate));
+    } catch (approvalError) { setError(errorText(approvalError)); }
+    finally { setBusyId(null); }
   }
 
   const selectedArtifact = artifacts.find((artifact) => artifact.id === form.artifactId);
@@ -2414,11 +2429,13 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
             const action = deployment.observedState === 'live' ? 'stop' : 'start';
             const stale = Date.now() - Date.parse(deployment.updatedAt) > 30_000;
             const deployable = artifacts.filter((artifact) => artifact.id !== deployment.artifactId && artifact.workflows.some((workflow) => workflow.id === deployment.workflowId));
+            const approvals = deploymentApprovals.filter((approval) => approval.deploymentId === deployment.id).sort((left, right) => right.requestedAt.localeCompare(left.requestedAt));
             return (
               <article className="connection-card" key={deployment.id}>
                 <header><span className="connector-logo"><Icon name="factory" size={18} /></span><div><h2>{workflowName}</h2><span>{deployment.environment} · artifact {deployment.artifactId.slice(0, 18)}</span></div><div className="deployment-status"><StatusBadge status={deployment.observedState} />{stale ? <span className="stale-indicator">stale</span> : null}</div></header>
                 <dl><div><dt>Desired</dt><dd>{deployment.desiredState}</dd></div><div><dt>Health</dt><dd>{deployment.health}</dd></div><div><dt>Trigger</dt><dd>{deployment.trigger} · {deployment.triggerStatus}</dd></div><div><dt>Updated</dt><dd>{formatDate(deployment.updatedAt)}</dd></div></dl>
                 {deployment.lastError === undefined ? null : <p className="form-error">{deployment.lastError}</p>}
+                {approvals.length === 0 ? null : <details className="deployment-history deployment-approvals"><summary>Promotion approvals ({approvals.length})</summary><ul>{approvals.map((approval) => <li key={approval.id}><strong>{approval.decision}</strong><span>{approval.artifactId.slice(0, 18)} · run {approval.runId.slice(0, 14)}</span><time>{formatDate(approval.requestedAt)}</time>{approval.decision === 'pending' ? <span className="form-actions"><button className="text-button" disabled={busyId === deployment.id} onClick={() => void decideApproval(deployment.id, approval, 'approve')} type="button">Approve</button><button className="text-button" disabled={busyId === deployment.id} onClick={() => void decideApproval(deployment.id, approval, 'deny')} type="button">Deny</button></span> : null}{approval.reason === undefined ? null : <small>{approval.reason}</small>}</li>)}</ul></details>}
                 <details className="deployment-history"><summary>Transition history ({deployment.history.length})</summary>{deployment.history.length === 0 ? <p className="inline-empty">No transitions recorded.</p> : <ul>{deployment.history.map((transition) => <li key={transition.id}><strong>{transition.action}</strong><span>{transition.outcome} · {transition.actor}</span><time>{formatDate(transition.occurredAt)}</time>{transition.reason === undefined ? null : <small>{transition.reason}</small>}{transition.runId === undefined ? null : <button className="text-button deployment-history-link" onClick={() => openObserveRun(transition.runId!)} type="button">Observe run {transition.runId} <Icon name="chevron" size={11} /></button>}</li>)}</ul>}</details>
                 <div className="form-actions"><button className="button primary" disabled={busyId === deployment.id} onClick={() => void act(deployment, action)} type="button">{busyId === deployment.id ? 'Working…' : action === 'stop' ? 'Stop' : 'Start'}</button><button className="button ghost" disabled={busyId === deployment.id} onClick={() => void act(deployment, 'restart')} type="button">Restart</button>{deployable.length === 0 ? null : <select aria-label={`Deploy artifact for ${deployment.workflowId}`} defaultValue="" disabled={busyId === deployment.id} onChange={(event) => { if (event.target.value !== '') void act(deployment, 'deploy', event.target.value); }}><option value="">Deploy…</option>{deployable.map((artifact) => <option key={artifact.id} value={artifact.id}>{artifact.environment} · {artifact.id.slice(0, 12)}</option>)}</select>}{(() => { const healthy = new Set(deployment.healthyArtifactIds ?? []); const prior = artifacts.filter((artifact) => artifact.id !== deployment.artifactId && healthy.has(artifact.id) && artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)); return prior.length === 0 ? null : <><select aria-label={`Rollback artifact for ${deployment.workflowId}`} defaultValue="" disabled={busyId === deployment.id} onChange={(event) => { if (event.target.value !== '') void act(deployment, 'rollback', event.target.value); }}><option value="">Rollback…</option>{prior.map((artifact) => <option key={artifact.id} value={artifact.id}>{artifact.environment} · {artifact.id.slice(0, 12)}</option>)}</select></>; })()}<button className="text-button" onClick={() => onNavigate('studio')} type="button">Workspace <Icon name="chevron" /></button><button className="text-button" onClick={() => onNavigate('observe')} type="button">Observe <Icon name="chevron" /></button></div>
               </article>
