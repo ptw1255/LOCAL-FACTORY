@@ -67,14 +67,14 @@ describe('Temporal workflow status search attributes', () => {
     const result = await executeWorkflow({ runId: 'workflow-status-success', definition: singleNodeDefinition() });
 
     expect(result.completedNodeIds).toHaveLength(1);
-    expect(temporal.statuses).toEqual([{ CustomKeywordField: ['running'] }, { CustomKeywordField: ['succeeded'] }]);
+    expect(temporal.statuses).toEqual([{ Status: ['running'] }, { Status: ['succeeded'] }]);
   });
 
   it('updates Temporal status to failed when an activity fails', async () => {
     temporal.fail.value = true;
 
     await expect(executeWorkflow({ runId: 'workflow-status-failure', definition: singleNodeDefinition() })).rejects.toThrow('activity failed');
-    expect(temporal.statuses).toEqual([{ CustomKeywordField: ['running'] }, { CustomKeywordField: ['failed'] }]);
+    expect(temporal.statuses).toEqual([{ Status: ['running'] }, { Status: ['failed'] }]);
   });
 
   it('replays conditional branches deterministically', async () => {
@@ -118,6 +118,6 @@ describe('Temporal workflow status search attributes', () => {
     await expect(executeWorkflow({ runId: 'workflow-status-compensation', definition })).rejects.toThrow('activity failed');
 
     expect(temporal.calls).toEqual([trigger.id, prepare.id, failNode.id, 'prepare:compensate']);
-    expect(temporal.statuses.at(-1)).toEqual({ CustomKeywordField: ['failed'] });
+    expect(temporal.statuses.at(-1)).toEqual({ Status: ['failed'] });
   });
 });

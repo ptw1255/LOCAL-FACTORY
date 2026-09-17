@@ -60,8 +60,8 @@ describe('Temporal compensation planning', () => {
   });
 
   it('uses the stable Status search-attribute shape for lifecycle transitions', () => {
-    expect(temporalStatusSearchAttributes('waiting')).toEqual({ CustomKeywordField: ['waiting'] });
-    expect(temporalStatusSearchAttributes('succeeded')).toEqual({ CustomKeywordField: ['succeeded'] });
-    expect(temporalStatusSearchAttributes('cancelled')).toEqual({ CustomKeywordField: ['cancelled'] });
+    expect(temporalStatusSearchAttributes('waiting')).toEqual({ Status: ['waiting'] });
+    expect(temporalStatusSearchAttributes('succeeded')).toEqual({ Status: ['succeeded'] });
+    expect(temporalStatusSearchAttributes('cancelled')).toEqual({ Status: ['cancelled'] });
   });
 });

@@ -22,12 +22,12 @@ function isTemporalStartRetryable(error: unknown): boolean {
   const seen = new Set<unknown>();
   for (let depth = 0; depth < 8 && current !== undefined && current !== null && !seen.has(current); depth += 1) {
     seen.add(current);
-    if (typeof current === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable/i.test(current)) return true;
+    if (typeof current === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable|no mapping defined for search attribute|search attribute [^\n]{0,120}\bnot found\b/i.test(current)) return true;
     if (typeof current === 'object' || typeof current === 'function') {
       const value = current as { message?: unknown; details?: unknown; cause?: unknown; code?: unknown };
       if (value.code === 14 || value.code === 'UNAVAILABLE') return true;
-      if (typeof value.message === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable/i.test(value.message)) return true;
-      if (typeof value.details === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable/i.test(value.details)) return true;
+      if (typeof value.message === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable|no mapping defined for search attribute|search attribute [^\n]{0,120}\bnot found\b/i.test(value.message)) return true;
+      if (typeof value.details === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable|no mapping defined for search attribute|search attribute [^\n]{0,120}\bnot found\b/i.test(value.details)) return true;
       current = value.cause;
       continue;
     }
@@ -112,10 +112,13 @@ export class TemporalWorkflowExecutor {
         taskQueue,
         args: [{ runId: run.id, definition: run.workflowDefinition, releaseBundleHash: run.releaseBundleHash, pinnedAgentVersions: run.pinnedAgentVersions, ...(run.input === undefined ? {} : { input: run.input }) }],
         searchAttributes: {
-          // Keep the start request compatible with Temporal's local
-          // auto-setup search-attribute set. Rich release, environment, and
-          // agent provenance is carried in memo and persisted run evidence.
-          CustomKeywordField: ['running'],
+          FactoryId: ['agentic-workflow-factory'],
+          WorkflowVersion: [String(workflow.version)],
+          Environment: [run.environment ?? workflow.status],
+          Status: ['running'],
+          CorrelationId: [run.traceId],
+          ReleaseBundle: [run.releaseBundleHash ?? releaseBundleHash(workflow)],
+          AgentVersions: [JSON.stringify(run.pinnedAgentVersions ?? {})],
         },
         memo: { artifactId: run.artifactId ?? '', workflowVersion: workflow.version, environment: run.environment ?? 'local', deploymentId: run.deploymentId ?? '', releaseBundleHash: run.releaseBundleHash ?? releaseBundleHash(workflow), pinnedAgentVersions: run.pinnedAgentVersions ?? {} },
       });

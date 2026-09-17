@@ -131,6 +131,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  temporal-search-attributes:
+    image: temporalio/auto-setup:1.22.4
+    profiles: ["temporal"]
+    entrypoint: ["/bin/sh", "/etc/temporal/register-search-attributes.sh"]
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      DEFAULT_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
+    volumes:
+      - ./temporal/register-search-attributes.sh:/etc/temporal/register-search-attributes.sh:ro
+    depends_on:
+      temporal:
+        condition: service_started
+
   temporal-worker:
     build: .
     profiles: ["temporal"]
@@ -158,6 +171,8 @@ services:
         condition: service_healthy
       temporal:
         condition: service_started
+      temporal-search-attributes:
+        condition: service_completed_successfully
       vault:
         condition: service_healthy
     volumes:
