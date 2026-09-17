@@ -92,6 +92,7 @@ test.describe('IDE workspace', () => {
     await addedNode.dispatchEvent('dblclick');
     await expect(page).toHaveURL(/#\/studio\?file=workflows%2Fworkflow-agent-intake\.workflow\.yaml/);
     await expect(page.getByRole('tab', { name: /workflows\/workflow-agent-intake\.workflow\.yaml/ })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('.cdr.source-selection-highlight')).toHaveCount(1);
   });
 });
 
