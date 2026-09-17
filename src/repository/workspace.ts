@@ -29,7 +29,35 @@ const SAFE_CHECK_ENVIRONMENT = new Set([
 ]);
 
 export interface RepositoryEntry { path: string; kind: 'file' | 'directory'; size?: number }
-export interface CheckResult { command: string; exitCode: number; durationMs: number; output: string; timedOut: boolean; cancelled?: boolean }
+export type RepositoryCheckSandboxMode = 'process' | 'container';
+export interface RepositoryCheckSandboxOptions {
+  mode?: RepositoryCheckSandboxMode;
+  /** Preloaded, trusted image used for the container boundary. Network pulls are disabled. */
+  image?: string;
+  memoryMb?: number;
+  cpus?: number;
+  pidsLimit?: number;
+}
+export interface RepositoryCheckSandbox {
+  mode: RepositoryCheckSandboxMode;
+  image?: string;
+  network: 'none' | 'process-sanitized';
+  memoryMb?: number;
+  cpus?: number;
+  pidsLimit?: number;
+}
+export interface RepositoryCheckOptions {
+  sandbox?: RepositoryCheckSandboxOptions;
+}
+export interface CheckResult {
+  command: string;
+  exitCode: number;
+  durationMs: number;
+  output: string;
+  timedOut: boolean;
+  cancelled?: boolean;
+  sandbox: RepositoryCheckSandbox;
+}
 export class RepositoryCheckError extends Error {
   public readonly code = 'REPOSITORY_CHECK_FAILED';
   public constructor(message: string, public readonly result: CheckResult) { super(message); this.name = 'RepositoryCheckError'; }
@@ -58,6 +86,89 @@ export class RepositoryPolicyError extends Error {
   public constructor(message: string, public readonly policy?: string, public readonly value?: string) { super(message); this.name = 'RepositoryPolicyError'; }
 }
 export interface GitRevisionResult { branch: string; revision: string }
+
+const DEFAULT_CHECK_IMAGE = 'node:22-bookworm-slim';
+const DEFAULT_CHECK_MEMORY_MB = 512;
+const DEFAULT_CHECK_CPUS = 1;
+const DEFAULT_CHECK_PIDS = 256;
+
+/** Validate and normalize the declarative repository-check sandbox contract. */
+export function parseRepositoryCheckSandbox(value: unknown): RepositoryCheckSandboxOptions {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Repository check sandbox must be an object.');
+  }
+  const candidate = value as Record<string, unknown>;
+  const mode = candidate.mode === undefined ? 'process' : candidate.mode;
+  if (mode !== 'process' && mode !== 'container') throw new Error('Repository check sandbox mode must be process or container.');
+  if (candidate.network !== undefined && candidate.network !== 'none') throw new Error('Repository check sandbox network must be none.');
+  const image = candidate.image === undefined ? undefined : candidate.image;
+  if (image !== undefined && (typeof image !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9._-]+)?$/.test(image))) {
+    throw new Error('Repository check sandbox image must be a trusted image reference.');
+  }
+  const memoryMb = boundedInteger(candidate.memoryMb, 64, 4096, 'memoryMb');
+  const cpus = boundedNumber(candidate.cpus, 0.1, 8, 'cpus');
+  const pidsLimit = boundedInteger(candidate.pidsLimit, 32, 2048, 'pidsLimit');
+  return {
+    mode,
+    ...(image === undefined ? {} : { image }),
+    ...(memoryMb === undefined ? {} : { memoryMb }),
+    ...(cpus === undefined ? {} : { cpus }),
+    ...(pidsLimit === undefined ? {} : { pidsLimit }),
+  };
+}
+
+function boundedInteger(value: unknown, minimum: number, maximum: number, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+    throw new Error(`Repository check sandbox ${name} must be an integer between ${minimum} and ${maximum}.`);
+  }
+  return value as number;
+}
+
+function boundedNumber(value: unknown, minimum: number, maximum: number, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(`Repository check sandbox ${name} must be between ${minimum} and ${maximum}.`);
+  }
+  return value;
+}
+
+function normalizedSandbox(options: RepositoryCheckSandboxOptions): RepositoryCheckSandbox {
+  if (options.mode !== 'container') {
+    return { mode: 'process', network: 'process-sanitized' };
+  }
+  return {
+    mode: 'container',
+    image: options.image ?? process.env.REPOSITORY_CHECK_IMAGE ?? DEFAULT_CHECK_IMAGE,
+    network: 'none',
+    memoryMb: options.memoryMb ?? DEFAULT_CHECK_MEMORY_MB,
+    cpus: options.cpus ?? DEFAULT_CHECK_CPUS,
+    pidsLimit: options.pidsLimit ?? DEFAULT_CHECK_PIDS,
+  };
+}
+
+/** Build a `docker run` invocation for the bounded check sandbox. */
+export function buildContainerCheckArgs(
+  root: string,
+  command: string,
+  sandbox: RepositoryCheckSandbox,
+): string[] {
+  const [executable, ...args] = command.split(' ');
+  const checkArgs = executable === 'npm' ? ['--offline', ...args] : args;
+  return [
+    'run', '--rm', '--pull=never', '--network=none',
+    '--cpus', String(sandbox.cpus ?? DEFAULT_CHECK_CPUS),
+    '--memory', `${sandbox.memoryMb ?? DEFAULT_CHECK_MEMORY_MB}m`,
+    '--pids-limit', String(sandbox.pidsLimit ?? DEFAULT_CHECK_PIDS),
+    '--read-only', '--security-opt=no-new-privileges', '--cap-drop=ALL',
+    '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
+    '--mount', `type=bind,src=${root},dst=/workspace,readonly`,
+    '--workdir', '/workspace', '--user', '1000:1000',
+    '--env', 'CI=true', '--env', 'HOME=/tmp',
+    sandbox.image ?? DEFAULT_CHECK_IMAGE, executable!, ...checkArgs,
+  ];
+}
 
 function truncate(value: string): string { return value.length > MAX_OUTPUT ? `${value.slice(0, MAX_OUTPUT)}\n… output truncated` : value; }
 
@@ -150,19 +261,27 @@ export class RepositoryWorkspace {
     return result.stdout.split('\n').map((value) => value.trim()).filter(Boolean);
   }
 
-  public async runCheck(command: string, timeoutMs = 120_000, signal?: AbortSignal): Promise<CheckResult> {
+  public async runCheck(
+    command: string,
+    timeoutMs = 120_000,
+    signal?: AbortSignal,
+    options: RepositoryCheckOptions = {},
+  ): Promise<CheckResult> {
     if (!ALLOWED_CHECKS.has(command)) throw new Error(`Unsupported repository check "${command}".`);
+    const sandbox = normalizedSandbox(parseRepositoryCheckSandbox(options.sandbox));
     const started = Date.now();
     try {
       const [executable, ...args] = command.split(' ');
       const checkArgs = executable === 'npm' ? ['--offline', ...args] : args;
-      const result = await execFileAsync(executable!, checkArgs, { cwd: this.root, env: isolatedCheckEnvironment(), timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2, ...(signal === undefined ? {} : { signal }) });
-      return { command, exitCode: 0, durationMs: Date.now() - started, output: truncate(`${result.stdout}${result.stderr}`), timedOut: false };
+      const result = sandbox.mode === 'container'
+        ? await execFileAsync('docker', buildContainerCheckArgs(this.root, command, sandbox), { timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2, ...(signal === undefined ? {} : { signal }) })
+        : await execFileAsync(executable!, checkArgs, { cwd: this.root, env: isolatedCheckEnvironment(), timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2, ...(signal === undefined ? {} : { signal }) });
+      return { command, exitCode: 0, durationMs: Date.now() - started, output: truncate(`${result.stdout}${result.stderr}`), timedOut: false, sandbox };
     } catch (error) {
       const failure = error as { code?: number | string; killed?: boolean; stdout?: string; stderr?: string; message?: string };
       const timeoutSignal = signal?.aborted === true && typeof signal.reason === 'object' && signal.reason !== null && 'code' in signal.reason && String((signal.reason as { code?: unknown }).code).includes('TIMED_OUT');
       const cancelled = signal?.aborted === true && !timeoutSignal;
-      return { command, exitCode: typeof failure.code === 'number' ? failure.code : 1, durationMs: Date.now() - started, output: truncate(`${failure.stdout ?? ''}${failure.stderr ?? failure.message ?? ''}`), timedOut: timeoutSignal || (!cancelled && failure.killed === true), ...(cancelled ? { cancelled: true } : {}) };
+      return { command, exitCode: typeof failure.code === 'number' ? failure.code : 1, durationMs: Date.now() - started, output: truncate(`${failure.stdout ?? ''}${failure.stderr ?? failure.message ?? ''}`), timedOut: timeoutSignal || (!cancelled && failure.killed === true), ...(cancelled ? { cancelled: true } : {}), sandbox };
     }
   }
 

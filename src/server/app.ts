@@ -40,7 +40,7 @@ import { OpenAISDKClient } from '../runtime/openai-sdk.js';
 import { OpenAICompatibleClient } from '../runtime/openai-compatible.js';
 import { AnthropicClient } from '../runtime/anthropic.js';
 import { GeminiClient } from '../runtime/gemini.js';
-import { RepositoryWorkspace } from '../repository/workspace.js';
+import { parseRepositoryCheckSandbox, RepositoryWorkspace } from '../repository/workspace.js';
 import { GitHubRepositoryClient } from '../repository/github.js';
 import { DeploymentReconciler, type DeploymentRuntimeAdapter } from '../deployment/reconciler.js';
 import { toDeploymentEnvelope } from '../deployment/envelope.js';
@@ -324,10 +324,10 @@ export async function createApp(
 
   app.post<{ Body: unknown }>('/api/repository/check', async (request, reply) => {
     if (repositoryWorkspace === undefined) return reply.status(404).send({ message: 'Repository workspace is not configured.' });
-    const body = request.body as { command?: unknown; timeoutMs?: unknown };
+    const body = request.body as { command?: unknown; timeoutMs?: unknown; sandbox?: unknown };
     if (typeof body?.command !== 'string') return reply.status(422).send({ message: 'A supported check command is required.' });
     const timeoutMs = typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined;
-    return repositoryWorkspace.runCheck(body.command, timeoutMs);
+    return repositoryWorkspace.runCheck(body.command, timeoutMs, undefined, { sandbox: body.sandbox === undefined ? undefined : parseRepositoryCheckSandbox(body.sandbox) });
   });
 
   app.get('/api/repository/patch', async (_request, reply) => {

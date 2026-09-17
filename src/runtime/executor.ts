@@ -16,7 +16,7 @@ import type { PlatformStore } from '../storage/store.js';
 import { HttpOllamaClient, type OllamaClient, type OllamaModelResult } from './ollama.js';
 import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
 import type { RepositoryWorkspace } from '../repository/workspace.js';
-import { RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryConflictError, RepositoryMutationError, RepositoryPolicyError } from '../repository/workspace.js';
+import { parseRepositoryCheckSandbox, RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryConflictError, RepositoryMutationError, RepositoryPolicyError } from '../repository/workspace.js';
 import { RepositoryCiError, type GitHubRepositoryClient } from '../repository/github.js';
 import type { OpenAIClient, OpenAIModelResult } from './openai.js';
 import { evaluatePolicy, PolicyDeniedError } from '../domain/policy.js';
@@ -876,7 +876,7 @@ export class LocalWorkflowExecutor {
         const command = typeof node.config.command === 'string' ? node.config.command : 'npm test';
         const timeoutMs = typeof node.config.timeoutMs === 'number' ? node.config.timeoutMs : undefined;
         const required = node.config.required !== false;
-        const check = await workspace.runCheck(command, timeoutMs, signal);
+        const check = await workspace.runCheck(command, timeoutMs, signal, { sandbox: parseRepositoryCheckSandbox(node.config.sandbox) });
         result = { ...check, required, promotionBlocked: required && check.exitCode !== 0 };
         if (required && check.timedOut) throw new RepositoryCheckTimeoutError(`Required repository check timed out: ${command}.`, check);
         if (required && check.exitCode !== 0) throw new RepositoryCheckError(`Required repository check failed: ${command}.`, check);
@@ -1581,6 +1581,15 @@ export class LocalWorkflowExecutor {
     if (typeof value.exitCode === 'number') metadata['check.exit_code'] = value.exitCode;
     if (typeof value.timedOut === 'boolean') metadata['check.timed_out'] = value.timedOut;
     if (typeof value.cancelled === 'boolean') metadata['check.cancelled'] = value.cancelled;
+    if (value.sandbox !== null && typeof value.sandbox === 'object') {
+      const sandbox = value.sandbox as Record<string, unknown>;
+      if (typeof sandbox.mode === 'string') metadata['check.sandbox.mode'] = sandbox.mode;
+      if (typeof sandbox.network === 'string') metadata['check.sandbox.network'] = sandbox.network;
+      if (typeof sandbox.image === 'string') metadata['check.sandbox.image'] = sandbox.image;
+      if (typeof sandbox.memoryMb === 'number') metadata['check.sandbox.memory_mb'] = sandbox.memoryMb;
+      if (typeof sandbox.cpus === 'number') metadata['check.sandbox.cpus'] = sandbox.cpus;
+      if (typeof sandbox.pidsLimit === 'number') metadata['check.sandbox.pids_limit'] = sandbox.pidsLimit;
+    }
     if (typeof value.transactionId === 'string') metadata['operation.transaction_id'] = value.transactionId;
     if (typeof value.rolledBack === 'boolean') metadata['mutation.rolled_back'] = value.rolledBack;
     if (typeof value.expected === 'string') metadata['repository.expected'] = value.expected;
