@@ -606,7 +606,7 @@ describe('LocalWorkflowExecutor', () => {
     expect(output?.output).toContain('[gemini]\nsecond perspective');
   });
 
-  it('rejects structured-output ensembles before invoking any provider', async () => {
+  it('selects a deterministic majority for structured-output ensembles', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];
     const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
@@ -619,16 +619,17 @@ describe('LocalWorkflowExecutor', () => {
     agentNode.config.maxIterations = 1;
     let providerCalls = 0;
     const providers = new Map([
-      ['openai', { provider: 'openai', chat: async () => { providerCalls += 1; return { content: '{}', model: 'gpt-5' }; } }],
-      ['gemini', { provider: 'gemini', chat: async () => { providerCalls += 1; return { content: '{}', model: 'gemini-2.5-flash' }; } }],
+      ['openai', { provider: 'openai', chat: async () => { providerCalls += 1; return { content: '{"answer":"ok"}', model: 'gpt-5' }; } }],
+      ['gemini', { provider: 'gemini', chat: async () => { providerCalls += 1; return { content: '{"answer":"ok"}', model: 'gemini-2.5-flash' }; } }],
     ]);
     const ensembleExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, undefined, new Map(), undefined, providers);
     const run = await ensembleExecutor.start(workflow);
-    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
-    expect(providerCalls).toBe(0);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
+    expect(providerCalls).toBe(2);
     const recorded = await events.list(run.id);
-    expect(recorded.some((event) => event.type === 'llm.ensemble.rejected' && event.attributes?.['llm.ensemble.policy'] === 'structured-output-rejected')).toBe(true);
-    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.error).toContain('structured outputs');
+    expect(recorded.find((event) => event.type === 'llm.ensemble.consensus')?.attributes).toEqual(expect.objectContaining({ 'llm.ensemble.candidate_count': 2, 'llm.ensemble.consensus_count': 2 }));
+    const output = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.unitOutputs.agent as { output?: string } | undefined);
+    expect(output?.output).toBe('{"answer":"ok"}');
   });
 
   it('resumes an agent loop from its persisted iteration checkpoint after restart', async () => {
