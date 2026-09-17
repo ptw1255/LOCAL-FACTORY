@@ -58,6 +58,7 @@ const TENANT_STORAGE_KEY = 'factory.tenantId';
 const PROJECT_STORAGE_KEY = 'factory.projectId';
 const STUDIO_MODE_STORAGE_PREFIX = 'factory.studioMode.';
 const BOTTOM_PANEL_STORAGE_PREFIX = 'factory.bottomPanel.';
+const BOTTOM_PANEL_HEIGHT_STORAGE_PREFIX = 'factory.bottomPanelHeight.';
 const STUDIO_FILE_STORAGE_PREFIX = 'factory.studioFile.';
 const STUDIO_TABS_STORAGE_PREFIX = 'factory.studioTabs.';
 const EXPLORER_WIDTH_STORAGE_PREFIX = 'factory.explorerWidth.';
@@ -266,6 +267,15 @@ function readBottomPanelState(projectId: string): { open: boolean; tab: 'problem
     const parsed = JSON.parse(value) as { open?: unknown; tab?: unknown };
     return { open: parsed.open !== false, tab: parsed.tab === 'output' ? 'output' : 'problems' };
   } catch { return { open: true, tab: 'problems' }; }
+}
+
+function readBottomPanelHeight(projectId: string): number {
+  const parsed = Number(window.localStorage.getItem(`${BOTTOM_PANEL_HEIGHT_STORAGE_PREFIX}${projectId}`));
+  return Number.isFinite(parsed) ? clampBottomPanelHeight(parsed) : 240;
+}
+
+export function clampBottomPanelHeight(value: number): number {
+  return Math.min(640, Math.max(120, Math.round(value)));
 }
 
 function formatDate(value?: string): string {
@@ -1481,6 +1491,7 @@ function OperationalTree({
   const [bottomPanelState] = useState(() => readBottomPanelState(projectId));
   const [bottomTab, setBottomTab] = useState<'problems' | 'output'>(bottomPanelState.tab);
   const [bottomOpen, setBottomOpen] = useState(bottomPanelState.open);
+  const [bottomPanelHeight, setBottomPanelHeight] = useState(() => readBottomPanelHeight(projectId));
   const [recentRuns, setRecentRuns] = useState<RunRecord[]>([]);
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
   const [problems, setProblems] = useState<SourceDiagnostic[]>([]);
@@ -1497,10 +1508,12 @@ function OperationalTree({
   const draggedTab = useRef<string | null>(null);
   const quickOpenInputRef = useRef<HTMLInputElement | null>(null);
   const resizingExplorer = useRef(false);
+  const resizingBottomPanel = useRef(false);
 
   useEffect(() => {
     window.localStorage.setItem(`${BOTTOM_PANEL_STORAGE_PREFIX}${projectId}`, JSON.stringify({ open: bottomOpen, tab: bottomTab }));
-  }, [bottomOpen, bottomTab, projectId]);
+    window.localStorage.setItem(`${BOTTOM_PANEL_HEIGHT_STORAGE_PREFIX}${projectId}`, String(bottomPanelHeight));
+  }, [bottomOpen, bottomPanelHeight, bottomTab, projectId]);
 
   useEffect(() => {
     window.localStorage.setItem(`${STUDIO_TABS_STORAGE_PREFIX}${projectId}`, JSON.stringify(openPaths));
@@ -1510,7 +1523,7 @@ function OperationalTree({
     window.localStorage.setItem(`${EXPLORER_WIDTH_STORAGE_PREFIX}${projectId}`, String(explorerWidth));
   }, [explorerWidth, projectId]);
 
-  useEffect(() => () => { resizingExplorer.current = false; }, []);
+  useEffect(() => () => { resizingExplorer.current = false; resizingBottomPanel.current = false; }, []);
 
   function beginExplorerResize(event: ReactPointerEvent<HTMLDivElement>): void {
     event.preventDefault();
@@ -1521,6 +1534,26 @@ function OperationalTree({
     };
     const onStop = (): void => {
       resizingExplorer.current = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onStop);
+      window.removeEventListener('pointercancel', onStop);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onStop);
+    window.addEventListener('pointercancel', onStop);
+  }
+
+  function beginBottomResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    resizingBottomPanel.current = true;
+    const startY = event.clientY;
+    const startHeight = bottomPanelHeight;
+    const onMove = (moveEvent: PointerEvent): void => {
+      if (!resizingBottomPanel.current) return;
+      setBottomPanelHeight(clampBottomPanelHeight(startHeight + (startY - moveEvent.clientY)));
+    };
+    const onStop = (): void => {
+      resizingBottomPanel.current = false;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onStop);
       window.removeEventListener('pointercancel', onStop);
@@ -1933,7 +1966,7 @@ function OperationalTree({
         <div className="yaml-editor-wrap"><Suspense fallback={<div className="editor-loading">Loading editor…</div>}>{showDiff ? <LazyDiffEditor aria-label="Project source diff" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} original={baselineSource} modified={source} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, wordWrap: 'on', readOnly: true, renderSideBySide: true }} theme="vs-dark" /> : <LazyEditor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => { setProblems([]); setError(null); onSourceChange(value ?? ''); }} onMount={(editor, monaco) => { registerEditorLanguageProviders(monaco); editorLanguageContext.agentIds = workflow.agents.map((agent) => agent.id); editorLanguageContext.nodeIds = workflow.nodes.map((node) => node.id); editorRef.current = editor; monacoRef.current = monaco; editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { void saveShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF, () => { void formatShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { validateShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter | monaco.KeyMod.Shift, () => { runShortcutRef.current(); }); }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} />}</Suspense></div>
       {error === null ? <small className="ide-hint">Review the compiled tree on the right, then apply the file when it is ready. Invalid definitions never replace the active runtime. Shortcuts: Cmd/Ctrl+S apply · Shift+Alt+F format · Cmd/Ctrl+Enter validate · Cmd/Ctrl+Shift+Enter run.</small> : <div className="ide-error"><Icon name="warning" size={14} /> {error}</div>}
         {quickOpen ? <div className="quick-open-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setQuickOpen(false); }} role="presentation"><section aria-label="Command palette" className="quick-open-dialog" role="dialog"><div className="quick-open-input"><Icon name="search" size={14} /><input aria-label="Search commands and files" autoComplete="off" onChange={(event) => setQuickQuery(event.target.value)} placeholder="Search commands or files…" ref={quickOpenInputRef} value={quickQuery} /></div><div className="quick-open-results"><div className="quick-open-heading">Commands</div>{([{ label: 'Apply source', hint: 'Save and compile active file', action: () => void applyYaml() }, { label: 'Validate workflow', hint: 'Run workflow validation', action: onValidate }, { label: 'Run workflow', hint: 'Start a workflow run', action: onRun }, { label: 'Open Observe', hint: 'Inspect runs and telemetry', action: onObserve }, ...(hintDismissed ? [{ label: 'Show workspace guide', hint: 'Reopen the quick-start hint', action: onReopenGuide }] : [])] as const).filter((command) => `${command.label} ${command.hint}`.toLowerCase().includes(quickQuery.trim().toLowerCase())).map((command) => <button className="quick-open-item" key={command.label} onClick={() => { setQuickOpen(false); command.action(); }} type="button"><Icon name="code" size={13} /><span><strong>{command.label}</strong><small>{command.hint}</small></span></button>)}<div className="quick-open-heading">Files</div>{quickMatches.map((file) => <button className="quick-open-item" key={file.path} onClick={() => { setQuickOpen(false); void selectFile(file); }} type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={13} /><span><strong>{file.path}</strong><small>{file.sha256 === '' ? 'Workspace file' : `Updated ${formatDate(file.updatedAt)}`}</small></span></button>)}{quickMatches.length === 0 ? <p className="inline-empty">No matching files.</p> : null}</div><div className="quick-open-footer"><span>Tab focus · Enter run · Esc close</span><kbd>⌘/Ctrl P</kbd></div></section></div> : null}
-        <div className={`ide-bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`}>
+        <div className={`ide-bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`} style={{ '--bottom-panel-height': `${bottomPanelHeight}px` } as CSSProperties}>
           <div aria-label="Workspace output" className="ide-bottom-tabs" role="tablist">
             <button aria-controls="workspace-problems-panel" aria-selected={bottomTab === 'problems'} className={bottomTab === 'problems' ? 'active' : ''} id="workspace-problems-tab" onClick={() => { setBottomTab('problems'); setBottomOpen(true); }} role="tab" type="button">
               Problems <span className={visibleProblems.length === 0 ? 'panel-count clean' : 'panel-count'}>{visibleProblems.length}</span>
@@ -1952,6 +1985,7 @@ function OperationalTree({
               <div className="ide-run-output">{recentRuns.length === 0 ? <span>No runs for this project yet.</span> : <>{recentRuns.slice(0, 1).map((run) => <div className="ide-run-summary" key={run.id}><StatusBadge status={run.status} /><span>{run.workflowName} · {formatDate(run.startedAt)}</span><button className="text-button" onClick={onObserve} type="button">Open Observe <Icon name="chevron" size={12} /></button></div>)}<ul aria-live="polite" role="log">{runEvents.map((event) => <li key={event.id}><StatusBadge status={event.severityText ?? event.signal} /><span>{event.message}</span><time>{formatDate(event.timestamp)}</time></li>)}</ul></>}</div>
             </div>
           )) : null}
+          {bottomOpen ? <div aria-label="Resize bottom panel" aria-orientation="horizontal" aria-valuemax={640} aria-valuemin={120} aria-valuenow={bottomPanelHeight} className="ide-bottom-resize-handle" onPointerDown={beginBottomResize} onKeyDown={(event) => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); setBottomPanelHeight((current) => Math.min(640, Math.max(120, current + (event.key === 'ArrowUp' ? 24 : -24)))); } }} role="separator" tabIndex={0} /> : null}
         </div>
       </section>
       <section className="operational-tree-panel ide-tree-panel">

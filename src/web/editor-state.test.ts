@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { filterProjectItems, nextExplorerIndex, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection } from './App';
+import { clampBottomPanelHeight, filterProjectItems, nextExplorerIndex, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -37,5 +37,11 @@ describe('IDE editor tab state', () => {
     expect(retainSelection([{ id: 'run-a' }, { id: 'run-b' }], 'run-b')).toBe('run-b');
     expect(retainSelection([{ id: 'run-a' }, { id: 'run-b' }], 'run-c')).toBe('run-a');
     expect(retainSelection([], 'run-c')).toBeNull();
+  });
+
+  it('clamps persisted bottom panel heights to usable bounds', () => {
+    expect(clampBottomPanelHeight(40)).toBe(120);
+    expect(clampBottomPanelHeight(320.4)).toBe(320);
+    expect(clampBottomPanelHeight(900)).toBe(640);
   });
 });
