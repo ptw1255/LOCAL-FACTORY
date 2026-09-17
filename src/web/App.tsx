@@ -390,7 +390,10 @@ export function sourceSyntaxDiagnostics(source: string, path: string, parseError
 }
 
 export function sourceNodeForLine(workflow: WorkflowDefinition, path: string, line: number): WorkflowNode | undefined {
-  return workflow.nodes.find((node) => (node.sourcePath ?? `workflows/${workflow.id}.workflow.yaml`) === path && node.sourceLine === line);
+  const candidates = workflow.nodes
+    .filter((node) => (node.sourcePath ?? `workflows/${workflow.id}.workflow.yaml`) === path && node.sourceLine !== undefined && node.sourceLine <= line)
+    .sort((left, right) => (right.sourceLine ?? 0) - (left.sourceLine ?? 0));
+  return candidates[0];
 }
 
 export function clampBottomPanelHeight(value: number): number {
