@@ -1093,4 +1093,25 @@ describe('LocalWorkflowExecutor', () => {
     expect(await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.ciCheckpoints)).toEqual({});
     expect((await events.listEvidence(run.id)).filter((entry) => entry.unitId === 'ci' && entry.status === 'waiting')).toHaveLength(1);
   });
+
+  it('executes a pull request review gate and records approval metadata', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-review-gate';
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'review', type: 'repositoryReview', label: 'Review PR', position: { x: 180, y: 0 }, config: { number: 42, requiredApprovals: 1, timeoutMs: 200, intervalMs: 10 }, unit: defaultWorkUnit('repositoryReview') },
+      { id: 'output', type: 'output', label: 'Complete', position: { x: 360, y: 0 }, config: { value: 'approved' }, unit: defaultWorkUnit('output') },
+    ];
+    workflow.edges = [{ id: 'trigger-review', source: 'trigger', target: 'review' }, { id: 'review-output', source: 'review', target: 'output' }];
+    const github = {
+      waitForPullRequestStatus: vi.fn().mockResolvedValue({ number: 42, state: 'open', status: 'approved', approvals: 1, changesRequested: 0, requiredApprovals: 1, reviews: [], url: 'https://github.com/example/repo/pull/42' }),
+    } as unknown as GitHubRepositoryClient;
+    const reviewExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, github);
+    const run = await reviewExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.status)) === 'succeeded');
+    const evidence = await events.listEvidence(run.id);
+    expect(evidence.find((entry) => entry.unitId === 'review' && entry.status === 'succeeded')?.metadata).toEqual(expect.objectContaining({ 'pull_request.number': 42, 'pull_request.status': 'approved', 'pull_request.approvals': 1, 'pull_request.required_approvals': 1 }));
+    expect(github.waitForPullRequestStatus).toHaveBeenCalledWith(expect.objectContaining({ number: 42, requiredApprovals: 1 }));
+  });
 });

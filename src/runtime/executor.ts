@@ -17,7 +17,7 @@ import { HttpOllamaClient, type OllamaClient, type OllamaModelResult } from './o
 import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
 import type { RepositoryWorkspace } from '../repository/workspace.js';
 import { parseRepositoryCheckSandbox, RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryConflictError, RepositoryMutationError, RepositoryPolicyError } from '../repository/workspace.js';
-import { RepositoryCiError, type GitHubRepositoryClient } from '../repository/github.js';
+import { RepositoryCiError, RepositoryReviewError, type GitHubRepositoryClient } from '../repository/github.js';
 import type { OpenAIClient, OpenAIModelResult } from './openai.js';
 import { evaluatePolicy, PolicyDeniedError } from '../domain/policy.js';
 
@@ -665,7 +665,7 @@ export class LocalWorkflowExecutor {
             status: controller.signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && ['WORK_UNIT_TIMED_OUT', 'REPOSITORY_CHECK_TIMED_OUT'].includes(String(error.code)) ? 'timed_out' : 'failed',
             idempotencyKey: `${unitEvidenceKey}:failed`,
             error: error instanceof Error ? error.message : 'Unknown unit failure.',
-            metadata: failureMetadata ?? (error instanceof RepositoryCiError
+            metadata: failureMetadata ?? (error instanceof RepositoryCiError || error instanceof RepositoryReviewError
               ? this.operationMetadata(error.result)
               : error instanceof RepositoryMutationError
                 ? this.operationMetadata(error)
@@ -957,6 +957,25 @@ export class LocalWorkflowExecutor {
         const head = typeof node.config.head === 'string' ? node.config.head : '';
         const base = typeof node.config.base === 'string' ? node.config.base : 'main';
         result = await this.githubRepository.createOrGetPullRequest({ title, body, head, base });
+        break;
+      }
+      case 'repositoryReview': {
+        if (this.githubRepository === undefined) throw new Error('GitHub repository integration is not configured.');
+        const configuredNumber = typeof node.config.number === 'number' ? node.config.number : undefined;
+        const inputNumber = configuredNumber === undefined
+          ? inputs.map((input) => input !== null && typeof input === 'object' && typeof (input as { number?: unknown }).number === 'number' ? (input as { number: number }).number : undefined).find((value): value is number => value !== undefined)
+          : undefined;
+        const number = configuredNumber !== undefined && configuredNumber > 0 ? configuredNumber : inputNumber;
+        if (number === undefined) throw new Error('Repository review requires a pull request number or upstream pull request result.');
+        const requiredApprovals = typeof node.config.requiredApprovals === 'number' ? node.config.requiredApprovals : undefined;
+        const timeoutMs = typeof node.config.timeoutMs === 'number' ? Math.max(1, node.config.timeoutMs) : 120_000;
+        const intervalMs = typeof node.config.intervalMs === 'number' ? Math.max(10, node.config.intervalMs) : 2_000;
+        const review = await this.githubRepository.waitForPullRequestStatus({ number, requiredApprovals, timeoutMs, intervalMs, signal });
+        result = review;
+        const failurePolicy = node.config.failurePolicy === 'route' ? 'route' : 'fail';
+        if (failurePolicy === 'fail' && !['approved', 'merged'].includes(review.status)) {
+          throw new RepositoryReviewError(`Pull request #${number} did not reach an approved state: ${review.status}.`, review);
+        }
         break;
       }
       case 'repositoryCi': {
@@ -1577,8 +1596,12 @@ export class LocalWorkflowExecutor {
     if (typeof value.url === 'string') metadata['provider.url'] = value.url;
     if (typeof value.requestId === 'string') metadata['provider.request_id'] = value.requestId;
     if (typeof value.state === 'string') metadata['pull_request.state'] = value.state;
+    if (typeof value.status === 'string' && ['approved', 'changes_requested', 'merged', 'closed', 'pending', 'timed_out'].includes(value.status)) metadata['pull_request.status'] = value.status;
+    if (typeof value.approvals === 'number') metadata['pull_request.approvals'] = value.approvals;
+    if (typeof value.changesRequested === 'number') metadata['pull_request.changes_requested'] = value.changesRequested;
+    if (typeof value.requiredApprovals === 'number') metadata['pull_request.required_approvals'] = value.requiredApprovals;
     if (typeof value.ref === 'string') metadata['ci.ref'] = value.ref;
-    if (typeof value.status === 'string') metadata['ci.status'] = value.status;
+    if (typeof value.status === 'string' && ['success', 'failure', 'pending', 'cancelled', 'timed_out'].includes(value.status)) metadata['ci.status'] = value.status;
     if (typeof value.exitCode === 'number') metadata['check.exit_code'] = value.exitCode;
     if (typeof value.timedOut === 'boolean') metadata['check.timed_out'] = value.timedOut;
     if (typeof value.cancelled === 'boolean') metadata['check.cancelled'] = value.cancelled;

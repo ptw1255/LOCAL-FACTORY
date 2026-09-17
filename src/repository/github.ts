@@ -1,5 +1,16 @@
 export interface PullRequestInput { title: string; body: string; head: string; base: string }
 export interface PullRequest { number: number; url: string; head: string; base: string; state: string; requestId?: string }
+export interface PullRequestReview { id: number; user?: string; state: string; submittedAt?: string }
+export interface PullRequestStatus {
+  number: number;
+  state: 'open' | 'closed' | 'merged' | 'unknown';
+  approvals: number;
+  changesRequested: number;
+  reviews: PullRequestReview[];
+  url?: string;
+  requestId?: string;
+}
+export interface PullRequestStatusPollUpdate { status: PullRequestStatus['state'] | 'approved' | 'changes_requested' | 'pending' | 'timed_out'; approvals: number; changesRequested: number; }
 export interface CheckRunSummary { name: string; status: string; conclusion: string | null; url?: string; summary?: string }
 export interface CiFailure { name: string; conclusion: string | null; url?: string; summary?: string }
 export interface CiResult { ref: string; status: 'success' | 'failure' | 'pending' | 'cancelled' | 'timed_out'; checks: CheckRunSummary[]; required: string[]; failures: CiFailure[]; requestId?: string }
@@ -11,6 +22,10 @@ export class GitHubApiError extends Error {
 export class RepositoryCiError extends Error {
   public readonly code = 'REPOSITORY_CI_FAILED';
   public constructor(message: string, public readonly result: CiResult) { super(message); this.name = 'RepositoryCiError'; }
+}
+export class RepositoryReviewError extends Error {
+  public readonly code = 'REPOSITORY_REVIEW_FAILED';
+  public constructor(message: string, public readonly result: PullRequestStatus) { super(message); this.name = 'RepositoryReviewError'; }
 }
 
 export interface GitHubClientOptions { token?: string; secretRef?: string; secretBroker?: SecretBroker; owner: string; repo: string; fetcher?: typeof fetch }
@@ -47,6 +62,54 @@ export class GitHubRepositoryClient {
   public async createOrGetPullRequest(input: PullRequestInput): Promise<PullRequest> {
     const existing = await this.listOpenPullRequests(input);
     return existing[0] ?? this.createPullRequest(input);
+  }
+
+  /** Read the current review and merge state for a pull request without payloads or secrets. */
+  public async getPullRequestStatus(number: number): Promise<PullRequestStatus> {
+    if (!Number.isSafeInteger(number) || number <= 0) throw new Error('A positive pull request number is required.');
+    const base = `https://api.github.com/repos/${encodeURIComponent(this.options.owner)}/${encodeURIComponent(this.options.repo)}/pulls/${number}`;
+    const [pullResponse, reviewsResponse] = await Promise.all([
+      this.fetcher(base, { headers: await this.headers() }),
+      this.fetcher(`${base}/reviews`, { headers: await this.headers() }),
+    ]);
+    if (!pullResponse.ok) throw new GitHubApiError(`GitHub pull request lookup failed with status ${pullResponse.status}.`, pullResponse.status);
+    if (!reviewsResponse.ok) throw new GitHubApiError(`GitHub pull request review lookup failed with status ${reviewsResponse.status}.`, reviewsResponse.status);
+    const pull = await pullResponse.json() as { state?: unknown; merged?: unknown; html_url?: unknown };
+    const reviews = await reviewsResponse.json() as Array<{ id?: unknown; user?: { login?: unknown }; state?: unknown; submitted_at?: unknown }>;
+    const normalized = reviews.flatMap((review): PullRequestReview[] => {
+      if (typeof review.id !== 'number' || typeof review.state !== 'string') return [];
+      return [{ id: review.id, state: review.state.toUpperCase(), ...(typeof review.user?.login === 'string' ? { user: review.user.login } : {}), ...(typeof review.submitted_at === 'string' ? { submittedAt: review.submitted_at } : {}) }];
+    });
+    const approvals = normalized.filter((review) => review.state === 'APPROVED').length;
+    const changesRequested = normalized.filter((review) => review.state === 'CHANGES_REQUESTED').length;
+    const state = pull.merged === true ? 'merged' : pull.state === 'open' ? 'open' : pull.state === 'closed' ? 'closed' : 'unknown';
+    const requestId = pullResponse.headers.get('x-github-request-id') ?? reviewsResponse.headers.get('x-github-request-id') ?? undefined;
+    return { number, state, approvals, changesRequested, reviews: normalized.slice(-100), ...(typeof pull.html_url === 'string' ? { url: pull.html_url } : {}), ...(requestId === undefined ? {} : { requestId }) };
+  }
+
+  /** Poll bounded reviewer approval/merge state for an auditable workflow unit. */
+  public async waitForPullRequestStatus(input: { number: number; requiredApprovals?: number; timeoutMs?: number; intervalMs?: number; signal?: AbortSignal; onPoll?: (update: PullRequestStatusPollUpdate) => Promise<void> | void }): Promise<PullRequestStatus & { status: PullRequestStatusPollUpdate['status']; requiredApprovals: number }> {
+    const deadline = Date.now() + Math.max(1, input.timeoutMs ?? 120_000);
+    const requiredApprovals = Math.max(0, Math.floor(input.requiredApprovals ?? 1));
+    while (true) {
+      input.signal?.throwIfAborted();
+      const result = await this.getPullRequestStatus(input.number);
+      const status: PullRequestStatusPollUpdate['status'] = result.state === 'merged'
+        ? 'merged'
+        : result.state === 'closed'
+          ? 'closed'
+          : result.changesRequested > 0
+            ? 'changes_requested'
+            : result.approvals >= requiredApprovals
+              ? 'approved'
+              : Date.now() >= deadline ? 'timed_out' : 'pending';
+      await input.onPoll?.({ status, approvals: result.approvals, changesRequested: result.changesRequested });
+      if (status !== 'pending') return { ...result, status, requiredApprovals };
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, Math.min(Math.max(10, input.intervalMs ?? 2_000), Math.max(1, deadline - Date.now())));
+        input.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(input.signal?.reason); }, { once: true });
+      });
+    }
   }
 
   public async getCheckRuns(ref: string): Promise<CheckRunSummary[]> {

@@ -21,6 +21,7 @@ const unitKinds: Record<string, WorkUnitKind> = {
   repositoryCommit: 'connector',
   repositoryPush: 'connector',
   repositoryPullRequest: 'connector',
+  repositoryReview: 'connector',
   repositoryCi: 'connector',
 };
 
@@ -183,6 +184,13 @@ export const nodeCatalog: NodeCatalogItem[] = [
     category: 'Repository',
     description: 'Poll required GitHub checks and route the terminal result.',
     defaultConfig: { ref: '', required: [], timeoutMs: 120000, intervalMs: 2000, failurePolicy: 'fail' },
+  },
+  {
+    type: 'repositoryReview',
+    label: 'Observe pull request review',
+    category: 'Repository',
+    description: 'Poll reviewer approval and merge state for an auditable pull request gate.',
+    defaultConfig: { number: 0, requiredApprovals: 1, timeoutMs: 120000, intervalMs: 2000, failurePolicy: 'fail' },
   },
 ];
 
