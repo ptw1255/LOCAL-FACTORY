@@ -35,6 +35,7 @@ export class WorkflowReplayService {
     const startedAt = Date.now();
     const replay = await this.executor.start(source.workflowDefinition, {
       ...(source.artifactId === undefined ? {} : { artifactId: source.artifactId }),
+      ...(source.input === undefined ? {} : { input: structuredClone(source.input) }),
       replayOfRunId: source.id,
     });
     const timeoutMs = Math.min(Math.max(options.timeoutMs ?? 30_000, 1_000), 120_000);
