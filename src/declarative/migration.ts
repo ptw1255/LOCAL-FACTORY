@@ -80,7 +80,7 @@ export function applyCanvasResource(workflow: WorkflowDefinition, source: string
 
 /** Build a stable file-backed representation without mutating storage. */
 export function planResourceMigration(project: ProjectRecord, workflows: WorkflowDefinition[]): ResourceMigrationPlan {
-  const files: MigrationResourceFile[] = [file('factory.yaml', envelope('Project', project.id, 1, project.name, { description: project.description }))];
+  const files: MigrationResourceFile[] = [];
   const agents = new Map(workflows.flatMap((workflow) => workflow.agents).map((agent) => [agent.id, agent]));
   for (const agent of [...agents.values()].sort((left, right) => left.id.localeCompare(right.id))) {
     const { id: _id, version, name: _name, ...spec } = agent;
@@ -115,6 +115,11 @@ export function planResourceMigration(project: ProjectRecord, workflows: Workflo
   for (const [unitId, unit] of [...units.entries()].sort(([left], [right]) => left.localeCompare(right))) {
     if (unit !== undefined) files.push(file(`units/${unitId}.unit.yaml`, envelope('WorkUnit', unitId, unit.version, undefined, unit as unknown as Record<string, unknown>)));
   }
+  const resourcePaths = files.map((item) => item.path).sort();
+  files.push(file('factory.yaml', envelope('Project', project.id, 1, project.name, {
+    description: project.description,
+    resources: resourcePaths,
+  })));
   return {
     files: files.sort((left, right) => left.path.localeCompare(right.path)),
     sourceProjectId: project.id,
