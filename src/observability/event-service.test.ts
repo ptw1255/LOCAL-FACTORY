@@ -2,7 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { RunEvent, RunRecord } from '../domain/types.js';
 import { seedWorkflow } from '../domain/seed.js';
@@ -210,6 +210,29 @@ describe('EventService retention', () => {
     expect((await service.list()).map((item) => item.traceId)).toEqual([
       'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     ]);
+  });
+
+  it('passes only expired trace IDs to the external retention pruner', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const prune = vi.fn(async (_traceIds: string[]) => undefined);
+    const service = new EventService(store, { retentionHours: 48, exporter: { export: async () => undefined, prune } });
+    const now = Date.now();
+
+    await store.appendEvent(event(
+      '33333333-3333-4333-8333-333333333333',
+      new Date(now - 49 * 60 * 60 * 1000).toISOString(),
+      'cccccccccccccccccccccccccccccccc',
+    ));
+    await store.appendEvent(event(
+      '44444444-4444-4444-8444-444444444444',
+      new Date(now - 1 * 60 * 60 * 1000).toISOString(),
+      'dddddddddddddddddddddddddddddddd',
+    ));
+
+    await service.prune();
+
+    expect(prune).toHaveBeenCalledWith(['cccccccccccccccccccccccccccccccc']);
   });
 
   it('does not let an exporter failure interrupt event persistence', async () => {
