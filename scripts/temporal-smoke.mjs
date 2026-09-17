@@ -94,6 +94,13 @@ try {
 } catch (error) {
   smokeFailed = true;
   console.error(`Temporal Docker smoke failed: ${error instanceof Error ? error.message : String(error)}`);
+  try {
+    const runs = await json('http://localhost:3100/api/runs', { headers: scopeHeaders });
+    const failedRuns = runs.items?.filter((candidate) => candidate.workflowId === 'workflow-agent-intake').slice(0, 3) ?? [];
+    console.error(`Persisted Temporal run diagnostics: ${JSON.stringify(failedRuns).slice(0, 2_000)}`);
+  } catch (diagnosticError) {
+    console.error(`Could not read persisted Temporal run diagnostics: ${diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError)}`);
+  }
   dumpDiagnostics();
   throw error;
 } finally {
