@@ -48,6 +48,15 @@ the file-backed layout once through the API (the operation is idempotent):
 curl -X POST http://localhost:3100/api/projects/project-local/migrate -H 'content-type: application/json' -d '{"dryRun":false}'
 ```
 
+To create a new source file directly, use the file API; paths are validated and
+kept inside the project workspace:
+
+```bash
+curl -X PUT http://localhost:3100/api/projects/project-local/files \
+  -H 'content-type: application/json' \
+  -d '{"path":"units/normalize.unit.yaml","content":"apiVersion: factory.agentic/v1\nkind: WorkUnit\nmetadata:\n  id: normalize\n  version: 1\nspec:\n  kind: deterministic\n  version: 1\n  inputSchema: any\n  outputSchema: any\n  timeoutMs: 1000\n  retryAttempts: 1\n"}'
+```
+
 After migration, files are authoritative. **Canvas** and **Tree** are projections
 of the same compiled resources; edits made through the compatibility Canvas are
 written back to the corresponding source files.
