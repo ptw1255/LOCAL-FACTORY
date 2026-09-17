@@ -2,7 +2,7 @@ import { Client, Connection } from '@temporalio/client';
 
 import type { RunRecord, WorkflowDefinition } from '../domain/types.js';
 import type { TemporalWorkflowResult } from './workflows.js';
-import { createQueuedRun, type RunCreationOptions } from '../runtime/executor.js';
+import { createQueuedRun, releaseBundleHash, type RunCreationOptions } from '../runtime/executor.js';
 import type { PlatformStore } from '../storage/store.js';
 import type { EventService } from '../observability/event-service.js';
 
@@ -70,7 +70,7 @@ export class TemporalWorkflowExecutor {
     run.temporalWorkflowId = `factory-${run.id}`;
     await this.options.store.mutate((state) => { state.runs.unshift(run); });
     await this.options.events.emit(run.id, 'run.queued', 'Workflow run queued in Temporal.', {
-      attributes: { 'runtime.engine': 'temporal', 'temporal.task_queue': taskQueue, 'workflow.version': workflow.version },
+      attributes: { 'runtime.engine': 'temporal', 'temporal.task_queue': taskQueue, 'workflow.version': workflow.version, ...(run.releaseBundleHash === undefined ? {} : { 'release.bundle.hash': run.releaseBundleHash }) },
     });
     try {
       const handle = await this.options.client.workflow.start('executeWorkflow', {
@@ -84,8 +84,10 @@ export class TemporalWorkflowExecutor {
           Environment: [run.environment ?? workflow.status],
           Status: ['running'],
           CorrelationId: [run.traceId],
+          ReleaseBundle: [run.releaseBundleHash ?? releaseBundleHash(workflow)],
+          AgentVersions: [JSON.stringify(run.pinnedAgentVersions ?? {})],
         },
-        memo: { artifactId: run.artifactId ?? '', workflowVersion: workflow.version, environment: run.environment ?? 'local', deploymentId: run.deploymentId ?? '' },
+        memo: { artifactId: run.artifactId ?? '', workflowVersion: workflow.version, environment: run.environment ?? 'local', deploymentId: run.deploymentId ?? '', releaseBundleHash: run.releaseBundleHash ?? releaseBundleHash(workflow), pinnedAgentVersions: run.pinnedAgentVersions ?? {} },
       });
       this.handles.set(run.id, handle);
       await this.options.store.mutate((state) => {

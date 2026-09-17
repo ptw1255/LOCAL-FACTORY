@@ -37,6 +37,21 @@ export interface RunCreationOptions {
   temporalTaskQueue?: string;
 }
 
+/** Stable identity for the workflow and versioned agent boxes executed by a run. */
+export function releaseBundleHash(workflow: WorkflowDefinition): string {
+  const bundle = {
+    workflow: { id: workflow.id, version: workflow.version },
+    agents: [...workflow.agents]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((agent) => ({ id: agent.id, version: agent.version })),
+  };
+  return `sha256:${createHash('sha256').update(JSON.stringify(bundle)).digest('hex')}`;
+}
+
+function pinnedAgentVersions(workflow: WorkflowDefinition): Record<string, number> {
+  return Object.fromEntries([...workflow.agents].sort((left, right) => left.id.localeCompare(right.id)).map((agent) => [agent.id, agent.version]));
+}
+
 /** Build a validated, immutable-definition run record for any execution plane. */
 export function createQueuedRun(workflow: WorkflowDefinition, options: RunCreationOptions = {}): RunRecord {
   const validation = validateWorkflow(workflow);
@@ -61,6 +76,8 @@ export function createQueuedRun(workflow: WorkflowDefinition, options: RunCreati
     workflowId: workflow.id,
     workflowName: workflow.name,
     workflowVersion: workflow.version,
+    releaseBundleHash: releaseBundleHash(workflow),
+    pinnedAgentVersions: pinnedAgentVersions(workflow),
     ...(options.artifactId === undefined ? {} : { artifactId: options.artifactId }),
     environment: options.environment?.trim() || 'local',
     ...(options.deploymentId === undefined ? {} : { deploymentId: options.deploymentId }),

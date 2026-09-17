@@ -9,7 +9,7 @@ import { defaultWorkUnit } from '../domain/catalog.js';
 import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
 import { FileArtifactStore } from '../storage/artifact-store.js';
-import { createQueuedRun, LocalWorkflowExecutor } from './executor.js';
+import { createQueuedRun, LocalWorkflowExecutor, releaseBundleHash } from './executor.js';
 import { OpenAIProviderError } from './openai.js';
 import type { GitHubRepositoryClient } from '../repository/github.js';
 
@@ -660,6 +660,18 @@ describe('LocalWorkflowExecutor', () => {
     expect(outputs).toHaveLength(2);
     expect((await events.list(run.id)).filter((event) => event.type === 'agent.iteration').map((event) => event.attributes?.['agent.iteration'])).toEqual([2, 3]);
     expect(await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.agentCheckpoints)).toEqual({});
+  });
+
+  it('pins workflow and agent versions in a deterministic release bundle hash', () => {
+    const workflow = structuredClone(seedWorkflow);
+    const run = createQueuedRun(workflow);
+    expect(run.releaseBundleHash).toBe(releaseBundleHash(workflow));
+    expect(run.pinnedAgentVersions).toEqual(Object.fromEntries(workflow.agents.map((agent) => [agent.id, agent.version])));
+    const changedAgent = structuredClone(workflow);
+    const agent = changedAgent.agents[0];
+    if (agent === undefined) throw new Error('Agent definition is missing.');
+    agent.version += 1;
+    expect(releaseBundleHash(changedAgent)).not.toBe(run.releaseBundleHash);
   });
 
   it('fails closed when a route requires capabilities its provider does not expose', async () => {

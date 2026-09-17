@@ -193,6 +193,8 @@ export interface RunRecord {
   workflowId: string;
   workflowName: string;
   workflowVersion: number;
+  releaseBundleHash?: string;
+  pinnedAgentVersions?: Record<string, number>;
   artifactId?: string;
   environment?: string;
   deploymentId?: string;
