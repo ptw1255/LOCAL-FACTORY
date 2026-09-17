@@ -94,6 +94,7 @@ export interface OperationEvidence {
   status: 'started' | 'waiting' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out';
   occurredAt: string;
   inputHash?: string;
+  retryIdempotencyKey?: string;
   outputHash?: string;
   error?: string;
   metadata?: Record<string, string | number | boolean>;

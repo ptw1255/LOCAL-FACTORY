@@ -104,9 +104,13 @@ describe('platform API', () => {
     source.error = 'transient failure';
     await store.mutate((state) => { state.runs.push(source); });
 
-    const response = await app.inject({ method: 'POST', url: `/api/runs/${source.id}/retry` });
+    const response = await app.inject({ method: 'POST', url: `/api/runs/${source.id}/retry`, payload: { idempotencyKey: 'api-retry-1' } });
     expect(response.statusCode).toBe(200);
-    expect(response.json<{ replayOfRunId: string; artifactId: string; input: { retry: boolean } }>()).toEqual(expect.objectContaining({ replayOfRunId: source.id, artifactId: 'sha256:retry', input: { retry: true } }));
+    const retried = response.json<{ id: string; replayOfRunId: string; artifactId: string; input: { retry: boolean }; retryIdempotencyKey: string }>();
+    expect(retried).toEqual(expect.objectContaining({ replayOfRunId: source.id, artifactId: 'sha256:retry', input: { retry: true }, retryIdempotencyKey: 'api-retry-1' }));
+    const repeated = await app.inject({ method: 'POST', url: `/api/runs/${source.id}/retry`, payload: { idempotencyKey: 'api-retry-1' } });
+    expect(repeated.statusCode).toBe(200);
+    expect(repeated.json<{ id: string; replayOfRunId: string; retryIdempotencyKey: string }>()).toEqual(expect.objectContaining({ id: retried.id, replayOfRunId: source.id, retryIdempotencyKey: 'api-retry-1' }));
   });
 
   it('lists approval records within the requested project scope', async () => {

@@ -1004,12 +1004,13 @@ export async function createApp(
     }
   });
 
-  app.post<{ Params: { id: string } }>('/api/runs/:id/retry', async (request, reply) => {
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/runs/:id/retry', async (request, reply) => {
     const scope = scopeFromRequest(request);
     const source = await store.read((state) => state.runs.find((run) => run.id === request.params.id && inScope(run, scope)));
     if (source === undefined) return reply.status(404).send({ message: 'Run not found.' });
     try {
-      return await runExecutor.retry(source.id);
+      const body = (request.body ?? {}) as { idempotencyKey?: unknown };
+      return await runExecutor.retry(source.id, typeof body.idempotencyKey === 'string' ? { idempotencyKey: body.idempotencyKey } : {});
     } catch (error) {
       return reply.status(409).send({ message: errorMessage(error) });
     }

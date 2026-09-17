@@ -109,11 +109,19 @@ export class TemporalWorkflowExecutor {
   }
 
   /** Start a fresh Temporal execution from a terminal failure while preserving provenance. */
-  public async retry(runId: string): Promise<RunRecord> {
+  public async retry(runId: string, options: { idempotencyKey?: string } = {}): Promise<RunRecord> {
     const source = await this.options.store.read((state) => state.runs.find((candidate) => candidate.id === runId));
     if (source === undefined) throw new Error('Run not found.');
     if (!['failed', 'timed_out', 'cancelled'].includes(source.status)) {
       throw new Error('Only failed, timed-out, or cancelled runs can be retried.');
+    }
+    const idempotencyKey = options.idempotencyKey?.trim();
+    if (idempotencyKey !== undefined && idempotencyKey !== '') {
+      const existing = await this.options.store.read((state) => state.runs.find((candidate) => candidate.retryIdempotencyKey === idempotencyKey));
+      if (existing !== undefined) {
+        if (existing.replayOfRunId !== source.id) throw new Error('Retry idempotency key is already associated with another source run.');
+        return existing;
+      }
     }
     const retry = await this.start(source.workflowDefinition, {
       ...(source.artifactId === undefined ? {} : { artifactId: source.artifactId }),
@@ -121,6 +129,7 @@ export class TemporalWorkflowExecutor {
       ...(source.deploymentId === undefined ? {} : { deploymentId: source.deploymentId }),
       ...(source.input === undefined ? {} : { input: structuredClone(source.input) }),
       replayOfRunId: source.id,
+      ...(idempotencyKey === undefined || idempotencyKey === '' ? {} : { retryIdempotencyKey: idempotencyKey }),
     });
     await this.options.events.emit(source.id, 'run.retried', `Run retried as ${retry.id}.`, { attributes: { 'run.retry_id': retry.id, 'runtime.engine': 'temporal' } });
     return retry;
