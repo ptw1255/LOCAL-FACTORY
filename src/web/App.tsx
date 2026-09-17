@@ -1326,6 +1326,7 @@ function OperationalTree({
   const [quickQuery, setQuickQuery] = useState('');
   const [fileSearch, setFileSearch] = useState('');
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
+  const [collapsedTreeNodes, setCollapsedTreeNodes] = useState<Set<string>>(() => new Set());
   const [treeSearch, setTreeSearch] = useState('');
   const [bottomPanelState] = useState(() => readBottomPanelState(projectId));
   const [bottomTab, setBottomTab] = useState<'problems' | 'output'>(bottomPanelState.tab);
@@ -1539,6 +1540,30 @@ function OperationalTree({
     return `${node.id} ${node.label} ${node.type} ${agent?.name ?? ''} ${agent?.purpose ?? ''}`.toLowerCase().includes(treeQuery);
   });
   const visibleTreeAgents = workflow.agents.filter((agent) => treeQuery === '' || `${agent.id} ${agent.name} ${agent.purpose} ${agent.model.model ?? agent.model.routingAlias ?? ''}`.toLowerCase().includes(treeQuery));
+  const treeChildren = new Map<string, WorkflowNode[]>();
+  for (const edge of workflow.edges) {
+    const child = workflow.nodes.find((node) => node.id === edge.target);
+    if (child === undefined) continue;
+    const children = treeChildren.get(edge.source) ?? [];
+    if (!children.some((candidate) => candidate.id === child.id)) children.push(child);
+    treeChildren.set(edge.source, children);
+  }
+  const directMatches = new Set(visibleTreeNodes.map((node) => node.id));
+  const includedTreeNodes = new Set<string>();
+  const includeTreeNode = (node: WorkflowNode, path = new Set<string>()): boolean => {
+    if (path.has(node.id)) return false;
+    const nextPath = new Set(path).add(node.id);
+    const includedChild = (treeChildren.get(node.id) ?? []).some((child) => includeTreeNode(child, nextPath));
+    const include = directMatches.has(node.id) || includedChild;
+    if (include) includedTreeNodes.add(node.id);
+    return include;
+  };
+  workflow.nodes.forEach((node) => void includeTreeNode(node));
+  const treeRoots = workflow.nodes.filter((node) => {
+    if (!includedTreeNodes.has(node.id)) return false;
+    const incoming = workflow.edges.filter((edge) => edge.target === node.id).map((edge) => edge.source);
+    return incoming.every((source) => !includedTreeNodes.has(source));
+  });
   const validationByNode = new Map<string, ValidationIssue[]>(
     (validation?.issues ?? []).filter((issue): issue is ValidationIssue & { nodeId: string } => issue.nodeId !== undefined).reduce((entries, issue) => {
       const current = entries.get(issue.nodeId) ?? [];
@@ -1621,6 +1646,32 @@ function OperationalTree({
     : problems;
   const quickMatches = files.filter((file) => file.path.toLowerCase().includes(quickQuery.trim().toLowerCase())).slice(0, 20);
 
+  function renderTreeNode(node: WorkflowNode, depth: number, ancestry = new Set<string>()): ReactNode {
+    const agentId = node.type === 'agentLoop' && typeof node.config.agentId === 'string' ? node.config.agentId : undefined;
+    const agent = agentId === undefined ? undefined : agentById.get(agentId);
+    const sourcePath = node.sourcePath ?? (agent === undefined
+      ? files.find((file) => file.path.includes(workflow.id) && file.path.includes('.workflow.'))?.path
+      : files.find((file) => file.path.includes(agent.id) && file.path.includes('.agent.'))?.path);
+    const sourceFile = sourcePath === undefined ? undefined : files.find((file) => file.path === sourcePath);
+    const nodeIssues = validationByNode.get(node.id) ?? [];
+    const highestIssue = nodeIssues.some((issue) => issue.level === 'error') ? 'error' : nodeIssues.length > 0 ? 'warning' : undefined;
+    const descendants = (treeChildren.get(node.id) ?? []).filter((child) => includedTreeNodes.has(child.id) && !ancestry.has(child.id));
+    const expanded = !collapsedTreeNodes.has(node.id);
+    const nextAncestry = new Set(ancestry).add(node.id);
+    return (
+      <li key={`${node.id}-${depth}`} className="tree-entry" style={{ marginLeft: `${depth * 12}px` }}>
+        <span className={`tree-rail ${descendants.length === 0 ? 'last' : ''}`} />
+        <span className={`tree-icon tree-kind-${node.unit?.kind ?? 'deterministic'}`}><Icon name={node.type === 'agentLoop' ? 'agent' : node.type === 'approval' ? 'human' : 'code'} size={14} /></span>
+        <div className="tree-node-row">
+          {descendants.length === 0 ? <span className="tree-expand-spacer" /> : <button aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.label}`} aria-expanded={expanded} className="icon-button tree-expand-toggle" onClick={() => setCollapsedTreeNodes((current) => { const next = new Set(current); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next; })} title={expanded ? 'Collapse children' : 'Expand children'} type="button"><Icon name={expanded ? 'chevronDown' : 'chevron'} size={11} /></button>}
+          <button className="tree-node" disabled={sourceFile === undefined} onClick={() => { if (sourceFile !== undefined) openSource(sourceFile.path, node.sourceLine); }} title={sourceFile === undefined ? 'No matching source file' : `Open ${sourceFile.path}${node.sourceLine === undefined ? '' : `:${node.sourceLine}`}`} type="button"><div><strong>{node.label}</strong><span className="tree-kind-label">{node.unit?.kind ?? 'work unit'}</span>{highestIssue === undefined ? null : <span className={`status-badge status-${highestIssue}`} title={nodeIssues.map((issue) => issue.message).join(' ')}>{nodeIssues.length} {highestIssue}</span>}</div><small>{node.type} · {node.unit?.timeoutMs ?? 0}ms timeout · {node.unit?.retryAttempts ?? 1} retries{node.sourceLine === undefined ? '' : ` · source line ${node.sourceLine}`}</small>{agent === undefined ? null : <div className="tree-agent"><Icon name="agent" size={12} /> {agent.name} · {agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</div>}</button>
+          <button aria-label={`Open ${node.label} on canvas`} className="icon-button tree-canvas-link" onClick={() => onCanvasNode(node.id)} title="Open on Canvas" type="button"><Icon name="studio" size={13} /></button>
+        </div>
+        {expanded && descendants.length > 0 ? <ol className="operational-tree tree-children">{descendants.map((child) => renderTreeNode(child, depth + 1, nextAncestry))}</ol> : null}
+      </li>
+    );
+  }
+
   useEffect(() => {
     const monaco = monacoRef.current;
     const model = editorRef.current?.getModel();
@@ -1670,23 +1721,7 @@ function OperationalTree({
         <label className="ide-file-search tree-search"><span className="sr-only">Filter operational tree</span><input aria-label="Filter operational tree" onChange={(event) => setTreeSearch(event.target.value)} placeholder="Filter tree" type="search" value={treeSearch} /></label>
         <div className="tree-root"><span className="tree-icon"><Icon name="factory" size={15} /></span><div><strong>{workflow.name}</strong><small>{visibleTreeNodes.length} of {workflow.nodes.length} work units · {visibleTreeAgents.length} of {workflow.agents.length} agent boxes</small></div></div>
         <ol className="operational-tree">
-          {visibleTreeNodes.map((node, index) => {
-            const agentId = node.type === 'agentLoop' && typeof node.config.agentId === 'string' ? node.config.agentId : undefined;
-            const agent = agentId === undefined ? undefined : agentById.get(agentId);
-            const sourcePath = node.sourcePath ?? (agent === undefined
-              ? files.find((file) => file.path.includes(workflow.id) && file.path.includes('.workflow.'))?.path
-              : files.find((file) => file.path.includes(agent.id) && file.path.includes('.agent.'))?.path);
-            const sourceFile = sourcePath === undefined ? undefined : files.find((file) => file.path === sourcePath);
-            const nodeIssues = validationByNode.get(node.id) ?? [];
-            const highestIssue = nodeIssues.some((issue) => issue.level === 'error') ? 'error' : nodeIssues.length > 0 ? 'warning' : undefined;
-            return (
-              <li key={node.id}>
-                <span className={`tree-rail ${index === workflow.nodes.length - 1 ? 'last' : ''}`} />
-                <span className={`tree-icon tree-kind-${node.unit?.kind ?? 'deterministic'}`}><Icon name={node.type === 'agentLoop' ? 'agent' : node.type === 'approval' ? 'human' : 'code'} size={14} /></span>
-                <div className="tree-node-row"><button className="tree-node" disabled={sourceFile === undefined} onClick={() => { if (sourceFile !== undefined) openSource(sourceFile.path, node.sourceLine); }} title={sourceFile === undefined ? 'No matching source file' : `Open ${sourceFile.path}${node.sourceLine === undefined ? '' : `:${node.sourceLine}`}`} type="button"><div><strong>{node.label}</strong><span className="tree-kind-label">{node.unit?.kind ?? 'work unit'}</span>{highestIssue === undefined ? null : <span className={`status-badge status-${highestIssue}`} title={nodeIssues.map((issue) => issue.message).join(' ')}>{nodeIssues.length} {highestIssue}</span>}</div><small>{node.type} · {node.unit?.timeoutMs ?? 0}ms timeout · {node.unit?.retryAttempts ?? 1} retries{node.sourceLine === undefined ? '' : ` · source line ${node.sourceLine}`}</small>{agent === undefined ? null : <div className="tree-agent"><Icon name="agent" size={12} /> {agent.name} · {agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</div>}</button><button aria-label={`Open ${node.label} on canvas`} className="icon-button tree-canvas-link" onClick={() => onCanvasNode(node.id)} title="Open on Canvas" type="button"><Icon name="studio" size={13} /></button></div>
-              </li>
-            );
-          })}
+          {treeRoots.map((node) => renderTreeNode(node, 0))}
         </ol>
         {visibleTreeNodes.length === 0 ? <p className="inline-empty">No matching work units.</p> : null}
         <div className="agent-boxes-heading"><span className="eyebrow">Declared boxes</span><span className="count-pill">{workflow.agents.length}</span></div>
