@@ -54,6 +54,15 @@ export interface ArtifactRecord {
   createdAt: string;
 }
 
+export interface ArtifactDiff {
+  fromArtifactId: string;
+  toArtifactId: string;
+  changedSources: Array<{ path: string; fromSha256?: string; toSha256?: string }>;
+  addedWorkflows: string[];
+  removedWorkflows: string[];
+  changedWorkflows: string[];
+}
+
 export interface Position {
   x: number;
   y: number;

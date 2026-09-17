@@ -345,6 +345,9 @@ h1, h2, h3, p { margin-top: 0; }
 .deployment-history li span, .deployment-history li time, .deployment-history li small { color: var(--subtle); }
 .deployment-history li small { grid-column: 1 / -1; }
 .deployment-history-link { font-size: 9px; grid-column: 1 / -1; justify-self: start; }
+.artifact-diff-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.artifact-diff-summary span { background: #142238; border: 1px solid #263b59; border-radius: 4px; color: #b8c9df; font-size: 10px; padding: 4px 6px; }
+.artifact-diff li small { color: var(--subtle); }
 .panel-count { background: #8d4b4b; border-radius: 9px; color: #fff; font-size: 9px; padding: 2px 6px; }
 .panel-count.clean { background: #245541; }
 .ide-bottom-content { color: #7689a3; font-size: 11px; padding: 3px 0 10px; }
