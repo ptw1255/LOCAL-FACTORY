@@ -79,12 +79,14 @@ Add `--no-web` when the deployment should expose only the API/control plane for
 terminal-native operation.
 Declarative authoring commands remain available (`factory validate`, `factory plan`,
 `factory workflow`, and `factory run`). `factory tree` remains a compatibility alias.
-Inside Workspace, select a resource and press Enter (or `e`) to open it in
-`$VISUAL`/`$EDITOR`. The file is saved with an optimistic hash check and compiled
-immediately; invalid edits remain visible as diagnostics and never produce an
-executable artifact. Inside Workflow, the graph is a projection of the selected
+Inside Workspace, select a resource and press Enter (or `e`) to open the built-in
+terminal source editor. Type to edit, press `Ctrl+S` to save with an optimistic
+hash check and compile, or press Escape to discard the draft and return. Invalid
+edits never produce an executable artifact. The standalone `factory edit` command
+continues to use `$VISUAL`/`$EDITOR`. Inside Workflow, the graph is a projection of the selected
 `workflows/*.workflow.yaml` envelope, so semantic edits are made in that source
-file while `canvas/*.canvas.yaml` remains layout-only.
+file while `canvas/*.canvas.yaml` remains layout-only. A legacy runtime-only workflow
+is labeled explicitly and materialized into resource files when selected.
 
 Workspace authoring controls are `n` to create a workspace, `s` to cycle between
 workspaces, `w` to create a starter workflow, and `v` to validate and compile.
@@ -92,7 +94,9 @@ Workflow uses `n` to create another workflow, `e` or Enter to edit its source,
 `v` to validate and compile, and `p` to compile and run the selected workflow.
 The terminal graph shows the selected workflow's nodes, execution kinds, and
 outgoing edges; it is an operational projection rather than a second source of
-truth.
+truth. Escape is global navigation: it cancels an authoring prompt, returns from the
+source editor to its parent, returns from a run to Runs, and returns every top-level
+surface to the FACTORY LOCAL home screen.
 
 The non-interactive equivalent is:
 

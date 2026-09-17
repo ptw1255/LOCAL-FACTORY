@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { browserOpenCommand, composeArguments, factoryBanner, isLifecycleCommand, parseFactoryArgs } from '../../scripts/factory-cli.js';
-import { portalItemCount, renderTerminalPortal, renderTerminalSnapshot } from '../../scripts/factory-terminal.js';
+import { backTerminalState, editTerminalSource, portalItemCount, renderTerminalPortal, renderTerminalSnapshot, type TerminalPortalPage, type TerminalSourceEditor } from '../../scripts/factory-terminal.js';
 
 describe('FACTORY CLI argument handling', () => {
   it('defaults to launching the local dashboard', () => {
@@ -101,5 +101,27 @@ describe('FACTORY CLI argument handling', () => {
     expect(renderTerminalPortal(snapshot, { page: 'workflow', cursor: 0 }, { clear: false })).toContain('WORKFLOW');
     expect(renderTerminalPortal(snapshot, { page: 'workflow', cursor: 0 }, { clear: false })).toContain('Manual trigger');
     expect(renderTerminalPortal(snapshot, { page: 'workflow', cursor: 0 }, { clear: false })).toContain('p run selected');
+  });
+
+  it('always gives Escape a deterministic route out of terminal pages', () => {
+    const topLevelPages: TerminalPortalPage[] = ['workspace', 'workflow', 'tree', 'runs', 'approvals', 'deployments', 'connections', 'proposals', 'factory', 'portals'];
+    for (const page of topLevelPages) expect(backTerminalState({ page, cursor: 4 })).toEqual({ page: 'home', cursor: 0 });
+    expect(backTerminalState({ page: 'run-detail', cursor: 0, selectedRunId: 'run-1' })).toEqual({ page: 'runs', cursor: 0 });
+    expect(backTerminalState({ page: 'source-editor', cursor: 0, editor: { filePath: 'factory.yaml', content: '', originalContent: '', expectedSha256: 'abc', cursorOffset: 0, returnPage: 'workspace' } })).toEqual({ page: 'workspace', cursor: 0 });
+    expect(backTerminalState({ page: 'home', cursor: 8 })).toEqual({ page: 'home', cursor: 0 });
+  });
+
+  it('edits YAML in the terminal-native source editor without launching an external page', () => {
+    const initial: TerminalSourceEditor = { filePath: 'workflows/review.workflow.yaml', content: 'name: Review', originalContent: 'name: Review', expectedSha256: 'abc', cursorOffset: 12, returnPage: 'workflow' };
+    const typed = editTerminalSource(initial, ' loop');
+    const newline = editTerminalSource(typed, '\r');
+    const indented = editTerminalSource(newline, '\t');
+    const final = editTerminalSource(indented, 'status: draft');
+    expect(final.content).toBe('name: Review loop\n  status: draft');
+    expect(editTerminalSource(final, '\u007f').content).toBe('name: Review loop\n  status: draf');
+    const output = renderTerminalPortal({ runs: [], approvals: [], deployments: [] }, { page: 'source-editor', cursor: 0, editor: final }, { clear: false });
+    expect(output).toContain('SOURCE EDITOR');
+    expect(output).toContain('Ctrl+S save and compile');
+    expect(output).toContain('Esc discard changes and return');
   });
 });
