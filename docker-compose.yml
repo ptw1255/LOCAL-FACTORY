@@ -122,6 +122,8 @@ services:
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development.yaml
     ports:
       - "7233:7233"
+    volumes:
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     depends_on:
       postgres:
         condition: service_healthy

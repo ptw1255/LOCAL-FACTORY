@@ -1,0 +1,8 @@
+# Development-only defaults for the local Temporal auto-setup profile.
+# Keep production deployments on an explicitly managed dynamic-config file.
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}
