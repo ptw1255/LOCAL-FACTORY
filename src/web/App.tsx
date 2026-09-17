@@ -257,6 +257,24 @@ export function retainSelection<T extends { id: string }>(items: T[], selectedId
   return selectedId !== null && items.some((item) => item.id === selectedId) ? selectedId : items[0]?.id ?? null;
 }
 
+/**
+ * Merge the just-created run into the polled project history without
+ * duplicating it when the API response catches up.
+ */
+export function mergeRecentRuns(runs: RunRecord[], started: RunRecord | null, projectId: string, limit = 5): RunRecord[] {
+  // Prefer the server-polled record when the same ID is present so queued
+  // feedback naturally advances to running/completed status.
+  const candidates = started !== null && started.projectId === projectId ? [...runs, started] : runs;
+  const unique = new Map<string, RunRecord>();
+  for (const run of candidates) {
+    if (run.projectId !== projectId || unique.has(run.id)) continue;
+    unique.set(run.id, run);
+  }
+  return [...unique.values()]
+    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+    .slice(0, Math.max(1, limit));
+}
+
 export function selectWorkflowArtifact(artifacts: ArtifactRecord[], workflowId: string, environment: string, preferred?: ArtifactRecord | null): ArtifactRecord | undefined {
   const candidates = preferred === undefined || preferred === null
     ? artifacts
@@ -743,6 +761,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [runInputOpen, setRunInputOpen] = useState(false);
   const [runInputDraft, setRunInputDraft] = useState('{}');
   const [runInputError, setRunInputError] = useState<string | null>(null);
+  const [runStarted, setRunStarted] = useState<RunRecord | null>(null);
   const [notice, setNotice] = useState<{ tone: 'success' | 'warning' | 'error'; text: string } | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [configDraft, setConfigDraft] = useState('{}');
@@ -1133,10 +1152,11 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       }
       const artifact = selectWorkflowArtifact(artifacts, workflow.id, runEnvironment, latestCompiledArtifact.current);
       const run = await api.startRun(workflow.id, { environment: runEnvironment, ...(artifact === undefined ? {} : { artifactId: artifact.id }), ...(input === undefined ? {} : { input }) });
+      setRunStarted(run);
       window.localStorage.setItem(`factory.onboarding.${projectId}.run`, 'true');
       setHasRun(true);
       sessionStorage.setItem('selectedRunId', run.id);
-      openObserve();
+      setNotice({ tone: 'success', text: `Run ${run.id.slice(0, 18)} is ${run.status}. Run Output is open below; Observe remains available from the run row.` });
     } catch (runError) {
       setNotice({ tone: 'error', text: errorText(runError) });
     } finally {
@@ -1144,9 +1164,10 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     }
   }
 
-  function openObserve(): void {
+  function openObserve(runId?: string): void {
     window.localStorage.setItem(`factory.onboarding.${projectId}.observed`, 'true');
     setHasObserved(true);
+    if (runId !== undefined) sessionStorage.setItem('selectedRunId', runId);
     onNavigate('observe');
   }
 
@@ -1477,6 +1498,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         }}
         onRegisterSave={(save) => { sourceSaveRef.current = save; }}
         projectId={projectId}
+        runStarted={runStarted}
         source={yamlSource}
         workflow={workflow}
       />}
@@ -1504,6 +1526,7 @@ function OperationalTree({
   onSourceLoaded,
   onSourceImported,
   onRegisterSave,
+  runStarted,
 }: {
   workflow: WorkflowDefinition;
   source: string;
@@ -1514,7 +1537,7 @@ function OperationalTree({
   onCanvasNode: (nodeId: string) => void;
   onValidate: () => void;
   onRun: () => void;
-  onObserve: () => void;
+  onObserve: (runId?: string) => void;
   hintDismissed: boolean;
   onReopenGuide: () => void;
   projectId: string;
@@ -1524,6 +1547,7 @@ function OperationalTree({
   onSourceLoaded: (source: string) => void;
   onSourceImported: (workflows: WorkflowDefinition[], source: string, artifact?: ArtifactRecord) => void;
   onRegisterSave: (save: () => Promise<boolean>) => void;
+  runStarted: RunRecord | null;
 }) {
   const agentById = new Map(workflow.agents.map((agent) => [agent.id, agent]));
   const [busy, setBusy] = useState(false);
@@ -1699,7 +1723,7 @@ function OperationalTree({
       try {
         const response = await api.runs();
         if (cancelled) return;
-        const runs = response.items.filter((run) => run.projectId === projectId).slice(0, 5);
+        const runs = mergeRecentRuns(response.items, runStarted, projectId);
         setRecentRuns(runs);
         const latest = runs[0];
         if (latest !== undefined) setRunEvents((await api.events(latest.id)).items.slice(-40));
@@ -1710,7 +1734,17 @@ function OperationalTree({
     void loadRunOutput();
     const interval = window.setInterval(() => void loadRunOutput(), 2_000);
     return () => { cancelled = true; window.clearInterval(interval); };
-  }, [projectId]);
+  }, [projectId, runStarted]);
+
+  // Surface a newly-created run immediately. The poller will replace the
+  // optimistic record with the server's current status without duplicating it.
+  useEffect(() => {
+    if (runStarted === null || runStarted.projectId !== projectId) return;
+    setRecentRuns((current) => mergeRecentRuns(current, runStarted, projectId));
+    setBottomTab('output');
+    setBottomOpen(true);
+    void api.events(runStarted.id).then((response) => setRunEvents(response.items.slice(-40))).catch(() => undefined);
+  }, [projectId, runStarted]);
 
   async function selectFile(file: ProjectFileRecord) {
     if (dirty && selectedPath !== file.path && !window.confirm('Discard unsaved changes in the current file?')) return;
@@ -2058,7 +2092,7 @@ function OperationalTree({
             </div>
           ) : (
             <div aria-labelledby="workspace-output-tab" className="ide-bottom-content" id="workspace-output-panel" role="tabpanel" tabIndex={0}>
-              <div className="ide-run-output">{recentRuns.length === 0 ? <span>No runs for this project yet.</span> : <><ul aria-label="Recent run statuses" aria-live="polite" className="ide-run-history">{recentRuns.map((run) => <li key={run.id}><StatusBadge status={run.status} /><span><strong>{run.workflowName}</strong><small>{formatDate(run.startedAt)}{run.environment === undefined ? '' : ' · ' + run.environment}</small></span><button className="text-button" onClick={onObserve} type="button">Observe <Icon name="chevron" size={12} /></button></li>)}</ul><ul aria-label="Latest run events" aria-live="polite" role="log">{runEvents.map((event) => <li key={event.id}><StatusBadge status={event.severityText ?? event.signal} /><span>{event.message}</span><time>{formatDate(event.timestamp)}</time></li>)}</ul></>}</div>
+              <div className="ide-run-output">{recentRuns.length === 0 ? <span>No runs for this project yet.</span> : <><ul aria-label="Recent run statuses" aria-live="polite" className="ide-run-history">{recentRuns.map((run) => <li key={run.id}><StatusBadge status={run.status} /><span><strong>{run.workflowName}</strong><small>{formatDate(run.startedAt)}{run.environment === undefined ? '' : ' · ' + run.environment}</small></span><button className="text-button" onClick={() => onObserve(run.id)} type="button">Observe <Icon name="chevron" size={12} /></button></li>)}</ul><ul aria-label="Latest run events" aria-live="polite" role="log">{runEvents.map((event) => <li key={event.id}><StatusBadge status={event.severityText ?? event.signal} /><span>{event.message}</span><time>{formatDate(event.timestamp)}</time></li>)}</ul></>}</div>
             </div>
           )) : null}
           {bottomOpen ? <div aria-label="Resize bottom panel" aria-orientation="horizontal" aria-valuemax={640} aria-valuemin={120} aria-valuenow={bottomPanelHeight} className="ide-bottom-resize-handle" onPointerDown={beginBottomResize} onKeyDown={(event) => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); setBottomPanelHeight((current) => Math.min(640, Math.max(120, current + (event.key === 'ArrowUp' ? 24 : -24)))); } }} role="separator" tabIndex={0} /> : null}
