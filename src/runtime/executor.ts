@@ -180,6 +180,24 @@ export class LocalWorkflowExecutor {
     return run;
   }
 
+  /** Start a fresh, pinned run from a terminal failure while preserving provenance. */
+  public async retry(runId: string): Promise<RunRecord> {
+    const source = await this.store.read((state) => state.runs.find((candidate) => candidate.id === runId));
+    if (source === undefined) throw new Error('Run not found.');
+    if (!['failed', 'timed_out', 'cancelled'].includes(source.status)) {
+      throw new Error('Only failed, timed-out, or cancelled runs can be retried.');
+    }
+    const retry = await this.start(source.workflowDefinition, {
+      ...(source.artifactId === undefined ? {} : { artifactId: source.artifactId }),
+      ...(source.environment === undefined ? {} : { environment: source.environment }),
+      ...(source.deploymentId === undefined ? {} : { deploymentId: source.deploymentId }),
+      ...(source.input === undefined ? {} : { input: structuredClone(source.input) }),
+      replayOfRunId: source.id,
+    });
+    await this.events.emit(source.id, 'run.retried', `Run retried as ${retry.id}.`, { attributes: { 'run.retry_id': retry.id } });
+    return retry;
+  }
+
   public async approve(runId: string, options: { actor?: string; reason?: string } = {}): Promise<RunRecord> {
     let expired = false;
     const run = await this.store.mutate((state) => {

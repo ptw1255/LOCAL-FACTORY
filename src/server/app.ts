@@ -1004,6 +1004,17 @@ export async function createApp(
     }
   });
 
+  app.post<{ Params: { id: string } }>('/api/runs/:id/retry', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    const source = await store.read((state) => state.runs.find((run) => run.id === request.params.id && inScope(run, scope)));
+    if (source === undefined) return reply.status(404).send({ message: 'Run not found.' });
+    try {
+      return await runExecutor.retry(source.id);
+    } catch (error) {
+      return reply.status(409).send({ message: errorMessage(error) });
+    }
+  });
+
   app.get<{ Querystring: { sourceRunId?: string; status?: ReplayReportRecord['status'] } }>('/api/replays', async (request) => {
     const scope = scopeFromRequest(request);
     return {
