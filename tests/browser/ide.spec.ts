@@ -142,7 +142,7 @@ test.describe('Observe and Deployments', () => {
     expect(compile.ok()).toBeTruthy();
     const artifact = await compile.json() as { id: string };
     const deployment = await request.post('/api/deployments', {
-      data: { workflowId: 'workflow-agent-intake', environment: 'local', artifactId: artifact.id, trigger: 'manual' },
+      data: { workflowId: 'workflow-agent-intake', environment: 'local', artifactId: artifact.id, trigger: 'webhook' },
     });
     expect(deployment.ok()).toBeTruthy();
 
@@ -156,6 +156,8 @@ test.describe('Observe and Deployments', () => {
     await expect(card.getByText('Run logs', { exact: true })).toBeVisible();
     await expect(card.getByRole('button', { name: 'Workspace' })).toBeVisible();
     await expect(card.getByRole('button', { name: 'Observe' })).toBeVisible();
+    const webhookCard = page.locator('article.connection-card').filter({ hasText: 'webhook' }).first();
+    await expect(webhookCard.getByLabel(/Trigger (not )?listening/)).toBeVisible();
     await page.getByRole('combobox', { name: 'Filter deployments by observed state' }).selectOption('stopped');
     await expect(card).toBeVisible();
     await page.getByRole('combobox', { name: 'Filter deployments by observed state' }).selectOption('all');
