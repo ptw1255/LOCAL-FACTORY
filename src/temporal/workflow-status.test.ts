@@ -5,12 +5,16 @@ import { seedWorkflow } from '../domain/seed.js';
 const temporal = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => void>();
   const statuses: unknown[] = [];
+  const calls: string[] = [];
+  const results = new Map<string, unknown>();
+  const failOn = new Set<string>();
   const fail = { value: false };
   const activity = vi.fn(async (input: { nodeId: string }) => {
-    if (fail.value) throw new Error('activity failed');
-    return { nodeId: input.nodeId, result: 'ok', lifecycle: { spanId: `span-${input.nodeId}` } };
+    calls.push(input.nodeId);
+    if (fail.value || failOn.has(input.nodeId)) throw new Error('activity failed');
+    return { nodeId: input.nodeId, result: results.get(input.nodeId) ?? 'ok', lifecycle: { spanId: `span-${input.nodeId}` } };
   });
-  return { handlers, statuses, fail, activity };
+  return { handlers, statuses, calls, results, failOn, fail, activity };
 });
 
 vi.mock('@temporalio/workflow', () => ({
@@ -41,6 +45,9 @@ describe('Temporal workflow status search attributes', () => {
 
   beforeEach(() => {
     temporal.statuses.length = 0;
+    temporal.calls.length = 0;
+    temporal.results.clear();
+    temporal.failOn.clear();
     temporal.handlers.clear();
     temporal.fail.value = false;
     temporal.activity.mockClear();
@@ -68,5 +75,49 @@ describe('Temporal workflow status search attributes', () => {
 
     await expect(executeWorkflow({ runId: 'workflow-status-failure', definition: singleNodeDefinition() })).rejects.toThrow('activity failed');
     expect(temporal.statuses).toEqual([{ Status: ['running'] }, { Status: ['failed'] }]);
+  });
+
+  it('replays conditional branches deterministically', async () => {
+    const definition = singleNodeDefinition();
+    const trigger = definition.nodes[0]!;
+    const yes = { ...trigger, id: 'branch-yes', label: 'Yes branch' };
+    const no = { ...trigger, id: 'branch-no', label: 'No branch' };
+    definition.nodes = [trigger, yes, no];
+    definition.edges = [
+      { id: 'to-yes', source: trigger.id, target: yes.id, condition: 'yes' },
+      { id: 'to-no', source: trigger.id, target: no.id, condition: 'no' },
+    ];
+    temporal.results.set(trigger.id, 'yes');
+
+    const result = await executeWorkflow({ runId: 'workflow-status-branch', definition });
+
+    expect(result.completedNodeIds).toEqual([trigger.id, yes.id]);
+    expect(temporal.calls).toEqual([trigger.id, yes.id]);
+  });
+
+  it('executes declared compensations in reverse completion order after failure', async () => {
+    const definition = singleNodeDefinition();
+    const trigger = definition.nodes[0]!;
+    const prepare = {
+      ...trigger,
+      id: 'prepare',
+      label: 'Prepare',
+      unit: {
+        ...trigger.unit!,
+        compensation: { nodeType: 'code', config: { operation: 'identity', value: 'undo' }, idempotencyKey: 'prepare:compensate:v1' },
+      },
+    };
+    const failNode = { ...trigger, id: 'fail', label: 'Fail' };
+    definition.nodes = [trigger, prepare, failNode];
+    definition.edges = [
+      { id: 'to-prepare', source: trigger.id, target: prepare.id },
+      { id: 'to-fail', source: prepare.id, target: failNode.id },
+    ];
+    temporal.failOn.add(failNode.id);
+
+    await expect(executeWorkflow({ runId: 'workflow-status-compensation', definition })).rejects.toThrow('activity failed');
+
+    expect(temporal.calls).toEqual([trigger.id, prepare.id, failNode.id, 'prepare:compensate']);
+    expect(temporal.statuses.at(-1)).toEqual({ Status: ['failed'] });
   });
 });
