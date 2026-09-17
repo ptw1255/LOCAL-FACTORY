@@ -802,6 +802,28 @@ function canvasToWorkflow(
   };
 }
 
+/** Return true when a Canvas projection changed only presentation metadata. */
+export function canvasOnlyChangesPresentation(
+  workflow: WorkflowDefinition,
+  nodes: CanvasNode[],
+  edges: Edge[],
+): boolean {
+  const projected = canvasToWorkflow(workflow, nodes, edges);
+  if (projected.trigger.type !== workflow.trigger.type || projected.nodes.length !== workflow.nodes.length || projected.edges.length !== workflow.edges.length) return false;
+  const projectedNodeById = new Map(projected.nodes.map((node) => [node.id, node]));
+  for (const source of workflow.nodes) {
+    const candidate = projectedNodeById.get(source.id);
+    if (candidate === undefined) return false;
+    if (candidate.type !== source.type || candidate.label !== source.label || JSON.stringify(candidate.config) !== JSON.stringify(source.config) || JSON.stringify(candidate.unit) !== JSON.stringify(source.unit) || candidate.sourcePath !== source.sourcePath || candidate.sourceLine !== source.sourceLine) return false;
+  }
+  const sourceEdgeById = new Map(workflow.edges.map((edge) => [edge.id, edge]));
+  for (const candidate of projected.edges) {
+    const source = sourceEdgeById.get(candidate.id);
+    if (source === undefined || source.source !== candidate.source || source.target !== candidate.target || source.condition !== candidate.condition || source.sourceHandle !== candidate.sourceHandle || source.targetHandle !== candidate.targetHandle) return false;
+  }
+  return true;
+}
+
 function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => void; projectId: string }) {
   const [catalog, setCatalog] = useState<NodeCatalogItem[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
@@ -1134,13 +1156,19 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     setBusyAction('save');
     setNotice(null);
     try {
-      const saved = await api.saveWorkflow(canvasToWorkflow(workflow, nodes, edges));
+      const projected = canvasToWorkflow(workflow, nodes, edges);
+      const presentationOnly = canvasOnlyChangesPresentation(workflow, nodes, edges);
+      // Position-only Canvas edits belong to the layout resource. Avoiding the
+      // workflow API here keeps runtime/source records unchanged for a visual
+      // move while preserving the existing semantic save path for node/edge
+      // edits.
+      const saved = presentationOnly ? workflow : await api.saveWorkflow(projected);
       // Keep the migration/YAML serializer out of the initial IDE bundle; the
       // compatibility canvas path is loaded only when a canvas save occurs.
       const { renderCanvasResource } = await import('../declarative/migration');
       const canvasPath = `canvas/${saved.id}.canvas.yaml`;
       const currentCanvas = await api.projectFile(projectId, canvasPath).catch(() => undefined);
-      await api.saveProjectFile(projectId, canvasPath, renderCanvasResource(saved), currentCanvas?.sha256);
+      await api.saveProjectFile(projectId, canvasPath, renderCanvasResource(projected), currentCanvas?.sha256);
       setWorkflow(saved);
       setYamlSource((await api.declarativeYaml(projectId)).trim());
       setYamlDirty(false);
