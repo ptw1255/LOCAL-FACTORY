@@ -708,6 +708,15 @@ an API restart and observes the workflow result back into the same run record. S
 `TEMPORAL_TASK_QUEUE` to the worker when you need an explicit queue name instead of
 the prefix/version convention.
 
+Production workers and the API can connect to Temporal Cloud or a TLS-enabled
+self-hosted cluster without putting certificate material in the image. Mount a
+read-only secret volume and set `TEMPORAL_TLS_CERT_FILE`,
+`TEMPORAL_TLS_KEY_FILE`, and (when needed) `TEMPORAL_TLS_CA_FILE` to the mounted
+paths; set `TEMPORAL_TLS_SERVER_NAME` when the SNI name differs from the address.
+`TEMPORAL_API_KEY` is supported for Temporal Cloud. The API and worker use the
+same redacted connection settings, and startup fails closed when only one side of
+the mTLS client certificate pair is configured.
+
 The generic Temporal workflow pins a full definition, executes nondeterministic work
 in activities, uses a signal for approvals, and applies activity retry policy. Docker
 Compose provides PostgreSQL and a local Vault development server for an end-to-end
