@@ -93,4 +93,13 @@ describe('GitHubRepositoryClient', () => {
     expect(updates).toEqual(['pending', 'approved']);
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
+
+  it('merges a pull request with an explicit method and no secret in the payload', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ merged: true, sha: 'abc123', message: 'Pull Request successfully merged' }), { status: 200, headers: { 'x-github-request-id': 'req-merge-1' } }));
+    const result = await new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher }).mergePullRequest({ number: 12, method: 'squash', commitTitle: 'Ship change' });
+    expect(result).toEqual({ number: 12, merged: true, sha: 'abc123', message: 'Pull Request successfully merged', requestId: 'req-merge-1' });
+    const request = fetcher.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(JSON.parse(String(request?.body))).toEqual({ merge_method: 'squash', commit_title: 'Ship change' });
+    expect(String(request?.body)).not.toContain('secret-token');
+  });
 });

@@ -17,7 +17,7 @@ import { HttpOllamaClient, type OllamaClient, type OllamaModelResult } from './o
 import { WorkUnitDispatcher } from './work-unit-dispatcher.js';
 import type { RepositoryWorkspace } from '../repository/workspace.js';
 import { parseRepositoryCheckSandbox, RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryConflictError, RepositoryMutationError, RepositoryPolicyError } from '../repository/workspace.js';
-import { RepositoryCiError, RepositoryReviewError, type GitHubRepositoryClient } from '../repository/github.js';
+import { RepositoryCiError, RepositoryMergeError, RepositoryReviewError, type GitHubRepositoryClient } from '../repository/github.js';
 import type { OpenAIClient, OpenAIModelResult } from './openai.js';
 import { evaluatePolicy, PolicyDeniedError } from '../domain/policy.js';
 
@@ -665,7 +665,7 @@ export class LocalWorkflowExecutor {
             status: controller.signal.aborted ? 'cancelled' : error instanceof Error && 'code' in error && ['WORK_UNIT_TIMED_OUT', 'REPOSITORY_CHECK_TIMED_OUT'].includes(String(error.code)) ? 'timed_out' : 'failed',
             idempotencyKey: `${unitEvidenceKey}:failed`,
             error: error instanceof Error ? error.message : 'Unknown unit failure.',
-            metadata: failureMetadata ?? (error instanceof RepositoryCiError || error instanceof RepositoryReviewError
+            metadata: failureMetadata ?? (error instanceof RepositoryCiError || error instanceof RepositoryReviewError || error instanceof RepositoryMergeError
               ? this.operationMetadata(error.result)
               : error instanceof RepositoryMutationError
                 ? this.operationMetadata(error)
@@ -976,6 +976,21 @@ export class LocalWorkflowExecutor {
         if (failurePolicy === 'fail' && !['approved', 'merged'].includes(review.status)) {
           throw new RepositoryReviewError(`Pull request #${number} did not reach an approved state: ${review.status}.`, review);
         }
+        break;
+      }
+      case 'repositoryMerge': {
+        if (this.githubRepository === undefined) throw new Error('GitHub repository integration is not configured.');
+        const configuredNumber = typeof node.config.number === 'number' && node.config.number > 0 ? node.config.number : undefined;
+        const inputNumber = configuredNumber === undefined
+          ? inputs.map((input) => input !== null && typeof input === 'object' && typeof (input as { number?: unknown }).number === 'number' ? (input as { number: number }).number : undefined).find((value): value is number => value !== undefined)
+          : undefined;
+        const number = configuredNumber ?? inputNumber;
+        if (number === undefined) throw new Error('Repository merge requires a pull request number or upstream pull request result.');
+        const configuredMethod = node.config.method;
+        const method = configuredMethod === 'merge' || configuredMethod === 'rebase' || configuredMethod === 'squash' ? configuredMethod : 'squash';
+        const mergeResult = await this.githubRepository.mergePullRequest({ number, method, ...(typeof node.config.commitTitle === 'string' ? { commitTitle: node.config.commitTitle } : {}), ...(typeof node.config.commitMessage === 'string' ? { commitMessage: node.config.commitMessage } : {}) });
+        if (!mergeResult.merged) throw new RepositoryMergeError(`Pull request #${number} was not merged: ${mergeResult.message}.`, mergeResult);
+        result = mergeResult;
         break;
       }
       case 'repositoryCi': {
@@ -1600,6 +1615,9 @@ export class LocalWorkflowExecutor {
     if (typeof value.approvals === 'number') metadata['pull_request.approvals'] = value.approvals;
     if (typeof value.changesRequested === 'number') metadata['pull_request.changes_requested'] = value.changesRequested;
     if (typeof value.requiredApprovals === 'number') metadata['pull_request.required_approvals'] = value.requiredApprovals;
+    if (typeof value.merged === 'boolean') metadata['pull_request.merged'] = value.merged;
+    if (typeof value.sha === 'string') metadata['repository.merge_sha'] = value.sha;
+    if (typeof value.message === 'string' && typeof value.merged === 'boolean') metadata['pull_request.merge_message'] = value.message;
     if (typeof value.ref === 'string') metadata['ci.ref'] = value.ref;
     if (typeof value.status === 'string' && ['success', 'failure', 'pending', 'cancelled', 'timed_out'].includes(value.status)) metadata['ci.status'] = value.status;
     if (typeof value.exitCode === 'number') metadata['check.exit_code'] = value.exitCode;

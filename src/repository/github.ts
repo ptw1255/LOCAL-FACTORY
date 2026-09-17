@@ -11,6 +11,7 @@ export interface PullRequestStatus {
   requestId?: string;
 }
 export interface PullRequestStatusPollUpdate { status: PullRequestStatus['state'] | 'approved' | 'changes_requested' | 'pending' | 'timed_out'; approvals: number; changesRequested: number; }
+export interface PullRequestMergeResult { number: number; merged: boolean; sha?: string; message: string; requestId?: string; }
 export interface CheckRunSummary { name: string; status: string; conclusion: string | null; url?: string; summary?: string }
 export interface CiFailure { name: string; conclusion: string | null; url?: string; summary?: string }
 export interface CiResult { ref: string; status: 'success' | 'failure' | 'pending' | 'cancelled' | 'timed_out'; checks: CheckRunSummary[]; required: string[]; failures: CiFailure[]; requestId?: string }
@@ -26,6 +27,10 @@ export class RepositoryCiError extends Error {
 export class RepositoryReviewError extends Error {
   public readonly code = 'REPOSITORY_REVIEW_FAILED';
   public constructor(message: string, public readonly result: PullRequestStatus) { super(message); this.name = 'RepositoryReviewError'; }
+}
+export class RepositoryMergeError extends Error {
+  public readonly code = 'REPOSITORY_MERGE_FAILED';
+  public constructor(message: string, public readonly result: PullRequestMergeResult) { super(message); this.name = 'RepositoryMergeError'; }
 }
 
 export interface GitHubClientOptions { token?: string; secretRef?: string; secretBroker?: SecretBroker; owner: string; repo: string; fetcher?: typeof fetch }
@@ -110,6 +115,26 @@ export class GitHubRepositoryClient {
         input.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(input.signal?.reason); }, { once: true });
       });
     }
+  }
+
+  /** Merge an approved pull request using an explicit, allow-listed method. */
+  public async mergePullRequest(input: { number: number; method?: 'merge' | 'squash' | 'rebase'; commitTitle?: string; commitMessage?: string }): Promise<PullRequestMergeResult> {
+    if (!Number.isSafeInteger(input.number) || input.number <= 0) throw new Error('A positive pull request number is required.');
+    const response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.owner)}/${encodeURIComponent(this.options.repo)}/pulls/${input.number}/merge`, {
+      method: 'PUT',
+      headers: { ...(await this.headers()), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        merge_method: input.method ?? 'squash',
+        ...(input.commitTitle === undefined ? {} : { commit_title: input.commitTitle }),
+        ...(input.commitMessage === undefined ? {} : { commit_message: input.commitMessage }),
+      }),
+    });
+    if (!response.ok) throw new GitHubApiError(`GitHub pull request merge failed with status ${response.status}.`, response.status);
+    const body = await response.json() as { merged?: unknown; sha?: unknown; message?: unknown };
+    if (typeof body.merged !== 'boolean' || typeof body.message !== 'string') throw new Error('GitHub response did not contain merge metadata.');
+    const result: PullRequestMergeResult = { number: input.number, merged: body.merged, message: body.message, ...(typeof body.sha === 'string' ? { sha: body.sha } : {}) };
+    const requestId = response.headers.get('x-github-request-id');
+    return requestId === null ? result : { ...result, requestId };
   }
 
   public async getCheckRuns(ref: string): Promise<CheckRunSummary[]> {

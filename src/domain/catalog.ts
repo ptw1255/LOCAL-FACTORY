@@ -22,6 +22,7 @@ const unitKinds: Record<string, WorkUnitKind> = {
   repositoryPush: 'connector',
   repositoryPullRequest: 'connector',
   repositoryReview: 'connector',
+  repositoryMerge: 'connector',
   repositoryCi: 'connector',
 };
 
@@ -191,6 +192,13 @@ export const nodeCatalog: NodeCatalogItem[] = [
     category: 'Repository',
     description: 'Poll reviewer approval and merge state for an auditable pull request gate.',
     defaultConfig: { number: 0, requiredApprovals: 1, timeoutMs: 120000, intervalMs: 2000, failurePolicy: 'fail' },
+  },
+  {
+    type: 'repositoryMerge',
+    label: 'Merge pull request',
+    category: 'Repository',
+    description: 'Merge an approved pull request through an explicit approval-gated side effect.',
+    defaultConfig: { number: 0, method: 'squash', requiresApproval: true },
   },
 ];
 
