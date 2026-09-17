@@ -21,6 +21,15 @@ interface OtlpAttribute {
   value: Record<string, Primitive>;
 }
 
+const resourceKeys = new Set([
+  'service.name',
+  'service.version',
+  'telemetry.sdk.name',
+  'tenant.id',
+  'project.id',
+  'deployment.environment',
+]);
+
 function attributeValue(value: Primitive): Record<string, Primitive> {
   if (typeof value === 'boolean') return { boolValue: value };
   if (typeof value === 'number') return { doubleValue: value };
@@ -39,8 +48,18 @@ function unixNanos(timestamp: string): string {
 }
 
 function resource(event: RunEvent) {
+  // Resource attributes describe the emitting service and its deployment
+  // scope. Run/span/unit correlation belongs on the signal itself; keeping it
+  // out of the resource avoids duplicating high-cardinality data in OTLP
+  // backends while preserving tenant/project joins.
+  const resourceEvent = {
+    ...event,
+    attributes: Object.fromEntries(
+      Object.entries(event.attributes ?? {}).filter(([key]) => resourceKeys.has(key)),
+    ),
+  };
   return {
-    attributes: attributes({ ...event, attributes: event.attributes ?? {} }),
+    attributes: attributes(resourceEvent),
   };
 }
 
