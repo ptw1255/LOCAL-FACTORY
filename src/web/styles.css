@@ -397,6 +397,7 @@ h1, h2, h3, p { margin-top: 0; }
 .ide-editor-heading p { color: var(--muted); font-size: 10px; line-height: 1.45; margin: 0; }
 .ide-editor-actions { align-items: center; display: flex; gap: 8px; }
 .ide-editor-actions .button { white-space: nowrap; }
+.source-selection-highlight { background: rgba(79, 209, 165, 0.16); border-left: 2px solid #4fd1a5; }
 .ide-dirty, .ide-clean { font-size: 9px; white-space: nowrap; }
 .ide-dirty { color: var(--yellow); }
 .ide-clean { color: var(--accent); }
