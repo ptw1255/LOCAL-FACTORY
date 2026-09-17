@@ -323,6 +323,34 @@ export function nextObserveTab(tab: ObserveTab, key: string): ObserveTab | null 
   return nextIndex < 0 ? null : tabs[nextIndex]!;
 }
 
+/** Return the next focus target for a modal dialog's Tab sequence. */
+export function nextDialogFocusIndex(index: number, direction: -1 | 1, count: number): number {
+  if (count <= 0) return -1;
+  if (index < 0 || index >= count) return direction === 1 ? 0 : count - 1;
+  return (index + direction + count) % count;
+}
+
+function dialogFocusableElements(dialog: HTMLElement): HTMLElement[] {
+  return [...dialog.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )].filter((element) => element.getAttribute('aria-hidden') !== 'true' && element.getClientRects().length > 0);
+}
+
+function trapDialogFocus(event: KeyboardEvent, dialog: HTMLElement): void {
+  if (event.key !== 'Tab') return;
+  const focusables = dialogFocusableElements(dialog);
+  if (focusables.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const current = document.activeElement instanceof HTMLElement ? focusables.indexOf(document.activeElement) : -1;
+  const next = nextDialogFocusIndex(current, event.shiftKey ? -1 : 1, focusables.length);
+  if (current === -1 || (event.shiftKey && current === 0) || (!event.shiftKey && current === focusables.length - 1)) {
+    event.preventDefault();
+    focusables[next]?.focus();
+  }
+}
+
 export function projectSwitchRequiresConfirmation(currentProjectId: string | null, nextProjectId: string, dirty: boolean): boolean {
   return currentProjectId !== null && currentProjectId !== nextProjectId && dirty;
 }
@@ -802,6 +830,8 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [yamlDirty, setYamlDirty] = useState(false);
   const sourceSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const runInFlight = useRef(false);
+  const runInputDialogRef = useRef<HTMLFormElement | null>(null);
+  const runInputReturnFocusRef = useRef<HTMLElement | null>(null);
   const [studioMode, setStudioMode] = useState<'files' | 'tree' | 'canvas'>(() => readStudioMode(projectId));
 
   async function hydrateCanvasProjection(candidate: WorkflowDefinition): Promise<WorkflowDefinition> {
@@ -1210,6 +1240,32 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     await executeRun();
   }
 
+  useEffect(() => {
+    if (!runInputOpen) return;
+    runInputReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const timer = window.setTimeout(() => {
+      const dialog = runInputDialogRef.current;
+      if (dialog === null) return;
+      dialogFocusableElements(dialog)[0]?.focus();
+    }, 0);
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setRunInputOpen(false);
+        return;
+      }
+      const dialog = runInputDialogRef.current;
+      if (dialog !== null) trapDialogFocus(event, dialog);
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('keydown', onKeyDown, true);
+      runInputReturnFocusRef.current?.focus();
+      runInputReturnFocusRef.current = null;
+    };
+  }, [runInputOpen]);
+
   async function submitRunInput(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (workflow === null) return;
@@ -1297,7 +1353,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       ) : null}
       {runInputOpen ? (
         <div className="run-input-backdrop" role="presentation">
-          <form aria-label="Workflow run input" className="run-input-dialog" onSubmit={(event) => void submitRunInput(event)}>
+          <form aria-label="Workflow run input" aria-modal="true" className="run-input-dialog" onSubmit={(event) => void submitRunInput(event)} ref={runInputDialogRef} role="dialog">
             <div className="run-input-heading"><div><span className="eyebrow">Run preflight</span><h2>Provide workflow input</h2></div><button aria-label="Close run input" className="icon-button" onClick={() => setRunInputOpen(false)} type="button"><Icon name="close" size={14} /></button></div>
             <p>Input is validated against the workflow contract before any work unit executes.</p>
             {(() => { const artifact = selectWorkflowArtifact(artifacts, workflow.id, runEnvironment, latestCompiledArtifact.current); return <p className="run-input-artifact">{artifact === undefined ? `No compiled ${runEnvironment} artifact is available; this run will use the saved workflow.` : `Pinned artifact: ${artifact.id}`}</p>; })()}
@@ -1611,6 +1667,8 @@ function OperationalTree({
   const pendingProblem = useRef<SourceDiagnostic | null>(null);
   const draggedTab = useRef<string | null>(null);
   const quickOpenInputRef = useRef<HTMLInputElement | null>(null);
+  const quickOpenDialogRef = useRef<HTMLElement | null>(null);
+  const quickOpenReturnFocusRef = useRef<HTMLElement | null>(null);
   const resizingExplorer = useRef(false);
   const resizingBottomPanel = useRef(false);
   const syntaxCheckTimer = useRef<number | undefined>(undefined);
@@ -1705,7 +1763,25 @@ function OperationalTree({
   }, []);
 
   useEffect(() => {
-    if (quickOpen) window.setTimeout(() => quickOpenInputRef.current?.focus(), 0);
+    if (!quickOpen) return;
+    quickOpenReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const timer = window.setTimeout(() => quickOpenInputRef.current?.focus(), 0);
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setQuickOpen(false);
+        return;
+      }
+      const dialog = quickOpenDialogRef.current;
+      if (dialog !== null) trapDialogFocus(event, dialog);
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('keydown', onKeyDown, true);
+      quickOpenReturnFocusRef.current?.focus();
+      quickOpenReturnFocusRef.current = null;
+    };
   }, [quickOpen]);
 
   // Capture the asynchronously loaded aggregate source as the initial diff
@@ -2103,7 +2179,7 @@ function OperationalTree({
         <div className="ide-editor-heading"><div><span className="eyebrow">Declarative source</span><h2>Project definition</h2><p>Author the loop in YAML. Apply compiles it into the runtime model.</p></div><div className="ide-editor-actions"><span className={dirty ? 'ide-dirty' : 'ide-clean'}>{dirty ? 'Unsaved changes' : 'Synced'}</span><button aria-pressed={showDiff} className="button ghost" disabled={baselineSource === source && !dirty} onClick={() => setShowDiff((value) => !value)} type="button"><Icon name="code" size={14} /> {showDiff ? 'Editor' : 'Diff'}</button><button className="button ghost" onClick={() => void formatSource()} type="button"><Icon name="code" size={14} /> Format</button><button className="button primary" disabled={!dirty || busy} onClick={() => void applyYaml()} type="button"><Icon name="save" size={14} /> {busy ? 'Applying…' : 'Apply YAML'}</button><button className="icon-button" onClick={onCanvas} title="Open canvas compatibility view" type="button"><Icon name="studio" size={15} /></button></div></div>
         <div className="yaml-editor-wrap"><Suspense fallback={<div className="editor-loading">Loading editor…</div>}>{showDiff ? <LazyDiffEditor aria-label="Project source diff" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} original={baselineSource} modified={source} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, wordWrap: 'on', readOnly: true, renderSideBySide: true }} theme="vs-dark" /> : <LazyEditor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => { const nextSource = value ?? ''; setProblems([]); setError(null); onSourceChange(nextSource); scheduleSyntaxDiagnostics(nextSource, selectedPath); }} onMount={(editor, monaco) => { registerEditorLanguageProviders(monaco); editorLanguageContext.agentIds = workflow.agents.map((agent) => agent.id); editorLanguageContext.nodeIds = workflow.nodes.map((node) => node.id); editorRef.current = editor; monacoRef.current = monaco; editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { void saveShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF, () => { void formatShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { validateShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter | monaco.KeyMod.Shift, () => { runShortcutRef.current(); }); }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} />}</Suspense></div>
       {error === null ? <small className="ide-hint">Review the compiled tree on the right, then apply the file when it is ready. Invalid definitions never replace the active runtime. Shortcuts: Cmd/Ctrl+S apply · Shift+Alt+F format · Cmd/Ctrl+Enter validate · Cmd/Ctrl+Shift+Enter run.</small> : <div className="ide-error"><Icon name="warning" size={14} /> {error}</div>}
-        {quickOpen ? <div className="quick-open-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setQuickOpen(false); }} role="presentation"><section aria-label="Command palette" className="quick-open-dialog" role="dialog"><div className="quick-open-input"><Icon name="search" size={14} /><input aria-label="Search commands and files" autoComplete="off" onChange={(event) => setQuickQuery(event.target.value)} placeholder="Search commands or files…" ref={quickOpenInputRef} value={quickQuery} /></div><div className="quick-open-results"><div className="quick-open-heading">Commands</div>{([{ label: 'Apply source', hint: 'Save and compile active file', action: () => void applyYaml() }, { label: 'Validate workflow', hint: 'Run workflow validation', action: onValidate }, { label: 'Run workflow', hint: 'Start a workflow run', action: onRun }, { label: 'Open Observe', hint: 'Inspect runs and telemetry', action: onObserve }, ...(hintDismissed ? [{ label: 'Show workspace guide', hint: 'Reopen the quick-start hint', action: onReopenGuide }] : [])] as const).filter((command) => `${command.label} ${command.hint}`.toLowerCase().includes(quickQuery.trim().toLowerCase())).map((command) => <button className="quick-open-item" key={command.label} onClick={() => { setQuickOpen(false); command.action(); }} type="button"><Icon name="code" size={13} /><span><strong>{command.label}</strong><small>{command.hint}</small></span></button>)}<div className="quick-open-heading">Files</div>{quickMatches.map((file) => <button className="quick-open-item" key={file.path} onClick={() => { setQuickOpen(false); void selectFile(file); }} type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={13} /><span><strong>{file.path}</strong><small>{file.sha256 === '' ? 'Workspace file' : `Updated ${formatDate(file.updatedAt)}`}</small></span></button>)}{quickMatches.length === 0 ? <p className="inline-empty">No matching files.</p> : null}</div><div className="quick-open-footer"><span>Tab focus · Enter run · Esc close</span><kbd>⌘/Ctrl P</kbd></div></section></div> : null}
+        {quickOpen ? <div className="quick-open-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setQuickOpen(false); }} role="presentation"><section aria-label="Command palette" aria-modal="true" className="quick-open-dialog" ref={quickOpenDialogRef} role="dialog"><div className="quick-open-input"><Icon name="search" size={14} /><input aria-label="Search commands and files" autoComplete="off" onChange={(event) => setQuickQuery(event.target.value)} placeholder="Search commands or files…" ref={quickOpenInputRef} value={quickQuery} /></div><div className="quick-open-results"><div className="quick-open-heading">Commands</div>{([{ label: 'Apply source', hint: 'Save and compile active file', action: () => void applyYaml() }, { label: 'Validate workflow', hint: 'Run workflow validation', action: onValidate }, { label: 'Run workflow', hint: 'Start a workflow run', action: onRun }, { label: 'Open Observe', hint: 'Inspect runs and telemetry', action: onObserve }, ...(hintDismissed ? [{ label: 'Show workspace guide', hint: 'Reopen the quick-start hint', action: onReopenGuide }] : [])] as const).filter((command) => `${command.label} ${command.hint}`.toLowerCase().includes(quickQuery.trim().toLowerCase())).map((command) => <button className="quick-open-item" key={command.label} onClick={() => { setQuickOpen(false); command.action(); }} type="button"><Icon name="code" size={13} /><span><strong>{command.label}</strong><small>{command.hint}</small></span></button>)}<div className="quick-open-heading">Files</div>{quickMatches.map((file) => <button className="quick-open-item" key={file.path} onClick={() => { setQuickOpen(false); void selectFile(file); }} type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={13} /><span><strong>{file.path}</strong><small>{file.sha256 === '' ? 'Workspace file' : `Updated ${formatDate(file.updatedAt)}`}</small></span></button>)}{quickMatches.length === 0 ? <p className="inline-empty">No matching files.</p> : null}</div><div className="quick-open-footer"><span>Tab focus · Enter run · Esc close</span><kbd>⌘/Ctrl P</kbd></div></section></div> : null}
         <div className={`ide-bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`} style={{ '--bottom-panel-height': `${bottomPanelHeight}px` } as CSSProperties}>
           <div aria-label="Workspace output" className="ide-bottom-tabs" role="tablist">
             <button aria-controls="workspace-problems-panel" aria-selected={bottomTab === 'problems'} className={bottomTab === 'problems' ? 'active' : ''} id="workspace-problems-tab" onClick={() => { setBottomTab('problems'); setBottomOpen(true); }} role="tab" type="button">
