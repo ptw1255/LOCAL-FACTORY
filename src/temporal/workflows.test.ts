@@ -2,7 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
-import { planCompensations } from './workflows.js';
+import type { AgentDefinition } from '../domain/types.js';
+import { planCompensations, requiresTemporalApproval } from './workflows.js';
+
+const toolAgent: AgentDefinition = {
+  id: 'tool-agent', version: 1, name: 'Tool agent', purpose: 'Test', instructions: 'Test', skills: [], tools: ['repo.check'],
+  model: { provider: 'ollama', model: 'test' }, inputSchema: {}, outputSchema: {},
+  boundaries: { allowedConnections: [], allowedRepositories: [], protectedPaths: [], network: 'deny-by-default', dataClasses: ['internal'] },
+  limits: { maxIterations: 2, maxCostUsd: 1, maxDurationMs: 60_000 }, termination: { successConditions: [], failureConditions: [], escalationConditions: [] },
+  approval: { beforeSideEffects: true, beforeTools: [] }, observability: { captureInputs: false, captureOutputs: false, redactedFields: [] },
+};
 
 describe('Temporal compensation planning', () => {
   it('creates a deterministic reverse-order plan from completed units', () => {
@@ -29,5 +38,17 @@ describe('Temporal compensation planning', () => {
 
   it('omits completed units without compensation metadata', () => {
     expect(planCompensations(seedWorkflow, ['trigger', 'prepare', 'missing'])).toEqual([]);
+  });
+
+  it('applies the agent envelope approval policy in Temporal', () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.agents = [toolAgent];
+    const node = workflow.nodes.find((candidate) => candidate.type === 'agentLoop');
+    if (node === undefined) throw new Error('Agent node is missing.');
+    node.config.agentId = toolAgent.id;
+    expect(requiresTemporalApproval(node, workflow)).toBe(true);
+    toolAgent.approval = { beforeSideEffects: false, beforeTools: [] };
+    expect(requiresTemporalApproval(node, workflow)).toBe(false);
+    toolAgent.approval = { beforeSideEffects: true, beforeTools: [] };
   });
 });
