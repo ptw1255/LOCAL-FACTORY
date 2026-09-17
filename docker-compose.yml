@@ -103,6 +103,24 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # A Phoenix-free Collector boundary for teams that already operate an OTLP
+  # backend. Enable this profile independently and point the app at
+  # http://otel-collector-generic:4318.
+  otel-collector-generic:
+    image: otel/opentelemetry-collector-contrib:0.123.0
+    profiles: ["observability-generic"]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    environment:
+      GENERIC_OTLP_ENDPOINT: ${GENERIC_OTLP_ENDPOINT:-http://host.docker.internal:4318}
+    volumes:
+      - ./otel-collector-generic-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4318:4318"
+      - "4317:4317"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
   ollama:
     image: ollama/ollama:latest
     profiles: ["ollama"]
