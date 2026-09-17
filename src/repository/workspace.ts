@@ -51,6 +51,7 @@ export interface RepositoryCheckOptions {
 }
 export interface CheckResult {
   command: string;
+  repository: string;
   exitCode: number;
   durationMs: number;
   output: string;
@@ -66,7 +67,7 @@ export class RepositoryCheckTimeoutError extends Error {
   public readonly code = 'REPOSITORY_CHECK_TIMED_OUT';
   public constructor(message: string, public readonly result: CheckResult) { super(message); this.name = 'RepositoryCheckTimeoutError'; }
 }
-export interface PatchArtifact { id: string; baseRevision: string; changedPaths: string[]; files?: Array<{ path: string; sha256?: string }>; patch: string; createdAt: string }
+export interface PatchArtifact { id: string; repository: string; baseRevision: string; changedPaths: string[]; files?: Array<{ path: string; sha256?: string }>; patch: string; createdAt: string }
 export type RepositoryMutation =
   | { operation: 'create' | 'replace'; path: string; content: string; expectedSha256?: string }
   | { operation: 'delete'; path: string; expectedSha256?: string }
@@ -85,7 +86,7 @@ export class RepositoryPolicyError extends Error {
   public readonly code = 'REPOSITORY_POLICY_VIOLATION';
   public constructor(message: string, public readonly policy?: string, public readonly value?: string) { super(message); this.name = 'RepositoryPolicyError'; }
 }
-export interface GitRevisionResult { branch: string; revision: string }
+export interface GitRevisionResult { repository: string; branch: string; revision: string }
 
 const DEFAULT_CHECK_IMAGE = 'node:22-bookworm-slim';
 const DEFAULT_CHECK_MEMORY_MB = 512;
@@ -173,12 +174,17 @@ export function buildContainerCheckArgs(
 function truncate(value: string): string { return value.length > MAX_OUTPUT ? `${value.slice(0, MAX_OUTPUT)}\n… output truncated` : value; }
 
 export class RepositoryWorkspace {
-  private constructor(private readonly root: string, private readonly writable = false, private readonly temporary = false) {}
+  private constructor(
+    private readonly root: string,
+    private readonly writable = false,
+    private readonly temporary = false,
+    private readonly repository = `local:${createHash('sha256').update(root).digest('hex').slice(0, 16)}`,
+  ) {}
 
   public static async open(root: string): Promise<RepositoryWorkspace> {
     const resolved = await realpath(root);
     if (!(await stat(resolved)).isDirectory()) throw new Error('Repository workspace must be a directory.');
-    return new RepositoryWorkspace(resolved);
+    return new RepositoryWorkspace(resolved, false, false, await repositoryIdentity(resolved));
   }
 
   public get path(): string { return this.root; }
@@ -195,7 +201,7 @@ export class RepositoryWorkspace {
         return !isSensitiveRunFile(path.basename(source));
       },
     });
-    return new RepositoryWorkspace(await realpath(target), true, true);
+    return new RepositoryWorkspace(await realpath(target), true, true, this.repository);
   }
 
   /** Remove a temporary run workspace. Safe to call multiple times. */
@@ -243,7 +249,7 @@ export class RepositoryWorkspace {
     }));
     const createdAt = new Date().toISOString();
     const id = `sha256:${(await import('node:crypto')).createHash('sha256').update(JSON.stringify({ revision, patch, paths, files })).digest('hex')}`;
-    return { id, baseRevision: revision, changedPaths: paths, files, patch, createdAt };
+    return { id, repository: this.repository, baseRevision: revision, changedPaths: paths, files, patch, createdAt };
   }
 
   public async revision(): Promise<string> {
@@ -276,12 +282,12 @@ export class RepositoryWorkspace {
       const result = sandbox.mode === 'container'
         ? await execFileAsync('docker', buildContainerCheckArgs(this.root, command, sandbox), { timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2, ...(signal === undefined ? {} : { signal }) })
         : await execFileAsync(executable!, checkArgs, { cwd: this.root, env: isolatedCheckEnvironment(), timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2, ...(signal === undefined ? {} : { signal }) });
-      return { command, exitCode: 0, durationMs: Date.now() - started, output: truncate(`${result.stdout}${result.stderr}`), timedOut: false, sandbox };
+      return { command, repository: this.repository, exitCode: 0, durationMs: Date.now() - started, output: truncate(`${result.stdout}${result.stderr}`), timedOut: false, sandbox };
     } catch (error) {
       const failure = error as { code?: number | string; killed?: boolean; stdout?: string; stderr?: string; message?: string };
       const timeoutSignal = signal?.aborted === true && typeof signal.reason === 'object' && signal.reason !== null && 'code' in signal.reason && String((signal.reason as { code?: unknown }).code).includes('TIMED_OUT');
       const cancelled = signal?.aborted === true && !timeoutSignal;
-      return { command, exitCode: typeof failure.code === 'number' ? failure.code : 1, durationMs: Date.now() - started, output: truncate(`${failure.stdout ?? ''}${failure.stderr ?? failure.message ?? ''}`), timedOut: timeoutSignal || (!cancelled && failure.killed === true), ...(cancelled ? { cancelled: true } : {}), sandbox };
+      return { command, repository: this.repository, exitCode: typeof failure.code === 'number' ? failure.code : 1, durationMs: Date.now() - started, output: truncate(`${failure.stdout ?? ''}${failure.stderr ?? failure.message ?? ''}`), timedOut: timeoutSignal || (!cancelled && failure.killed === true), ...(cancelled ? { cancelled: true } : {}), sandbox };
     }
   }
 
@@ -367,7 +373,7 @@ export class RepositoryWorkspace {
     const current = await this.revision();
     if (current !== baseRevision) throw new RepositoryConflictError(`Repository base revision changed from ${baseRevision} to ${current}.`, baseRevision, current);
     await this.git(['switch', '-c', branch]);
-    return { branch, revision: await this.revision() };
+    return { repository: this.repository, branch, revision: await this.revision() };
   }
 
   public async commit(message: string, paths: string[] = []): Promise<GitRevisionResult> {
@@ -381,7 +387,7 @@ export class RepositoryWorkspace {
     if (!staged) throw new Error('No changes are staged for commit.');
     await this.git(['commit', '--no-verify', '-m', message.trim()]);
     const branch = (await execFileAsync('git', ['-C', this.root, 'branch', '--show-current'])).stdout.trim();
-    return { branch, revision: await this.revision() };
+    return { repository: this.repository, branch, revision: await this.revision() };
   }
 
   public async push(branch: string, remote = 'origin', options: { allowedRemotes?: string[] } = {}): Promise<GitRevisionResult> {
@@ -393,7 +399,7 @@ export class RepositoryWorkspace {
     const current = await this.currentBranch();
     if (current !== branch) throw new RepositoryConflictError(`Repository push branch "${branch}" is not checked out; current branch is "${current}".`, branch, current);
     await this.git(['push', '--set-upstream', remote, branch]);
-    return { branch, revision: await this.revision() };
+    return { repository: this.repository, branch, revision: await this.revision() };
   }
 
   public async currentBranch(): Promise<string> {
@@ -477,6 +483,38 @@ function isSensitiveRunFile(name: string): boolean {
   if (normalized === '.env' || (normalized.startsWith('.env.') && !['.env.example', '.env.template'].includes(normalized))) return true;
   if (/^(id_(rsa|dsa|ecdsa|ed25519)|credentials|service-account)/.test(normalized)) return true;
   return ['.pem', '.key', '.p12', '.pfx', '.jks'].some((extension) => normalized.endsWith(extension));
+}
+
+/** Return a credential-free repository identity suitable for durable evidence. */
+async function repositoryIdentity(root: string): Promise<string> {
+  try {
+    const result = await execFileAsync('git', ['-C', root, 'remote', 'get-url', 'origin']);
+    const remote = result.stdout.trim();
+    const normalized = normalizeRemoteIdentity(remote);
+    if (normalized !== undefined) return normalized;
+  } catch {
+    // A local fixture or repository without an origin still gets a stable identity.
+  }
+  return `local:${createHash('sha256').update(root).digest('hex').slice(0, 16)}`;
+}
+
+function normalizeRemoteIdentity(remote: string): string | undefined {
+  if (remote === '' || remote.startsWith('/') || remote.startsWith('.') || remote.includes('\\')) return undefined;
+  let value = remote;
+  if (value.startsWith('git@')) {
+    const separator = value.indexOf(':');
+    if (separator < 0) return undefined;
+    value = `${value.slice(4, separator)}/${value.slice(separator + 1)}`;
+  } else {
+    try {
+      const parsed = new URL(value);
+      value = `${parsed.hostname}${parsed.pathname}`;
+    } catch {
+      return undefined;
+    }
+  }
+  value = value.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '');
+  return value === '' || value.includes('@') ? undefined : value;
 }
 
 function isolatedCheckEnvironment(): NodeJS.ProcessEnv {

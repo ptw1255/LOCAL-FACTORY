@@ -95,6 +95,7 @@ describe('RepositoryWorkspace', () => {
     const workspace = await RepositoryWorkspace.open(process.cwd());
     const artifact = await workspace.patchArtifact();
     expect(artifact.id).toMatch(/^sha256:/);
+    expect(artifact.repository).toBe('github.com/ptw1255/agentic-workflow-factory');
     expect(artifact.baseRevision).toMatch(/^[0-9a-f]{40}$/);
     expect(typeof artifact.patch).toBe('string');
     expect(Array.isArray(artifact.changedPaths)).toBe(true);
@@ -180,6 +181,7 @@ describe('RepositoryWorkspace', () => {
     await run.applyMutations([{ operation: 'replace', path: 'README.md', content: 'after' }]);
     const committed = await run.commit('Apply workflow change', ['README.md']);
     expect(committed.branch).toBe('factory/change');
+    expect(committed.repository).toMatch(/^local:/);
     expect(committed.revision).toMatch(/^[0-9a-f]{40}$/);
     expect(await run.currentBranch()).toBe('factory/change');
     await expect(run.createBranch('factory/change', committed.revision)).rejects.toThrow();

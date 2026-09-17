@@ -1569,6 +1569,7 @@ export class LocalWorkflowExecutor {
     if (result === null || typeof result !== 'object') return undefined;
     const value = result as Record<string, unknown>;
     const metadata: Record<string, string | number | boolean> = {};
+    if (typeof value.repository === 'string') metadata['repository.name'] = value.repository;
     for (const [key, outputKey] of [['id', 'operation.id'], ['baseRevision', 'repository.base_revision'], ['branch', 'repository.branch'], ['revision', 'repository.revision']] as const) {
       if (typeof value[key] === 'string') metadata[outputKey] = value[key];
     }

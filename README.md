@@ -230,7 +230,9 @@ The image must already exist on the worker; no network pull is permitted. The
 check result and correlated operation evidence include the selected sandbox mode,
 network policy, image, and resource limits. Process mode remains the default for
 lightweight local development, while untrusted checks should use the container
-mode (or an equivalent isolated worker deployment).
+mode (or an equivalent isolated worker deployment). Repository checks, patch
+artifacts, and Git lifecycle results also carry a credential-free remote identity
+(or a stable local-workspace identity when no remote exists).
 
 If GitHub integration is configured with `GITHUB_TOKEN`,
 `GITHUB_REPOSITORY_OWNER`, and `GITHUB_REPOSITORY_NAME`, the bounded
