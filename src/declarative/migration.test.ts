@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 
 import { createSeedState, seedWorkflow } from '../domain/seed.js';
 import { applyCanvasResource, planResourceMigration, renderCanvasResource } from './migration.js';
@@ -22,6 +23,8 @@ describe('resource migration planner', () => {
     ]);
     expect(plan.files.find((item) => item.path === 'workflows/review.workflow.yaml')?.source).toContain('unit: WorkUnit/unit-review-agent');
     expect(plan.files.find((item) => item.path === 'canvas/review.canvas.yaml')?.source).toContain('workflowId: Workflow/review');
+    const parsedProject = parse(plan.files.find((item) => item.path === 'factory.yaml')?.source ?? '') as { spec?: { resources?: string[] } };
+    expect(parsedProject.spec?.resources).toEqual(plan.files.filter((item) => item.path !== 'factory.yaml').map((item) => item.path).sort());
   });
 
   it('is idempotent and preserves source identities', () => {
