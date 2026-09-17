@@ -131,14 +131,30 @@ function positiveNumber(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/** Parse the standard OTEL_EXPORTER_OTLP_HEADERS key=value list without
+ * logging or otherwise exposing credential-bearing values. */
+export function parseOtlpHeaders(value: string | undefined): Record<string, string> {
+  if (value === undefined || value.trim() === '') return {};
+  const headers: Record<string, string> = {};
+  for (const entry of value.split(',')) {
+    const separator = entry.indexOf('=');
+    if (separator <= 0) continue;
+    const key = entry.slice(0, separator).trim();
+    const headerValue = entry.slice(separator + 1).trim();
+    if (key !== '' && headerValue !== '') headers[key] = headerValue;
+  }
+  return headers;
+}
+
 function telemetryExporter(): CompositeTelemetryExporter | undefined {
   const exporters = [];
   const useOfficialSdk = process.env.OTEL_USE_SDK_EXPORTER !== 'false';
+  const otlpHeaders = parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS);
   const configuredPhoenixEndpoint = process.env.PHOENIX_ENDPOINT ?? process.env.PHOENIX_COLLECTOR_ENDPOINT;
   const phoenixEndpoint = configuredPhoenixEndpoint?.trim() || undefined;
   const phoenixApiKey = process.env.PHOENIX_API_KEY;
   if (phoenixEndpoint !== undefined) {
-    const headers: Record<string, string> = phoenixApiKey === undefined ? {} : { api_key: phoenixApiKey };
+    const headers: Record<string, string> = { ...otlpHeaders, ...(phoenixApiKey === undefined ? {} : { api_key: phoenixApiKey }) };
     exporters.push(useOfficialSdk
       ? new OtelSdkExporter(phoenixEndpoint, { headers, signals: ['trace'], deleteTraces: true })
       : new OtlpHttpExporter(phoenixEndpoint, headers, { deleteTraces: true, signals: ['trace'] }));
@@ -146,7 +162,7 @@ function telemetryExporter(): CompositeTelemetryExporter | undefined {
   const configuredOtlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   const otlpEndpoint = configuredOtlpEndpoint?.trim() || undefined;
   if (otlpEndpoint !== undefined && otlpEndpoint !== phoenixEndpoint) {
-    exporters.push(useOfficialSdk ? new OtelSdkExporter(otlpEndpoint) : new OtlpHttpExporter(otlpEndpoint));
+    exporters.push(useOfficialSdk ? new OtelSdkExporter(otlpEndpoint, { headers: otlpHeaders }) : new OtlpHttpExporter(otlpEndpoint, otlpHeaders));
   }
   return exporters.length === 0 ? undefined : new CompositeTelemetryExporter(exporters);
 }

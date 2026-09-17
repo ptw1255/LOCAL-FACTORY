@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createApp } from './app.js';
+import { createApp, parseOtlpHeaders } from './app.js';
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
 import { JsonStore } from '../storage/json-store.js';
@@ -40,6 +40,14 @@ describe('platform API', () => {
 
   afterEach(async () => {
     await app.close();
+  });
+
+  it('parses standard OTLP header configuration without accepting malformed entries', () => {
+    expect(parseOtlpHeaders('api-key=collector-secret, x-tenant=tenant-local, malformed, =missing-key, empty=')).toEqual({
+      'api-key': 'collector-secret',
+      'x-tenant': 'tenant-local',
+    });
+    expect(parseOtlpHeaders(undefined)).toEqual({});
   });
 
   it('exposes the catalog, workflows, connections, and metrics', async () => {
