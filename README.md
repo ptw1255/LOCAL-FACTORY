@@ -37,6 +37,44 @@ Open <http://localhost:5173>. Vite proxies `/api` requests to the Fastify server
 port 3100. Without `DATABASE_URL`, runtime state is stored in `.data/state.json`.
 Without Vault configuration, credential writes are rejected rather than persisted.
 
+### FACTORY CLI
+
+The repository includes a terminal-first CLI for managing, running, observing, and
+deploying the local Docker factory. The web dashboard remains an optional visual
+surface; the CLI is the primary control plane.
+Run it through npm, or link the package once to expose the `factory` command:
+
+```bash
+npm run factory --help
+npm link
+factory                         # start the stack and enter the terminal monitor
+factory status                  # show Docker service status
+factory build                   # build images without starting services
+factory deploy                  # build, start, and wait for health
+factory logs app                # tail app logs
+factory down                   # stop services (volumes are preserved)
+factory observe --follow        # live runs, approvals, and deployments
+factory tui                     # interactive monitor (q/a/d/r controls)
+factory dashboard               # quick-launch terminal portals
+factory approve <run-id>        # approve a waiting run
+factory deny <run-id> "reason"  # deny a waiting run
+factory --no-web                # run a CLI-only stack without static dashboard serving
+```
+
+The default `factory` command is the single-command launcher requested for local
+development. It starts the Compose stack, waits for `/api/health`, and enters the
+terminal monitor. Use `factory dashboard` for the terminal quick-launch selector, or
+`factory open` when you explicitly want the optional browser dashboard.
+`factory observe <run-id> --follow` streams a correlated run timeline;
+`factory tui` adds keyboard controls (`q` quit, `r` refresh, `a` approve first pending
+approval, `d` deny it). In CI or another non-interactive shell, the monitor prints one
+snapshot and exits. Use `FACTORY_BASE_URL` for a different API URL and
+`factory --all` to include the optional Temporal, observability, and Ollama profiles.
+Add `--no-web` when the deployment should expose only the API/control plane for
+terminal-native operation.
+Declarative authoring commands remain available (`factory validate`, `factory plan`,
+`factory tree`, and `factory run`).
+
 ### Control-plane authentication
 
 Local development defaults to an implicit admin principal so the Studio works without

@@ -44,5 +44,7 @@ describe('extracted IDE navigation state', () => {
     expect(readStudioMode('project-a')).toBe('tree');
     expect(readStudioTabs('project-a')).toEqual(['project.yaml', 'agents/reviewer.agent.yaml']);
     expect(readStudioMode('project-b')).toBe('files');
+    stubWindow('#/studio?view=canvas', storage(), storage());
+    expect(readStudioMode('project-a')).toBe('canvas');
   });
 });

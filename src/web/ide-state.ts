@@ -47,6 +47,9 @@ export function readObserveQueryValue(key: string): string | null {
 }
 
 export function readStudioMode(projectId: string): 'files' | 'tree' | 'canvas' {
+  const query = window.location.hash.split('?', 2)[1];
+  const requested = query === undefined ? null : new URLSearchParams(query).get('view');
+  if (requested === 'tree' || requested === 'canvas' || requested === 'files') return requested;
   const value = window.localStorage.getItem(STUDIO_MODE_STORAGE_PREFIX + projectId);
   return value === 'tree' || value === 'canvas' ? value : 'files';
 }

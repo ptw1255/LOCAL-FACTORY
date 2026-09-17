@@ -2,6 +2,9 @@
   "name": "agentic-n8n",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "factory": "./bin/factory.mjs"
+  },
   "type": "module",
   "scripts": {
     "build": "vite build",

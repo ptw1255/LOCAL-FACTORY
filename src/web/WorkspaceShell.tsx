@@ -38,8 +38,8 @@ export function WorkspaceShell({
         <div className="brand">
           <span className="brand-mark"><Icon name="spark" size={22} /></span>
           <div>
-            <strong>Agentic</strong>
-            <span>Workflow Factory</span>
+            <strong>FACTORY</strong>
+            <span>Agent Runtime</span>
           </div>
         </div>
         {projectSwitcher}
@@ -75,7 +75,7 @@ export function WorkspaceShell({
           <button aria-label="Open navigation" className="icon-button" onClick={onOpenMobileNavigation} type="button">
             <Icon name="menu" />
           </button>
-          <div className="mobile-brand"><Icon name="spark" /> Workflow Factory</div>
+          <div className="mobile-brand"><Icon name="spark" /> FACTORY</div>
           <span className="system-dot" />
         </div>
         {children}
