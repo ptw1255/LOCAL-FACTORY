@@ -491,6 +491,8 @@ TEMPORAL_DOCKER_SMOKE=1 npm run test:temporal-smoke
 It starts the Temporal profile, runs a deterministic wait workflow, restarts the
 worker while the run is in flight, verifies terminal success and lifecycle
 evidence, checks for duplicate completed WorkUnits, and tears down the profile.
+The harness restores the seeded `workflow-agent-intake` definition after the run,
+including when a smoke assertion fails.
 
 Temporal agent activities accept declared tool calls through a worker-side
 registry. The built-in `repo.*`, `workflow.code`, and `workflow.evaluate` tools

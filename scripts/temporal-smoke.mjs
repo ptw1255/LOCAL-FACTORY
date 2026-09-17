@@ -40,12 +40,14 @@ async function json(url, options = {}) {
 
 const unit = (id) => ({ kind: 'deterministic', version: 1, inputSchema: 'any', outputSchema: 'any', timeoutMs: 60_000, retryAttempts: 1, idempotencyKey: `temporal-smoke:${id}:v1` });
 
+let originalWorkflow;
+let smokeFailed = false;
 try {
   compose('up', '-d', '--build');
   await waitFor('http://localhost:3100/api/health', async (response) => response.ok && (await response.json()).executionEngine === 'temporal');
-  const existing = await json('http://localhost:3100/api/workflows/workflow-agent-intake', { headers: scopeHeaders });
+  originalWorkflow = await json('http://localhost:3100/api/workflows/workflow-agent-intake', { headers: scopeHeaders });
   const workflow = {
-    ...existing,
+    ...originalWorkflow,
     agents: [],
     trigger: { type: 'manualTrigger' },
     nodes: [
@@ -74,6 +76,24 @@ try {
   for (const nodeId of ['smoke-trigger', 'smoke-wait', 'smoke-output']) if (!completed.includes(nodeId)) throw new Error(`Temporal smoke did not record completion for ${nodeId}.`);
   if (new Set(completed).size !== completed.length) throw new Error(`Temporal smoke detected duplicate completed WorkUnits: ${completed.join(', ')}`);
   console.log('Temporal Docker smoke passed (worker restart, terminal run, lifecycle evidence, no duplicate completions).');
+} catch (error) {
+  smokeFailed = true;
+  throw error;
 } finally {
+  if (originalWorkflow !== undefined) {
+    try {
+      // PUT is version-checked and increments the workflow version, so restore
+      // the original definition using the version created by the smoke update.
+      await json('http://localhost:3100/api/workflows/workflow-agent-intake', {
+        method: 'PUT',
+        headers: scopeHeaders,
+        body: JSON.stringify({ ...originalWorkflow, version: originalWorkflow.version + 1 }),
+      });
+      console.log('Temporal smoke restored workflow-agent-intake.');
+    } catch (restoreError) {
+      console.error(`Temporal smoke could not restore workflow-agent-intake: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`);
+      if (!smokeFailed) throw restoreError;
+    }
+  }
   compose('down', '--remove-orphans');
 }
