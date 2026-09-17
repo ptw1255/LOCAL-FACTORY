@@ -113,6 +113,29 @@ describe('platform API', () => {
     expect(repeated.json<{ id: string; replayOfRunId: string; retryIdempotencyKey: string }>()).toEqual(expect.objectContaining({ id: retried.id, replayOfRunId: source.id, retryIdempotencyKey: 'api-retry-1' }));
   });
 
+  it('exposes and resolves incomplete tool checkpoints through the operator API', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agentNode === undefined) throw new Error('Agent node is missing.');
+    const run = createQueuedRun(workflow);
+    run.status = 'failed';
+    run.error = 'Agent tool has an incomplete checkpoint.';
+    await store.mutate((state) => { state.runs.push(run); });
+    // Seed the unresolved checkpoint after the run exists so the listing is
+    // tested independently from the recovery mutation.
+    await store.mutate((state) => { state.evidence.push({ id: 'started-api', runId: run.id, unitId: agentNode.id, operation: 'agent.tool', idempotencyKey: 'pending-call:started', attempt: 1, status: 'started', occurredAt: new Date().toISOString() }); });
+    const checkpoints = await app.inject({ method: 'GET', url: `/api/runs/${run.id}/tool-checkpoints` });
+    expect(checkpoints.statusCode).toBe(200);
+    expect(checkpoints.json<{ items: Array<{ callId: string; status: string }> }>().items).toEqual([expect.objectContaining({ callId: 'pending-call', status: 'incomplete' })]);
+    const recovery = await app.inject({ method: 'POST', url: `/api/runs/${run.id}/tool-recovery`, payload: { unitId: agentNode.id, callId: 'pending-call', resolution: 'failed', reason: 'Operator could not verify completion.', actor: 'api-operator' } });
+    expect(recovery.statusCode).toBe(200);
+    expect(recovery.json<{ status: string }>().status).toBe('failed');
+    const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${run.id}` });
+    expect(evidence.json<{ items: Array<{ idempotencyKey?: string; status: string; source?: string }> }>().items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ idempotencyKey: 'pending-call:recovered', status: 'failed', source: 'operator-recovery' }),
+    ]));
+  });
+
   it('lists approval records within the requested project scope', async () => {
     await store.mutate((state) => {
       state.approvals.push({ id: 'approval-api-test', tenantId: 'tenant-local', projectId: 'project-local', runId: 'run-api-test', nodeId: 'push', operation: 'repositoryPush', bindingHash: 'a'.repeat(64), decision: 'pending', requestedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() });
