@@ -207,6 +207,10 @@ export interface RunRecord {
   workflowId: string;
   workflowName: string;
   workflowVersion: number;
+  /** Content identity of the immutable workflow plus agent release bundle. */
+  releaseBundleHash?: string;
+  /** Agent IDs and versions pinned when this run was created. */
+  pinnedAgentVersions?: Record<string, number>;
   artifactId?: string;
   /** Environment selected for this execution (for example local or staging). */
   environment?: string;
