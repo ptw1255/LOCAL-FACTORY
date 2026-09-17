@@ -4,14 +4,21 @@ import { activityInfo, cancellationSignal } from '@temporalio/activity';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
 import type { WorkUnitDefinition, WorkflowNode } from '../domain/types.js';
+import { RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryWorkspace } from '../repository/workspace.js';
 import { WorkUnitDispatcher } from '../runtime/work-unit-dispatcher.js';
 import type { TemporalActivityLifecycle, TemporalObservabilitySink } from './observability.js';
 
 let observabilitySink: TemporalObservabilitySink | undefined;
+let repositoryWorkspace: RepositoryWorkspace | undefined;
 
 /** Configure the worker-side durable sink; tests can inject a deterministic fake. */
 export function configureTemporalObservabilitySink(sink: TemporalObservabilitySink | undefined): void {
   observabilitySink = sink;
+}
+
+/** Configure the bounded repository workspace available to repository activities. */
+export function configureTemporalRepositoryWorkspace(workspace: RepositoryWorkspace | undefined): void {
+  repositoryWorkspace = workspace;
 }
 
 export interface NodeActivityInput {
@@ -198,6 +205,25 @@ async function executeNodeImplementation(
       return input.config.result === true;
     case 'evaluator':
       return executeDeterministicEvaluator(input.config, input.inputs ?? []);
+    case 'repositoryCheck': {
+      if (repositoryWorkspace === undefined) {
+        throw new Error('Repository workspace is not configured for this Temporal worker.');
+      }
+      const command = typeof input.config.command === 'string' ? input.config.command : 'npm test';
+      const timeoutMs = typeof input.config.timeoutMs === 'number' ? input.config.timeoutMs : undefined;
+      const required = input.config.required !== false;
+      const check = await repositoryWorkspace.runCheck(command, timeoutMs, signal);
+      const result = { ...check, required, promotionBlocked: required && (check.timedOut || check.exitCode !== 0) };
+      if (required && check.timedOut) throw new RepositoryCheckTimeoutError(`Required repository check timed out: ${command}.`, check);
+      if (required && check.exitCode !== 0) throw new RepositoryCheckError(`Required repository check failed: ${command}.`, check);
+      return result;
+    }
+    case 'repositoryPatch': {
+      if (repositoryWorkspace === undefined) {
+        throw new Error('Repository workspace is not configured for this Temporal worker.');
+      }
+      return repositoryWorkspace.patchArtifact();
+    }
     case 'approval':
       // The workflow layer holds this activity at a deterministic condition
       // until the operator signal arrives; once dispatched, the human gate is

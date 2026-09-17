@@ -9,6 +9,7 @@ import { PlatformTemporalObservabilitySink } from './observability.js';
 import { JsonStore } from '../storage/json-store.js';
 import { PostgresStore } from '../storage/postgres-store.js';
 import type { PlatformStore } from '../storage/store.js';
+import { RepositoryWorkspace } from '../repository/workspace.js';
 
 const address = process.env.TEMPORAL_ADDRESS ?? 'localhost:7233';
 const namespace = process.env.TEMPORAL_NAMESPACE ?? 'default';
@@ -18,6 +19,11 @@ const databaseUrl = process.env.DATABASE_URL;
 const dataFile = process.env.DATA_FILE ?? path.join(process.cwd(), '.data', 'state.json');
 const store: PlatformStore = databaseUrl === undefined ? new JsonStore(dataFile) : new PostgresStore(databaseUrl);
 configureTemporalObservabilitySink(new PlatformTemporalObservabilitySink(store));
+const configuredRepositoryWorkspace = process.env.REPOSITORY_WORKSPACE?.trim();
+const repositoryWorkspace = configuredRepositoryWorkspace === undefined || configuredRepositoryWorkspace === ''
+  ? undefined
+  : await RepositoryWorkspace.open(configuredRepositoryWorkspace);
+activities.configureTemporalRepositoryWorkspace(repositoryWorkspace);
 const connection = await NativeConnection.connect({ address });
 const worker = await Worker.create({
   connection,
@@ -31,5 +37,6 @@ try {
   await worker.run();
 } finally {
   configureTemporalObservabilitySink(undefined);
+  activities.configureTemporalRepositoryWorkspace(undefined);
   await store.close?.();
 }

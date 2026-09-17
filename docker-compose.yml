@@ -138,11 +138,15 @@ services:
       TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE_PREFIX: ${TEMPORAL_TASK_QUEUE_PREFIX:-agentic-workflows}
       TEMPORAL_WORKFLOW_VERSION: ${TEMPORAL_WORKFLOW_VERSION:-1}
+      # Optional bounded repository workspace for repository check/patch activities.
+      REPOSITORY_WORKSPACE: ${REPOSITORY_WORKSPACE:-}
     depends_on:
       postgres:
         condition: service_healthy
       temporal:
         condition: service_started
+    volumes:
+      - app_data:/app/.data
     restart: unless-stopped
 
 volumes:

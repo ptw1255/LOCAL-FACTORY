@@ -1,8 +1,13 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { WorkUnitTimeoutError } from '../runtime/work-unit-dispatcher.js';
-import { configureTemporalObservabilitySink, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
+import { configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
+import { RepositoryWorkspace } from '../repository/workspace.js';
 
 describe('Temporal node activities', () => {
   it('executes deterministic nodes through the WorkUnit contract', async () => {
@@ -165,6 +170,46 @@ describe('Temporal node activities', () => {
       inputs: [null],
       unit: defaultWorkUnit('evaluator'),
     })).rejects.toThrow('Evaluator threshold failed');
+  });
+
+  it('executes repository checks through the configured Temporal workspace', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-check-'));
+    await writeFile(path.join(directory, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }));
+    const workspace = await RepositoryWorkspace.open(directory);
+    configureTemporalRepositoryWorkspace(workspace);
+    try {
+      await expect(executeNodeActivity({
+        runId: 'run-repository-check',
+        nodeId: 'check',
+        nodeType: 'repositoryCheck',
+        label: 'Run tests',
+        config: { command: 'npm test' },
+        unit: defaultWorkUnit('repositoryCheck'),
+      })).resolves.toMatchObject({ result: { command: 'npm test', exitCode: 0, required: true, promotionBlocked: false, timedOut: false } });
+    } finally {
+      configureTemporalRepositoryWorkspace(undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('fails required Temporal repository checks and permits advisory failures', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-check-fail-'));
+    await writeFile(path.join(directory, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(2)"' } }));
+    const workspace = await RepositoryWorkspace.open(directory);
+    configureTemporalRepositoryWorkspace(workspace);
+    try {
+      await expect(executeNodeActivity({
+        runId: 'run-repository-check-required', nodeId: 'check', nodeType: 'repositoryCheck', label: 'Required check',
+        config: { command: 'npm test' }, unit: defaultWorkUnit('repositoryCheck'),
+      })).rejects.toThrow('Required repository check failed');
+      await expect(executeNodeActivity({
+        runId: 'run-repository-check-advisory', nodeId: 'check', nodeType: 'repositoryCheck', label: 'Advisory check',
+        config: { command: 'npm test', required: false }, unit: defaultWorkUnit('repositoryCheck'),
+      })).resolves.toMatchObject({ result: { exitCode: 2, required: false, promotionBlocked: false } });
+    } finally {
+      configureTemporalRepositoryWorkspace(undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('rejects non-HTTP(S) URLs before making a Temporal request', async () => {
