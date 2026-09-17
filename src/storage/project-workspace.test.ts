@@ -39,6 +39,27 @@ describe('ProjectWorkspace filesystem source store', () => {
     expect((await workspace.list(scope)).files).toHaveLength(0);
   });
 
+  it('preflights batch hashes so a conflict does not partially apply files', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-workspace-batch-'));
+    const workspace = new ProjectWorkspace(root);
+    const scope = { tenantId: 'tenant-a', projectId: 'project-a' };
+    const first = await workspace.save(scope, 'workflows/main.workflow.yaml', 'version: 1');
+    const second = await workspace.save(scope, 'units/main.unit.yaml', 'version: 1');
+    const result = await workspace.saveMany(scope, [
+      { path: 'workflows/main.workflow.yaml', content: 'version: 2', expectedSha256: first.file?.sha256 },
+      { path: 'units/main.unit.yaml', content: 'version: 2', expectedSha256: 'stale' },
+    ]);
+    expect(result).toEqual({ status: 'conflict' });
+    expect((await workspace.read(scope, 'workflows/main.workflow.yaml'))?.content).toBe('version: 1');
+    expect((await workspace.read(scope, 'units/main.unit.yaml'))?.content).toBe('version: 1');
+    const saved = await workspace.saveMany(scope, [
+      { path: 'workflows/main.workflow.yaml', content: 'version: 2', expectedSha256: first.file?.sha256 },
+      { path: 'units/main.unit.yaml', content: 'version: 2', expectedSha256: second.file?.sha256 },
+    ]);
+    expect(saved.status).toBe('saved');
+    expect(saved.files?.map((file) => file.content)).toEqual(['version: 2', 'version: 2']);
+  });
+
   it('rejects symlinked tenant and project scopes', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-workspace-scope-links-'));
     const outside = await mkdtemp(path.join(os.tmpdir(), 'factory-workspace-scope-outside-'));

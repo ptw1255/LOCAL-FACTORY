@@ -467,6 +467,27 @@ describe('platform API', () => {
     expect(loaded.json<{ content: string }>().content).toBe('filesystem source');
   });
 
+  it('applies file batches atomically when hashes are current', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const first = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'workflow.yaml', content: 'version: 1' } });
+    const second = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'unit.yaml', content: 'version: 1' } });
+    const firstFile = first.json<{ sha256: string }>();
+    const secondFile = second.json<{ sha256: string }>();
+    const conflict = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files/batch', headers, payload: { files: [
+      { path: 'workflow.yaml', content: 'version: 2', expectedSha256: firstFile.sha256 },
+      { path: 'unit.yaml', content: 'version: 2', expectedSha256: 'stale' },
+    ] } });
+    expect(conflict.statusCode).toBe(409);
+    expect((await app.inject({ method: 'GET', url: '/api/projects/project-local/files?path=workflow.yaml', headers })).json<{ content: string }>().content).toBe('version: 1');
+    expect((await app.inject({ method: 'GET', url: '/api/projects/project-local/files?path=unit.yaml', headers })).json<{ content: string }>().content).toBe('version: 1');
+    const saved = await app.inject({ method: 'PUT', url: '/api/projects/project-local/files/batch', headers, payload: { files: [
+      { path: 'workflow.yaml', content: 'version: 2', expectedSha256: firstFile.sha256 },
+      { path: 'unit.yaml', content: 'version: 2', expectedSha256: secondFile.sha256 },
+    ] } });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json<{ files: Array<{ path: string; content: string }> }>().files.map((file) => file.content)).toEqual(['version: 2', 'version: 2']);
+  });
+
   it('rolls back generated files when a mounted workspace migration fails partway through', async () => {
     await app.close();
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-api-migration-rollback-'));
