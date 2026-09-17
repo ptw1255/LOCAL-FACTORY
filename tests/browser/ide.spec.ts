@@ -162,11 +162,34 @@ test.describe('Observe and Deployments', () => {
     await expect(card).toBeVisible();
     await page.getByRole('combobox', { name: 'Filter deployments by observed state' }).selectOption('all');
 
+    // Exercise the operational lifecycle rather than only rendering its
+    // controls. Start is immediate for the local runtime adapter; Stop has an
+    // explicit confirmation boundary before the desired state changes.
+    const startResponse = page.waitForResponse((response) => response.url().includes('/api/deployments/') && response.url().endsWith('/action') && response.request().method() === 'POST');
+    await card.getByRole('button', { name: 'Start', exact: true }).dispatchEvent('click');
+    await expect((await startResponse).status()).toBe(200);
+    await expect.poll(async () => {
+      const response = await request.get('/api/deployments');
+      const items = await response.json() as { items: Array<{ desiredState: string; observedState: string }> };
+      return items.items[0] === undefined ? '' : `${items.items[0].desiredState}:${items.items[0].observedState}`;
+    }).toBe('running:live');
+    await page.reload();
+    const liveCard = page.locator('article.connection-card').first();
+    await expect(liveCard.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+    page.once('dialog', (dialog) => void dialog.accept());
+    await liveCard.getByRole('button', { name: 'Stop', exact: true }).dispatchEvent('click');
+    await expect.poll(async () => {
+      const response = await request.get('/api/deployments');
+      const items = await response.json() as { items: Array<{ desiredState: string; observedState: string }> };
+      return items.items[0] === undefined ? '' : `${items.items[0].desiredState}:${items.items[0].observedState}`;
+    }).toBe('stopped:stopped');
+
     await card.getByRole('button', { name: 'Observe' }).click();
     await expect(page).toHaveURL(/#\/observe\?workflowId=workflow-agent-intake&environment=local/);
     await expect(page.getByRole('heading', { name: 'Observe' })).toBeVisible();
 
-    await page.goto('/#/deployments');
+    await page.getByRole('button', { name: 'Deployments', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Deployments' })).toBeVisible();
     const refreshedCard = page.locator('article.connection-card').first();
     await expect(refreshedCard).toBeVisible();
     const source = refreshedCard.getByTitle('Open workflows/workflow-agent-intake.workflow.yaml');
