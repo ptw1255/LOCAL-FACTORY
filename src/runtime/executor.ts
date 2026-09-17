@@ -965,6 +965,19 @@ export class LocalWorkflowExecutor {
               && evidence.idempotencyKey === `${call.callId}:started`,
             ));
             if (pendingToolEvidence !== undefined) {
+              await this.events.emit(runId, 'agent.tool.incomplete', `Agent tool ${call.name} has an incomplete checkpoint; manual recovery is required.`, {
+                nodeId: node.id,
+                signal: 'log',
+                spanKind: 'tool',
+                severityText: 'ERROR',
+                attributes: {
+                  'openinference.span.kind': 'TOOL',
+                  'tool.name': call.name,
+                  'tool.call_id': call.callId,
+                  'tool.checkpoint': 'incomplete',
+                  ...this.sourceMetadata(node),
+                },
+              });
               throw new Error(`Agent tool "${call.name}" has an incomplete checkpoint; refusing to duplicate side effects.`);
             }
             const argumentsHash = createHash('sha256').update(call.arguments).digest('hex');

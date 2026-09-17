@@ -715,6 +715,39 @@ describe('LocalWorkflowExecutor', () => {
     expect((await events.list(run.id)).some((event) => event.type === 'agent.tool.recovered')).toBe(true);
   });
 
+  it('emits an operator-visible event and fails closed on an incomplete tool checkpoint', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agent === undefined || agentNode === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider: 'openai', model: 'gpt-5' };
+    agent.tools = ['repo.check'];
+    agentNode.config.maxIterations = 1;
+    let providerCalled = false;
+    let releaseProvider!: () => void;
+    const providerReleased = new Promise<void>((resolve) => { releaseProvider = resolve; });
+    const openai = {
+      chat: async () => {
+        providerCalled = true;
+        await providerReleased;
+        return { content: '', model: 'gpt-5', toolCalls: [{ callId: 'incomplete-call', name: 'repo.check', arguments: '{}' }] };
+      },
+    };
+    let toolExecutions = 0;
+    const toolExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, openai, new Map([
+      ['repo.check', async () => { toolExecutions += 1; return { passed: true }; }],
+    ]));
+    const run = await toolExecutor.start(workflow);
+    await waitFor(async () => providerCalled);
+    await events.recordEvidence({ runId: run.id, unitId: agentNode.id, operation: 'agent.tool', idempotencyKey: 'incomplete-call:started', status: 'started', input: { name: 'repo.check', callId: 'incomplete-call' } });
+    releaseProvider();
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    expect(toolExecutions).toBe(0);
+    const recorded = await events.list(run.id);
+    expect(recorded.some((event) => event.type === 'agent.tool.incomplete' && event.severityText === 'ERROR')).toBe(true);
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.error).toContain('incomplete checkpoint');
+  });
+
   it('fails closed when an agent requests an undeclared tool', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];
