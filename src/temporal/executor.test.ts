@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed.js';
+import { defaultWorkUnit } from '../domain/catalog.js';
 import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
 import type { TemporalWorkflowResult } from './workflows.js';
@@ -213,5 +214,25 @@ describe('TemporalWorkflowExecutor', () => {
     const approved = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id));
     expect(approved?.approvedNodeIds).toEqual(['prepare']);
     expect((await events.list(run.id)).filter((event) => event.type === 'approval.received')).toHaveLength(1);
+  });
+
+  it('routes approval signals to side-effect nodes that declare requiresApproval', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-side-effect-approval-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-side-effect-approval');
+    const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-temporal-side-effect-approval';
+    const node = workflow.nodes.find((candidate) => candidate.id === 'prepare');
+    if (node === undefined) throw new Error('Prepare node is missing.');
+    node.type = 'repositoryMerge';
+    node.config = { requiresApproval: true, number: 42 };
+    node.unit = defaultWorkUnit('repositoryMerge');
+    const run = await executor.start(workflow);
+    await executor.approve(run.id);
+    expect(handle.signal).toHaveBeenCalledWith('approve', 'prepare');
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.approvedNodeIds))).toEqual(['prepare']);
   });
 });
