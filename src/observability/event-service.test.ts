@@ -68,6 +68,15 @@ describe('EventService retention', () => {
     }));
   });
 
+  it('links node events into parent-child spans when no explicit parent is supplied', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const service = new EventService(new JsonStore(path.join(directory, 'state.json')));
+    const started = await service.emit('run-1', 'unit.started', 'started', { nodeId: 'unit-1', signal: 'trace' });
+    const completed = await service.emit('run-1', 'unit.completed', 'completed', { nodeId: 'unit-1', signal: 'trace' });
+    expect(completed.parentSpanId).toBe(started.spanId);
+    expect(completed.traceId).toBe(started.traceId);
+  });
+
   it('removes events older than the configured window', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
