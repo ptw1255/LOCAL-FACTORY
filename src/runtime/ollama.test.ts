@@ -16,9 +16,9 @@ describe('HttpOllamaClient', () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       model: 'llama3.2', message: { content: 'done' }, prompt_eval_count: 4, eval_count: 2,
     }), { status: 200 }));
-    const result = await new HttpOllamaClient({ baseUrl: 'http://ollama:11434', fetcher }).chat({ agent, goal: 'Do it', signal: new AbortController().signal });
+    const result = await new HttpOllamaClient({ baseUrl: 'http://ollama:11434', fetcher }).chat({ agent, goal: 'Do it', traceId: 'trace-ollama', signal: new AbortController().signal });
     expect(result).toEqual({ content: 'done', model: 'llama3.2', promptTokens: 4, completionTokens: 2 });
-    expect(fetcher).toHaveBeenCalledWith('http://ollama:11434/api/chat', expect.objectContaining({ method: 'POST' }));
+    expect(fetcher).toHaveBeenCalledWith('http://ollama:11434/api/chat', expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ 'x-client-request-id': 'trace-ollama' }) }));
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({ model: 'llama3.2', stream: false });
   });
 

@@ -2,7 +2,7 @@ import type { AgentDefinition } from '../domain/types.js';
 
 export interface OllamaClient {
   ensureModel(input: { agent: AgentDefinition; signal: AbortSignal }): Promise<void>;
-  chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal }): Promise<OllamaModelResult>;
+  chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string }): Promise<OllamaModelResult>;
 }
 
 export interface OllamaModelResult {
@@ -24,12 +24,12 @@ export class HttpOllamaClient implements OllamaClient {
     this.baseUrl = (options.baseUrl ?? process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434').replace(/\/$/, '');
     this.fetcher = options.fetcher ?? fetch;
   }
-  public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal }): Promise<OllamaModelResult> {
+  public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string }): Promise<OllamaModelResult> {
     const model = input.agent.model.model;
     if (model === undefined) throw new Error(`Ollama agent "${input.agent.id}" must declare model.model.`);
     await this.ensureModel(input);
     const response = await this.fetcher(`${input.agent.model.endpoint ?? this.baseUrl}/api/chat`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST', headers: { 'content-type': 'application/json', ...(input.traceId === undefined ? {} : { 'x-client-request-id': input.traceId }) },
       signal: AbortSignal.any([input.signal, AbortSignal.timeout(input.agent.limits.maxDurationMs)]),
       body: JSON.stringify({ model, stream: false, messages: [
         { role: 'system', content: input.agent.instructions }, { role: 'user', content: input.goal },
