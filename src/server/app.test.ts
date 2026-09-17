@@ -98,6 +98,17 @@ describe('platform API', () => {
     }
   });
 
+  it('retries a failed run with source provenance through the API', async () => {
+    const source = createQueuedRun(seedWorkflow, { input: { retry: true }, artifactId: 'sha256:retry' });
+    source.status = 'failed';
+    source.error = 'transient failure';
+    await store.mutate((state) => { state.runs.push(source); });
+
+    const response = await app.inject({ method: 'POST', url: `/api/runs/${source.id}/retry` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ replayOfRunId: string; artifactId: string; input: { retry: boolean } }>()).toEqual(expect.objectContaining({ replayOfRunId: source.id, artifactId: 'sha256:retry', input: { retry: true } }));
+  });
+
   it('lists approval records within the requested project scope', async () => {
     await store.mutate((state) => {
       state.approvals.push({ id: 'approval-api-test', tenantId: 'tenant-local', projectId: 'project-local', runId: 'run-api-test', nodeId: 'push', operation: 'repositoryPush', bindingHash: 'a'.repeat(64), decision: 'pending', requestedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() });

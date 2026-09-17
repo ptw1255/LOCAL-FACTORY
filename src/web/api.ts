@@ -129,6 +129,7 @@ export const api = {
   dryRun: (id: string, options: { artifactId?: string; environment?: string; deploymentId?: string; input?: unknown } = {}) => request<{ dryRun: true; workflowId: string; workflowVersion: number; artifactId?: string; environment?: string; deploymentId?: string; inputHash?: string; valid: true; issues: [] }>(`/api/workflows/${encodeURIComponent(id)}/runs`, { method: 'POST', body: JSON.stringify({ dryRun: true, ...options }) }),
   runs: () => request<ItemsResponse<RunRecord>>('/api/runs'),
   run: (id: string) => request<RunRecord>(`/api/runs/${encodeURIComponent(id)}`),
+  retryRun: (id: string) => request<RunRecord>(`/api/runs/${encodeURIComponent(id)}/retry`, { method: 'POST', body: '{}' }),
   replay: (id: string, timeoutMs?: number) => request<ReplayReportRecord>(`/api/runs/${encodeURIComponent(id)}/replay`, { method: 'POST', body: JSON.stringify(timeoutMs === undefined ? {} : { timeoutMs }) }),
   replays: (sourceRunId?: string) => request<ItemsResponse<ReplayReportRecord>>(`/api/replays${sourceRunId === undefined ? '' : `?sourceRunId=${encodeURIComponent(sourceRunId)}`}`),
   evaluationDatasets: () => request<ItemsResponse<EvaluationDatasetRecord>>('/api/evaluation-datasets'),
