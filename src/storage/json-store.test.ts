@@ -48,6 +48,21 @@ describe('JsonStore', () => {
     expect(usageCount).toBe(10);
   });
 
+  it('serializes mutations from separate store instances sharing one file', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-store-'));
+    const file = path.join(directory, 'state.json');
+    const first = new JsonStore(file);
+    const second = new JsonStore(file);
+    await first.read((state) => state.workflows.length);
+
+    await Promise.all(Array.from({ length: 20 }, (_, index) => (index % 2 === 0 ? first : second).mutate((state) => {
+      state.connections[0]!.usageCount += 1;
+    })));
+
+    expect(await first.read((state) => state.connections[0]?.usageCount)).toBe(20);
+    expect(await second.read((state) => state.connections[0]?.usageCount)).toBe(20);
+  });
+
   it('migrates state files that predate workflow version history', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-store-'));
     const file = path.join(directory, 'state.json');
