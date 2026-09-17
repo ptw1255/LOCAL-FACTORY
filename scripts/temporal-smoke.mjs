@@ -15,7 +15,9 @@ const scopeHeaders = { 'content-type': 'application/json', 'x-tenant-id': 'tenan
 const diagnosticServices = ['app', 'postgres', 'vault', 'temporal', 'temporal-worker'];
 const compose = (...args) => execFileSync('docker', ['compose', '--profile', 'temporal', ...args], {
   stdio: 'inherit',
-  env: { ...process.env, EXECUTION_ENGINE: 'temporal', TEMPORAL_ADDRESS: 'temporal:7233' },
+  // The fixture update increments the seeded workflow to version 2; point the
+  // smoke worker at that queue so the restart test exercises actual execution.
+  env: { ...process.env, EXECUTION_ENGINE: 'temporal', TEMPORAL_ADDRESS: 'temporal:7233', TEMPORAL_WORKFLOW_VERSION: '2' },
 });
 
 function dumpDiagnostics() {
@@ -53,7 +55,7 @@ async function json(url, options = {}) {
   return body;
 }
 
-const unit = (id) => ({ kind: 'deterministic', version: 1, inputSchema: 'any', outputSchema: 'any', timeoutMs: 60_000, retryAttempts: 1, idempotencyKey: `temporal-smoke:${id}:v1` });
+const unit = (id, kind = 'deterministic') => ({ kind, version: 1, inputSchema: 'any', outputSchema: 'any', timeoutMs: 60_000, retryAttempts: 1, idempotencyKey: `temporal-smoke:${id}:v1` });
 
 let originalWorkflow;
 let smokeFailed = false;
@@ -68,7 +70,7 @@ try {
     nodes: [
       { id: 'smoke-trigger', type: 'manualTrigger', label: 'Smoke trigger', position: { x: 40, y: 180 }, config: {}, unit: unit('trigger') },
       { id: 'smoke-wait', type: 'wait', label: 'Restart boundary', position: { x: 320, y: 180 }, config: { durationMs: 8_000 }, unit: unit('wait') },
-      { id: 'smoke-output', type: 'output', label: 'Smoke output', position: { x: 600, y: 180 }, config: { value: 'temporal-smoke-passed' }, unit: unit('output') },
+      { id: 'smoke-output', type: 'output', label: 'Smoke output', position: { x: 600, y: 180 }, config: { value: 'temporal-smoke-passed' }, unit: unit('output', 'consumer') },
     ],
     edges: [
       { id: 'smoke-trigger-wait', source: 'smoke-trigger', target: 'smoke-wait' },
@@ -94,6 +96,13 @@ try {
 } catch (error) {
   smokeFailed = true;
   console.error(`Temporal Docker smoke failed: ${error instanceof Error ? error.message : String(error)}`);
+  try {
+    const runs = await json('http://localhost:3100/api/runs', { headers: scopeHeaders });
+    const failedRuns = runs.items?.filter((candidate) => candidate.workflowId === 'workflow-agent-intake').slice(0, 3) ?? [];
+    console.error(`Persisted Temporal run diagnostics: ${JSON.stringify(failedRuns).slice(0, 2_000)}`);
+  } catch (diagnosticError) {
+    console.error(`Could not read persisted Temporal run diagnostics: ${diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError)}`);
+  }
   dumpDiagnostics();
   throw error;
 } finally {

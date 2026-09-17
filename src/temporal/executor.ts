@@ -6,6 +6,40 @@ import { createQueuedRun, releaseBundleHash, type RunCreationOptions } from '../
 import type { PlatformStore } from '../storage/store.js';
 import type { EventService } from '../observability/event-service.js';
 
+const TEMPORAL_START_ATTEMPTS = 8;
+
+function temporalStartBackoff(attempt: number): number {
+  return Math.min(2_000, 250 * 2 ** attempt);
+}
+
+function isTemporalStartRetryable(error: unknown): boolean {
+  // Temporal's client wraps gRPC service failures in a generic ServiceError
+  // (`Failed to start Workflow`) and keeps useful startup details on
+  // `cause.details`. Walk the bounded cause chain so startup retries still
+  // recognize namespace/cache and transport readiness responses without
+  // retrying unrelated failures.
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 8 && current !== undefined && current !== null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    if (typeof current === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable/i.test(current)) return true;
+    if (typeof current === 'object' || typeof current === 'function') {
+      const value = current as { message?: unknown; details?: unknown; cause?: unknown; code?: unknown };
+      if (value.code === 14 || value.code === 'UNAVAILABLE') return true;
+      if (typeof value.message === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable/i.test(value.message)) return true;
+      if (typeof value.details === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable/i.test(value.details)) return true;
+      current = value.cause;
+      continue;
+    }
+    break;
+  }
+  return false;
+}
+
+function delay(durationMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
+}
+
 /** Minimal handle surface used by the control plane and easy to fake in tests. */
 export interface TemporalWorkflowHandleLike {
   readonly workflowId: string;
@@ -73,19 +107,15 @@ export class TemporalWorkflowExecutor {
       attributes: { 'runtime.engine': 'temporal', 'temporal.task_queue': taskQueue, 'workflow.version': workflow.version, ...(run.releaseBundleHash === undefined ? {} : { 'release.bundle.hash': run.releaseBundleHash }) },
     });
     try {
-      const handle = await this.options.client.workflow.start('executeWorkflow', {
+      const handle = await this.startWorkflow({
         workflowId: run.temporalWorkflowId,
         taskQueue,
         args: [{ runId: run.id, definition: run.workflowDefinition, releaseBundleHash: run.releaseBundleHash, pinnedAgentVersions: run.pinnedAgentVersions, ...(run.input === undefined ? {} : { input: run.input }) }],
         searchAttributes: {
-          FactoryId: ['agentic-workflow-factory'],
-          WorkflowId: [workflow.id],
-          WorkflowVersion: [String(workflow.version)],
-          Environment: [run.environment ?? workflow.status],
-          Status: ['running'],
-          CorrelationId: [run.traceId],
-          ReleaseBundle: [run.releaseBundleHash ?? releaseBundleHash(workflow)],
-          AgentVersions: [JSON.stringify(run.pinnedAgentVersions ?? {})],
+          // Keep the start request compatible with Temporal's local
+          // auto-setup search-attribute set. Rich release, environment, and
+          // agent provenance is carried in memo and persisted run evidence.
+          CustomKeywordField: ['running'],
         },
         memo: { artifactId: run.artifactId ?? '', workflowVersion: workflow.version, environment: run.environment ?? 'local', deploymentId: run.deploymentId ?? '', releaseBundleHash: run.releaseBundleHash ?? releaseBundleHash(workflow), pinnedAgentVersions: run.pinnedAgentVersions ?? {} },
       });
@@ -106,6 +136,23 @@ export class TemporalWorkflowExecutor {
       await this.markFailed(run.id, error instanceof Error ? error.message : 'Temporal workflow could not be started.');
       throw error;
     }
+  }
+
+  /**
+   * Auto-setup may expose the Temporal frontend before its default namespace
+   * cache is ready. Retry only that transient startup response so one
+   * persisted run eventually owns one workflow execution.
+   */
+  private async startWorkflow(options: Parameters<TemporalWorkflowClientLike['workflow']['start']>[1]): Promise<TemporalWorkflowHandleLike> {
+    for (let attempt = 0; attempt < TEMPORAL_START_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.options.client.workflow.start('executeWorkflow', options);
+      } catch (error) {
+        if (!isTemporalStartRetryable(error) || attempt === TEMPORAL_START_ATTEMPTS - 1) throw error;
+        await delay(temporalStartBackoff(attempt));
+      }
+    }
+    throw new Error('Temporal workflow start attempts exhausted.');
   }
 
   /** Start a fresh Temporal execution from a terminal failure while preserving provenance. */

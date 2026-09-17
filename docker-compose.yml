@@ -6,6 +6,8 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3100
+      # Compose is the local-development surface; production can opt back in.
+      FACTORY_AUTH_MODE: ${FACTORY_AUTH_MODE:-local}
       DATABASE_URL: postgresql://factory:factory@postgres:5432/factory
       WORKSPACE_ROOT: /app/.data/workspaces
       VAULT_ADDR: http://vault:8200
@@ -96,7 +98,6 @@ services:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
       - "4318:4318"
-      - "4317:4317"
     depends_on:
       phoenix:
         condition: service_started
@@ -123,6 +124,8 @@ services:
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development.yaml
     ports:
       - "7233:7233"
+    volumes:
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -118,7 +118,7 @@ describe('platform API', () => {
       const started = await temporalApp.inject({ method: 'POST', url: '/api/workflows/workflow-agent-intake/runs', payload: {} });
       expect(started.statusCode).toBe(200);
       expect(started.json<{ executionEngine: string; temporalTaskQueue: string; status: string }>()).toEqual(expect.objectContaining({ executionEngine: 'temporal', temporalTaskQueue: 'agentic-workflows-v1', status: 'running' }));
-      expect(start).toHaveBeenCalledWith('executeWorkflow', expect.objectContaining({ taskQueue: 'agentic-workflows-v1', searchAttributes: expect.objectContaining({ WorkflowId: ['workflow-agent-intake'], WorkflowVersion: ['1'] }) }));
+      expect(start).toHaveBeenCalledWith('executeWorkflow', expect.objectContaining({ taskQueue: 'agentic-workflows-v1', searchAttributes: { CustomKeywordField: ['running'] } }));
     } finally {
       await temporalApp.close();
     }
@@ -699,7 +699,7 @@ describe('platform API', () => {
       payload: {},
     });
     const runId = start.json<{ id: string }>().id;
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForTerminal(store, runId);
 
     const telemetry = await app.inject({
       method: 'GET',

@@ -1,5 +1,6 @@
-import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { NativeConnection, Worker } from '@temporalio/worker';
 
@@ -59,11 +60,15 @@ const providers = new Map<string, TemporalModelClient>([
 ]);
 configureTemporalModelProviders({ clients: providers, ollama });
 const connection = await NativeConnection.connect({ address });
+const compiledWorkflowsPath = new URL('./workflows.js', import.meta.url);
+const sourceWorkflowsPath = new URL('./workflows.ts', import.meta.url);
 const worker = await Worker.create({
   connection,
   namespace,
   taskQueue,
-  workflowsPath: fileURLToPath(new URL('./workflows.ts', import.meta.url)),
+  // The production image contains only compiled server output, while local
+  // `tsx` execution uses the TypeScript source tree.
+  workflowsPath: fileURLToPath(existsSync(fileURLToPath(compiledWorkflowsPath)) ? compiledWorkflowsPath : sourceWorkflowsPath),
   activities,
 });
 

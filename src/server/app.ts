@@ -79,7 +79,24 @@ export interface AppOptions {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Unexpected platform error.';
+  const primary = error instanceof Error ? error.message : 'Unexpected platform error.';
+  // Temporal's ServiceError intentionally uses a generic top-level message
+  // and stores the actionable gRPC detail on `cause`. Preserve that detail in
+  // API diagnostics without exposing an unbounded cause chain.
+  let current: unknown = error instanceof Error ? error.cause : undefined;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 4 && current !== undefined && current !== null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    if (typeof current === 'object' || typeof current === 'function') {
+      const value = current as { message?: unknown; details?: unknown; cause?: unknown };
+      const detail = typeof value.details === 'string' ? value.details : typeof value.message === 'string' ? value.message : undefined;
+      if (detail !== undefined && detail !== primary && detail.trim() !== '') return `${primary}: ${detail}`;
+      current = value.cause;
+    } else {
+      break;
+    }
+  }
+  return primary;
 }
 
 function errorDiagnostics(error: unknown): SourceDiagnostic[] {

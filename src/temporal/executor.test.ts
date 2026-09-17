@@ -60,7 +60,7 @@ describe('TemporalWorkflowExecutor', () => {
     workflow.version = 3;
     const run = await executor.start(workflow, { artifactId: 'sha256:release' });
     expect(run).toEqual(expect.objectContaining({ executionEngine: 'temporal', status: 'running', artifactId: 'sha256:release', releaseBundleHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/), pinnedAgentVersions: expect.any(Object), temporalWorkflowId: `factory-${run.id}`, temporalTaskQueue: 'factory-workflows-v3', temporalRunId: 'temporal-run-1' }));
-    expect(start).toHaveBeenCalledWith('executeWorkflow', expect.objectContaining({ workflowId: `factory-${run.id}`, taskQueue: 'factory-workflows-v3', searchAttributes: expect.objectContaining({ WorkflowId: [workflow.id], WorkflowVersion: ['3'], CorrelationId: [run.traceId], ReleaseBundle: [run.releaseBundleHash], AgentVersions: [JSON.stringify(run.pinnedAgentVersions)] }) }));
+    expect(start).toHaveBeenCalledWith('executeWorkflow', expect.objectContaining({ workflowId: `factory-${run.id}`, taskQueue: 'factory-workflows-v3', searchAttributes: { CustomKeywordField: ['running'] } }));
 
     handle.resultDeferred.resolve({ completedNodeIds: ['trigger', 'prepare'], unitOutputs: { prepare: 'ok' }, lifecycle: [] });
     await waitFor(store, run.id, 'succeeded');
@@ -68,6 +68,80 @@ describe('TemporalWorkflowExecutor', () => {
 
     const recovered = await executor.recover();
     expect(recovered).toBe(0);
+  });
+
+  it('retries a transient namespace-not-found response without creating another run', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-namespace-retry-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-namespace-retry');
+    let attempts = 0;
+    const start = vi.fn(async (_type: string, options: { workflowId: string }) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("Namespace not found: 'default'");
+      expect(options.workflowId).toMatch(/^factory-/);
+      return handle;
+    });
+    const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+
+    const run = await executor.start(structuredClone(seedWorkflow));
+
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(start.mock.calls[0]?.[1].workflowId).toBe(start.mock.calls[1]?.[1].workflowId);
+    expect(await store.read((state) => state.runs.filter((candidate) => candidate.id === run.id))).toHaveLength(1);
+  });
+
+  it('recognizes namespace readiness details wrapped by the Temporal client', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-namespace-cause-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-namespace-cause');
+    let attempts = 0;
+    const start = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw Object.assign(new Error('Failed to start Workflow'), {
+          cause: { details: "Namespace 'default' not found" },
+        });
+      }
+      return handle;
+    });
+    const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+
+    await expect(executor.start(structuredClone(seedWorkflow))).resolves.toEqual(expect.objectContaining({ status: 'running' }));
+    expect(start).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a transient Temporal transport-unavailable response', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-transport-retry-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-transport-retry');
+    let attempts = 0;
+    const start = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) throw Object.assign(new Error('Failed to start Workflow'), { cause: new Error('connect error: connection refused') });
+      return handle;
+    });
+    const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+
+    await expect(executor.start(structuredClone(seedWorkflow))).resolves.toEqual(expect.objectContaining({ status: 'running' }));
+    expect(start).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry non-transient Temporal start failures', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-start-failure-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const start = vi.fn(async () => { throw new Error('permission denied'); });
+    const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn() } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+
+    await expect(executor.start(structuredClone(seedWorkflow))).rejects.toThrow('permission denied');
+    expect(start).toHaveBeenCalledOnce();
   });
 
   it('reattaches persisted Temporal runs after a process restart', async () => {
