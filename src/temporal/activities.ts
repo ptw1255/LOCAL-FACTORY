@@ -23,6 +23,10 @@ export function configureTemporalRepositoryWorkspace(workspace: RepositoryWorksp
 
 export interface NodeActivityInput {
   runId: string;
+  workflowId?: string;
+  workflowVersion?: number;
+  releaseBundleHash?: string;
+  pinnedAgentVersions?: Record<string, number>;
   tenantId?: string;
   projectId?: string;
   nodeId: string;
@@ -78,6 +82,10 @@ export async function executeNodeActivity(
   const inputHash = hashPayload(input.inputs ?? []);
   const baseLifecycle = {
     runId: input.runId,
+    ...(input.workflowId === undefined ? {} : { workflowId: input.workflowId }),
+    ...(input.workflowVersion === undefined ? {} : { workflowVersion: input.workflowVersion }),
+    ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+    ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
     ...(input.tenantId === undefined ? {} : { tenantId: input.tenantId }),
     ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
     nodeId: input.nodeId,
