@@ -213,6 +213,7 @@ export interface RunRecord {
   inputHash?: string;
   traceId: string;
   executionEngine?: ExecutionEngine;
+  executionLease?: { ownerId: string; expiresAt: string };
   temporalWorkflowId?: string;
   temporalRunId?: string;
   temporalTaskQueue?: string;

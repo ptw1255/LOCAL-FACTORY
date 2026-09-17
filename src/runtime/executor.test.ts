@@ -1021,6 +1021,38 @@ describe('LocalWorkflowExecutor', () => {
     ).toBe(true);
   });
 
+  it('claims a persisted execution lease so a second worker does not duplicate recovery', async () => {
+    const runId = 'leased-recovery-run';
+    await store.mutate((state) => {
+      state.runs.push({
+        id: runId,
+        workflowId: seedWorkflow.id,
+        workflowName: seedWorkflow.name,
+        workflowVersion: seedWorkflow.version,
+        traceId: 'fedcba9876543210fedcba9876543210',
+        status: 'running',
+        startedAt: new Date().toISOString(),
+        costUsd: 0,
+        humanTouchpoints: 0,
+        workflowDefinition: structuredClone(seedWorkflow),
+        completedNodeIds: [],
+        activatedNodeIds: ['trigger'],
+        approvedNodeIds: [],
+        approvedNodeHashes: {},
+        pendingApprovalHashes: {},
+        unitOutputs: {},
+        ciCheckpoints: {},
+      });
+    });
+    const firstWorker = new LocalWorkflowExecutor(store, events);
+    const secondWorker = new LocalWorkflowExecutor(store, events);
+    expect(await firstWorker.recover()).toBe(1);
+    expect(await secondWorker.recover()).toBe(0);
+    expect(await store.read((state) => state.runs.find((run) => run.id === runId)?.executionLease?.ownerId)).toMatch(/^executor-/);
+    await waitFor(async () => (await store.read((state) => state.runs.find((run) => run.id === runId)?.status)) === 'succeeded');
+    expect(await store.read((state) => state.runs.find((run) => run.id === runId)?.executionLease)).toBeUndefined();
+  });
+
   it('persists a CI checkpoint and resumes the observer after runtime restart', async () => {
     const workflow = structuredClone(seedWorkflow);
     workflow.agents = [];
@@ -1048,6 +1080,12 @@ describe('LocalWorkflowExecutor', () => {
     const secondGithub = {
       waitForChecks: vi.fn().mockResolvedValue({ ref: 'commit-1', status: 'success', checks: [{ name: 'test', status: 'completed', conclusion: 'success' }], required: ['test'], failures: [] }),
     } as unknown as GitHubRepositoryClient;
+    // Simulate the first process disappearing: a live worker would keep this
+    // lease renewed, while a restarted process may reclaim it after expiry.
+    await store.mutate((state) => {
+      const current = state.runs.find((candidate) => candidate.id === run.id);
+      if (current?.executionLease !== undefined) current.executionLease.expiresAt = new Date(Date.now() - 1).toISOString();
+    });
     const restartedExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, secondGithub);
     expect(await restartedExecutor.recover()).toBe(1);
     await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.status)) === 'succeeded');
