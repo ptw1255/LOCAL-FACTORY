@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
+import { clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -43,6 +43,14 @@ describe('IDE editor tab state', () => {
     expect(clampBottomPanelHeight(40)).toBe(120);
     expect(clampBottomPanelHeight(320.4)).toBe(320);
     expect(clampBottomPanelHeight(900)).toBe(640);
+  });
+
+  it('keeps deployment log expansion to redacted log signals and a bounded window', () => {
+    const events = [
+      { id: 'trace', signal: 'trace', timestamp: '2026-01-01T00:00:00.000Z' },
+      ...Array.from({ length: 3 }, (_, index) => ({ id: `log-${index}`, signal: 'log', timestamp: `2026-01-01T00:00:0${index + 1}.000Z` })),
+    ] as never;
+    expect(recentRunLogs(events, 2).map((event) => event.id)).toEqual(['log-1', 'log-2']);
   });
 
   it('wraps Observe tab keyboard navigation and supports Home/End', () => {

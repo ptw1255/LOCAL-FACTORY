@@ -345,6 +345,8 @@ h1, h2, h3, p { margin-top: 0; }
 .deployment-history li span, .deployment-history li time, .deployment-history li small { color: var(--subtle); }
 .deployment-history li small { grid-column: 1 / -1; }
 .deployment-history-link { font-size: 9px; grid-column: 1 / -1; justify-self: start; }
+.deployment-log-note { color: var(--subtle); font-size: 10px; margin: 10px 0 0; }
+.deployment-log-details li span { min-width: 0; overflow-wrap: anywhere; }
 .artifact-diff-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .artifact-diff-summary span { background: #142238; border: 1px solid #263b59; border-radius: 4px; color: #b8c9df; font-size: 10px; padding: 4px 6px; }
 .artifact-diff li small { color: var(--subtle); }
