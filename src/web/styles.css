@@ -386,6 +386,7 @@ h1, h2, h3, p { margin-top: 0; }
 .ide-dirty { color: var(--yellow); }
 .ide-clean { color: var(--accent); }
 .yaml-editor-wrap { background: #080e17; border-bottom: 1px solid var(--border); border-top: 1px solid var(--border); display: flex; flex: 1; min-height: 400px; overflow: hidden; }
+.editor-loading { align-items: center; color: var(--subtle); display: flex; flex: 1; font-size: 11px; justify-content: center; }
 .yaml-line-numbers { background: #0a111c; border-right: 1px solid #192638; color: #4e6078; display: flex; flex-direction: column; font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; line-height: 1.55; min-width: 39px; overflow: hidden; padding: 15px 8px 15px 0; text-align: right; user-select: none; }
 .yaml-editor { background: transparent; border: 0; color: #c5d5e9; flex: 1; font-family: "SFMono-Regular", Consolas, monospace; font-size: 10px; line-height: 1.55; min-height: 400px; outline: 0; overflow: auto; padding: 15px 16px; resize: none; tab-size: 2; white-space: pre; }
 .ide-hint { color: #64758c; font-size: 9px; padding: 10px 17px 14px; }
