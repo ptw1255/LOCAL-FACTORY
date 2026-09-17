@@ -581,6 +581,7 @@ describe('LocalWorkflowExecutor', () => {
     const agent = workflow.agents[0];
     if (agent === undefined) throw new Error('Seed agent is missing.');
     agent.limits.maxIterations = 1;
+    agent.outputSchema = {};
     const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
     if (agentNode === undefined) throw new Error('Agent loop node is missing.');
     agentNode.config = { ...agentNode.config, maxIterations: 1 };
@@ -603,6 +604,31 @@ describe('LocalWorkflowExecutor', () => {
     const output = await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.unitOutputs.agent as { output?: string } | undefined);
     expect(output?.output).toContain('[openai]\nprimary perspective');
     expect(output?.output).toContain('[gemini]\nsecond perspective');
+  });
+
+  it('rejects structured-output ensembles before invoking any provider', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agent === undefined || agentNode === undefined) throw new Error('Seed agent is missing.');
+    agent.outputSchema = { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] };
+    agent.model = {
+      routing: { strategy: 'ensemble', maxAttempts: 2 },
+      routes: [{ provider: 'openai', model: 'gpt-5' }, { provider: 'gemini', model: 'gemini-2.5-flash' }],
+    };
+    agentNode.config.maxIterations = 1;
+    let providerCalls = 0;
+    const providers = new Map([
+      ['openai', { provider: 'openai', chat: async () => { providerCalls += 1; return { content: '{}', model: 'gpt-5' }; } }],
+      ['gemini', { provider: 'gemini', chat: async () => { providerCalls += 1; return { content: '{}', model: 'gemini-2.5-flash' }; } }],
+    ]);
+    const ensembleExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, undefined, new Map(), undefined, providers);
+    const run = await ensembleExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    expect(providerCalls).toBe(0);
+    const recorded = await events.list(run.id);
+    expect(recorded.some((event) => event.type === 'llm.ensemble.rejected' && event.attributes?.['llm.ensemble.policy'] === 'structured-output-rejected')).toBe(true);
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.error).toContain('structured outputs');
   });
 
   it('resumes an agent loop from its persisted iteration checkpoint after restart', async () => {
