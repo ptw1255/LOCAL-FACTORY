@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampBottomPanelHeight, filterProjectItems, nextExplorerIndex, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection } from './App';
+import { clampBottomPanelHeight, filterProjectItems, nextExplorerIndex, nextObserveTab, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -43,5 +43,13 @@ describe('IDE editor tab state', () => {
     expect(clampBottomPanelHeight(40)).toBe(120);
     expect(clampBottomPanelHeight(320.4)).toBe(320);
     expect(clampBottomPanelHeight(900)).toBe(640);
+  });
+
+  it('wraps Observe tab keyboard navigation and supports Home/End', () => {
+    expect(nextObserveTab('runs', 'ArrowLeft')).toBe('metrics');
+    expect(nextObserveTab('metrics', 'ArrowRight')).toBe('runs');
+    expect(nextObserveTab('traces', 'Home')).toBe('runs');
+    expect(nextObserveTab('runs', 'End')).toBe('metrics');
+    expect(nextObserveTab('runs', 'Enter')).toBeNull();
   });
 });
