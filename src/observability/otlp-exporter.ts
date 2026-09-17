@@ -191,12 +191,19 @@ export class OtlpHttpExporter implements TelemetryExporter {
     if (!this.deleteTraces) return;
     await Promise.all(traceIds.map(async (traceId) => {
       try {
-        await fetch(`${this.baseUrl}/v1/traces/${encodeURIComponent(traceId)}`, {
+        const response = await fetch(`${this.baseUrl}/v1/traces/${encodeURIComponent(traceId)}`, {
           method: 'DELETE',
           headers: this.headers,
           signal: AbortSignal.timeout(2_000),
         });
+        // Deletion is idempotent for an already-expired trace, but backend
+        // failures must remain visible through the same health contract as
+        // export failures so retention drift is not silently hidden.
+        if (!response.ok && response.status !== 404) throw new Error(`Phoenix trace deletion failed with HTTP ${response.status}.`);
+        if (response.ok) this.lastSuccessAt = new Date().toISOString();
       } catch (error) {
+        this.failureCount += 1;
+        this.lastErrorAt = new Date().toISOString();
         console.warn('[telemetry] Phoenix trace deletion failed', error);
       }
     }));
