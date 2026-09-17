@@ -98,4 +98,52 @@ describe('typed resource files', () => {
       expect.objectContaining({ path: 'agents/bad.agent.yaml', code: 'resource.compile' }),
     ]));
   });
+
+  it('compiles a large file-backed workspace within the IDE performance budget', () => {
+    const stepCount = 500;
+    const project = { path: 'factory.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: large\n  version: 1\nspec: {}' };
+    const steps = Array.from({ length: stepCount }, (_, index) => [
+      `    - id: step-${index}`,
+      '      type: transform',
+      `      unit: unit-${index}`,
+      '      config:',
+      `        value: ${index}`,
+    ].join('\n')).join('\n');
+    const workflow = { path: 'workflows/large.workflow.yaml', source: [
+      'apiVersion: factory.agentic/v1',
+      'kind: Workflow',
+      'metadata:',
+      '  id: large',
+      '  version: 1',
+      '  name: Large fixture',
+      'spec:',
+      '  trigger: manualTrigger',
+      '  steps:',
+      steps,
+    ].join('\n') };
+    const units = Array.from({ length: stepCount }, (_, index) => ({
+      path: `units/unit-${index}.unit.yaml`,
+      source: [
+        'apiVersion: factory.agentic/v1',
+        'kind: WorkUnit',
+        'metadata:',
+        `  id: unit-${index}`,
+        '  version: 1',
+        'spec:',
+        '  kind: deterministic',
+        '  version: 1',
+        '  inputSchema: any',
+        '  outputSchema: any',
+        '  timeoutMs: 1000',
+        '  retryAttempts: 1',
+      ].join('\n'),
+    }));
+    const startedAt = performance.now();
+    const result = compileResourceFiles([project, workflow, ...units], { tenantId: 'tenant-local', projectId: 'project-large' });
+    const elapsedMs = performance.now() - startedAt;
+    expect(result.workflows[0]?.nodes).toHaveLength(stepCount + 1);
+    // Keep the threshold intentionally broad for shared CI runners while
+    // catching accidental quadratic work that would make authoring unusable.
+    expect(elapsedMs).toBeLessThan(5_000);
+  });
 });
