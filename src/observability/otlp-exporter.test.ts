@@ -63,6 +63,18 @@ describe('OtlpHttpExporter', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('redacts credential-like attributes from every OTLP signal', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+    const exporter = new OtlpHttpExporter('http://collector:4318', {}, { signals: ['trace'] });
+
+    await exporter.export({ ...baseEvent, attributes: { ...baseEvent.attributes, authorization: 'bearer secret', token: 'secret', 'api.key': 'secret' } });
+
+    const payload = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as { resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<{ attributes: Array<{ key: string }> }> }> }> };
+    const keys = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.attributes.map((item) => item.key);
+    expect(keys).not.toEqual(expect.arrayContaining(['authorization', 'token', 'api.key']));
+  });
+
   it('exposes export failures as health state without rejecting the workflow call', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('collector unavailable'));
     vi.stubGlobal('fetch', fetchMock);

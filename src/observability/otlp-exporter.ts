@@ -37,7 +37,7 @@ function attributeValue(value: Primitive): Record<string, Primitive> {
 }
 
 function attributes(event: RunEvent): OtlpAttribute[] {
-  return Object.entries(event.attributes ?? {}).map(([key, value]) => ({
+  return Object.entries(event.attributes ?? {}).filter(([key]) => !/(secret|token|password|authorization|api[._-]?key|credential)/i.test(key)).map(([key, value]) => ({
     key,
     value: attributeValue(value),
   }));
