@@ -82,6 +82,57 @@ describe('EventService retention', () => {
     }));
   });
 
+  it('inherits immutable run release context on durable operation evidence', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const run: RunRecord = {
+      tenantId: 'tenant-local',
+      projectId: 'project-local',
+      id: 'run-evidence-context',
+      workflowId: seedWorkflow.id,
+      workflowName: seedWorkflow.name,
+      workflowVersion: 4,
+      releaseBundleHash: 'sha256:evidence-release',
+      pinnedAgentVersions: { reviewer: 2 },
+      artifactId: 'sha256:evidence-artifact',
+      environment: 'production',
+      deploymentId: 'deployment-evidence',
+      traceId: 'b'.repeat(32),
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      costUsd: 0,
+      humanTouchpoints: 0,
+      workflowDefinition: structuredClone(seedWorkflow),
+      completedNodeIds: [],
+      activatedNodeIds: [],
+      approvedNodeIds: [],
+      approvedNodeHashes: {},
+      pendingApprovalHashes: {},
+      unitOutputs: {},
+      ciCheckpoints: {},
+    };
+    await store.mutate((state) => { state.runs.push(run); });
+
+    const evidence = await new EventService(store).recordEvidence({
+      runId: run.id,
+      unitId: 'repository-mutation',
+      operation: 'repositoryMutation',
+      status: 'succeeded',
+      metadata: { 'repository.revision': 'abc123' },
+    });
+
+    expect(evidence.metadata).toEqual(expect.objectContaining({
+      'repository.revision': 'abc123',
+      'workflow.id': seedWorkflow.id,
+      'workflow.version': 4,
+      'release.bundle.hash': 'sha256:evidence-release',
+      'agent.versions': JSON.stringify({ reviewer: 2 }),
+      'artifact.id': 'sha256:evidence-artifact',
+      'deployment.id': 'deployment-evidence',
+      'deployment.environment': 'production',
+    }));
+  });
+
   it('offloads oversized event payloads and resolves them on demand', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
