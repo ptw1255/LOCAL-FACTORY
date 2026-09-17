@@ -9,6 +9,7 @@ import { seedWorkflow } from '../domain/seed.js';
 import { JsonStore } from '../storage/json-store.js';
 import { FileArtifactStore } from '../storage/artifact-store.js';
 import { EventService } from './event-service.js';
+import { validSpanContext, withOtelSpanContext } from './otel-context.js';
 
 function event(id: string, timestamp: string, traceId: string): RunEvent {
   return {
@@ -172,6 +173,20 @@ describe('EventService retention', () => {
     const completed = await service.emit('run-1', 'unit.completed', 'completed', { nodeId: 'unit-1', signal: 'trace' });
     expect(completed.parentSpanId).toBe(started.spanId);
     expect(completed.traceId).toBe(started.traceId);
+  });
+
+  it('inherits the official OpenTelemetry async parent context', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const service = new EventService(new JsonStore(path.join(directory, 'state.json')));
+    const traceId = 'c'.repeat(32);
+    const parentSpanId = 'd'.repeat(16);
+    const emitted = await withOtelSpanContext(validSpanContext(traceId, parentSpanId), async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      return service.emit('run-otel-context', 'unit.completed', 'completed', { signal: 'trace' });
+    });
+    expect(emitted.traceId).toBe(traceId);
+    expect(emitted.parentSpanId).toBe(parentSpanId);
+    expect(emitted.spanId).not.toBe(parentSpanId);
   });
 
   it('removes events older than the configured window', async () => {

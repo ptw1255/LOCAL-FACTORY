@@ -5,6 +5,7 @@ import type { ArtifactStore } from '../storage/artifact-store.js';
 import type { PlatformStore, StateMutation } from '../storage/store.js';
 import type { TelemetryExporter, TelemetryExporterHealth } from './otlp-exporter.js';
 import { telemetryAttributes, telemetryResource } from './semconv.js';
+import { activeOtelSpanContext, validSpanContext, withOtelSpanContext } from './otel-context.js';
 
 export interface EventOptions {
   nodeId?: string;
@@ -45,8 +46,10 @@ export class EventService {
     options: EventOptions = {},
   ): Promise<RunEvent> {
     const event = await this.createEvent(runId, type, message, options);
-    await this.store.appendEvent(event);
-    this.exportEvent(event);
+    await withOtelSpanContext(validSpanContext(event.traceId, event.spanId), async () => {
+      await this.store.appendEvent(event);
+      this.exportEvent(event);
+    });
     return event;
   }
 
@@ -76,13 +79,14 @@ export class EventService {
   }
 
   private async createEvent(runId: string, type: string, message: string, options: EventOptions): Promise<RunEvent> {
+    const active = activeOtelSpanContext();
     const runContext = await this.store.read((state) => {
       const run = state.runs.find((candidate) => candidate.id === runId);
-      const parentSpanId = options.parentSpanId ?? (options.nodeId === undefined
+      const persistedParentSpanId = options.nodeId === undefined
         ? undefined
-        : [...state.events].reverse().find((event) => event.runId === runId && event.nodeId === options.nodeId)?.spanId);
+        : [...state.events].reverse().find((event) => event.runId === runId && event.nodeId === options.nodeId)?.spanId;
       return {
-        traceId: run?.traceId,
+        traceId: run?.traceId ?? active?.traceId,
         tenantId: run?.tenantId,
         projectId: run?.projectId,
         workflowId: run?.workflowId,
@@ -92,10 +96,15 @@ export class EventService {
         artifactId: run?.artifactId,
         deploymentId: run?.deploymentId,
         environment: run?.environment,
-        parentSpanId,
+        persistedParentSpanId,
+        activeTraceId: active?.traceId,
+        activeSpanId: active?.spanId,
       };
     });
     const traceId = options.traceId ?? runContext.traceId ?? runId.replaceAll('-', '').padEnd(32, '0').slice(0, 32);
+    const parentSpanId = options.parentSpanId
+      ?? (runContext.activeTraceId === traceId ? runContext.activeSpanId : undefined)
+      ?? runContext.persistedParentSpanId;
     const spanId = randomUUID().replaceAll('-', '').slice(0, 16);
     const data = options.data === undefined
       ? undefined
@@ -113,7 +122,7 @@ export class EventService {
       spanId,
       ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
       ...(data === undefined ? {} : { data: data as Record<string, unknown> }),
-      ...(runContext.parentSpanId === undefined ? {} : { parentSpanId: runContext.parentSpanId }),
+      ...(parentSpanId === undefined ? {} : { parentSpanId }),
       ...(options.spanKind === undefined ? {} : { spanKind: options.spanKind }),
       ...(options.severityText === undefined ? {} : { severityText: options.severityText }),
       attributes: {
