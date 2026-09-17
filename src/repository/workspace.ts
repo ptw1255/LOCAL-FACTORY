@@ -274,7 +274,11 @@ export class RepositoryWorkspace {
     options: RepositoryCheckOptions = {},
   ): Promise<CheckResult> {
     if (!ALLOWED_CHECKS.has(command)) throw new Error(`Unsupported repository check "${command}".`);
-    const sandbox = normalizedSandbox(parseRepositoryCheckSandbox(options.sandbox));
+    const sandboxOptions = parseRepositoryCheckSandbox(options.sandbox);
+    if (process.env.REPOSITORY_CHECK_SANDBOX_REQUIRED?.trim().toLowerCase() === 'true' && sandboxOptions.mode !== 'container') {
+      throw new RepositoryPolicyError('Repository checks require the container sandbox in this deployment.', 'sandbox.mode', 'container');
+    }
+    const sandbox = normalizedSandbox(sandboxOptions);
     const started = Date.now();
     try {
       const [executable, ...args] = command.split(' ');
