@@ -1534,6 +1534,7 @@ function OperationalTree({
   }
 
   function openSource(path: string, line?: number): void {
+    onModeChange('files');
     window.sessionStorage.setItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`, path);
     const query = new URLSearchParams({ file: path });
     if (line !== undefined && Number.isSafeInteger(line) && line > 0) query.set('line', String(line));
@@ -1863,7 +1864,7 @@ function OperationalTree({
         <div className="agent-boxes-heading"><span className="eyebrow">Declared boxes</span><span className="count-pill">{workflow.agents.length}</span></div>
         <div className="operational-agents">
           {visibleTreeAgents.map((agent) => (
-            <button className="operational-agent" disabled={!files.some((file) => file.path.includes(agent.id) && file.path.includes('.agent.'))} key={agent.id} onClick={() => { const file = files.find((candidate) => candidate.path.includes(agent.id) && candidate.path.includes('.agent.')); if (file !== undefined) void selectFile(file); }} title={`Open source for ${agent.id}`} type="button">
+            <button className="operational-agent" disabled={!files.some((file) => file.path.includes(agent.id) && file.path.includes('.agent.'))} key={agent.id} onClick={() => { const file = files.find((candidate) => candidate.path.includes(agent.id) && candidate.path.includes('.agent.')); if (file !== undefined) { onModeChange('files'); void selectFile(file); } }} title={`Open source for ${agent.id}`} type="button">
               <div className="operational-agent-title"><span className="tree-icon tree-kind-agent"><Icon name="agent" size={14} /></span><div><strong>{agent.name}</strong><small>{agent.id} · v{agent.version}</small></div><span className="tree-kind-label">{agent.model.model ?? agent.model.routingAlias ?? 'unconfigured'}</span></div>
               <p>{agent.purpose}</p>
               <div className="agent-facts"><span><strong>Skills</strong>{agent.skills.length > 0 ? agent.skills.join(', ') : 'None declared'}</span><span><strong>Limits</strong>{agent.limits.maxIterations} iterations · ${agent.limits.maxCostUsd.toFixed(2)} · {Math.round(agent.limits.maxDurationMs / 1000)}s</span><span><strong>Network</strong>{agent.boundaries.network}</span></div>
@@ -2091,6 +2092,13 @@ function RunsView() {
         <div><span>Successful</span><strong>{successfulRuns}</strong></div>
         <div><span>Total cost</span><strong>${totalCost.toFixed(3)}</strong></div>
       </section>
+      <nav aria-label="Observe detail views" className="observe-tabs" role="tablist">
+        {observeTabs.map((tab) => (
+          <button aria-controls="observe-events-panel" aria-selected={observeTab === tab} className={observeTab === tab ? 'active' : ''} id={`observe-${tab}-tab`} key={tab} onClick={() => setObserveTab(tab)} onKeyDown={(event) => handleObserveTabKeyDown(event, tab)} role="tab" type="button" tabIndex={observeTab === tab ? 0 : -1}>
+            {tab[0]!.toUpperCase() + tab.slice(1)}
+          </button>
+        ))}
+      </nav>
       {loading ? <LoadingState label="Loading run history" /> : error !== null && runs.length === 0 ? (
         <ErrorState message={error} retry={() => void loadRuns()} />
       ) : runs.length === 0 ? (
@@ -2192,13 +2200,6 @@ function RunsView() {
                 {selectedRun.error !== undefined ? <div className="run-error" role="alert"><Icon name="warning" /><div><strong>Run failed</strong><span>{selectedRun.error}</span></div></div> : null}
                 {approvals.length === 0 ? null : <section className="approval-summary"><div className="timeline-heading"><div><span className="eyebrow">Authorization</span><h3>Approval records</h3></div><span className="count-pill">{approvals.length}</span></div>{approvals.map((approval) => <div className="approval-record" key={approval.id}><strong>{approval.operation} · {approval.nodeId}</strong><StatusBadge status={approval.decision} /><span>Requested {formatDate(approval.requestedAt)} · expires {formatDate(approval.expiresAt)}</span><code>Binding {approval.bindingHash}</code>{approval.reason === undefined ? null : <small>{approval.reason}</small>}</div>)}</section>}
                 {toolCheckpoints.length === 0 ? null : <section className="approval-summary tool-recovery-summary"><div className="timeline-heading"><div><span className="eyebrow">Operator recovery</span><h3>Incomplete tool checkpoints</h3></div><span className="count-pill">{toolCheckpoints.length}</span></div><p className="run-recovery-note">The runtime refused to replay these side effects. Verify the external outcome before resolving a checkpoint.</p>{toolCheckpoints.map((checkpoint) => <div className="approval-record" key={`${checkpoint.unitId}:${checkpoint.callId}`}><strong>{checkpoint.callId}</strong><span>{checkpoint.unitId} · started {formatDate(checkpoint.occurredAt)}</span><div className="form-actions"><button className="button primary" disabled={actionLoading} onClick={() => void recoverToolCheckpoint(checkpoint, 'succeeded')} type="button"><Icon name="check" size={13} /> Mark succeeded</button><button className="button secondary" disabled={actionLoading} onClick={() => void recoverToolCheckpoint(checkpoint, 'failed')} type="button"><Icon name="close" size={13} /> Mark failed</button></div></div>)}</section>}
-                <nav aria-label="Observe detail views" className="observe-tabs" role="tablist">
-                  {observeTabs.map((tab) => (
-                    <button aria-controls="observe-events-panel" aria-selected={observeTab === tab} className={observeTab === tab ? 'active' : ''} id={`observe-${tab}-tab`} key={tab} onClick={() => setObserveTab(tab)} onKeyDown={(event) => handleObserveTabKeyDown(event, tab)} role="tab" type="button" tabIndex={observeTab === tab ? 0 : -1}>
-                      {tab[0]!.toUpperCase() + tab.slice(1)}
-                    </button>
-                  ))}
-                </nav>
                 <div className="run-metrics">
                   <div><Icon name="clock" /><span>Duration</span><strong>{formatDuration(selectedRun.durationMs)}</strong></div>
                   <div><Icon name="cost" /><span>Cost</span><strong>${selectedRun.costUsd.toFixed(4)}</strong></div>
