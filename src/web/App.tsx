@@ -1676,6 +1676,10 @@ function OperationalTree({
 
   useEffect(() => () => {
     if (syntaxCheckTimer.current !== undefined) window.clearTimeout(syntaxCheckTimer.current);
+    // Invalidate an already-fired dynamic import as well as a pending timer.
+    // Otherwise a route/project change can let a stale parser promise update
+    // the next Workspace instance after this one has unmounted.
+    syntaxCheckRevision.current += 1;
   }, []);
 
   function scheduleSyntaxDiagnostics(nextSource: string, nextPath: string): void {
@@ -1683,6 +1687,7 @@ function OperationalTree({
     const revision = syntaxCheckRevision.current;
     if (syntaxCheckTimer.current !== undefined) window.clearTimeout(syntaxCheckTimer.current);
     syntaxCheckTimer.current = window.setTimeout(() => {
+      syntaxCheckTimer.current = undefined;
       void import('yaml').then(({ parseDocument }) => {
         if (revision !== syntaxCheckRevision.current) return;
         const document = parseDocument(nextSource);
