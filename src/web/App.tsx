@@ -14,6 +14,7 @@ import {
   type OnSelectionChangeParams,
 } from '@xyflow/react';
 import Editor from '@monaco-editor/react';
+import type * as Monaco from 'monaco-editor';
 import {
   type ChangeEvent,
   type FormEvent,
@@ -1303,7 +1304,8 @@ function OperationalTree({
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
   const [problems, setProblems] = useState<SourceDiagnostic[]>([]);
   const fileEventCursor = useRef<string | undefined>(undefined);
-  const editorRef = useRef<{ revealLineInCenter: (line: number) => void; setPosition: (position: { lineNumber: number; column: number }) => void; focus: () => void } | null>(null);
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
   const saveShortcutRef = useRef<() => Promise<boolean>>(async () => false);
   const validateShortcutRef = useRef(onValidate);
   const runShortcutRef = useRef(onRun);
@@ -1513,6 +1515,24 @@ function OperationalTree({
     ? [{ severity: 'error' as const, path: selectedPath, line: 1, column: 1, code: 'declarative.invalid', message: error }]
     : problems;
 
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    const model = editorRef.current?.getModel();
+    if (monaco === null || model === null || model === undefined) return;
+    monaco.editor.setModelMarkers(model, 'factory', problems
+      .filter((problem) => problem.path === selectedPath)
+      .map((problem) => ({
+        startLineNumber: Math.max(1, problem.line),
+        startColumn: Math.max(1, problem.column),
+        endLineNumber: Math.max(1, problem.line),
+        endColumn: Math.max(2, problem.column + 1),
+        message: problem.message,
+        code: problem.code,
+        severity: problem.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+      })));
+    return () => { monaco.editor.setModelMarkers(model, 'factory', []); };
+  }, [problems, selectedPath]);
+
   return (
     <div className={`ide-layout ide-mode-${mode}`}>
       <aside className="ide-explorer">
@@ -1531,7 +1551,7 @@ function OperationalTree({
       <section className="yaml-panel ide-editor">
         <div className="ide-tab-bar"><span className="ide-tab active"><Icon name="code" size={13} /> {selectedPath} {dirty ? <span className="ide-tab-dot" /> : null}</span><span className="ide-branch">factory.agentic/v1</span></div>
         <div className="ide-editor-heading"><div><span className="eyebrow">Declarative source</span><h2>Project definition</h2><p>Author the loop in YAML. Apply compiles it into the runtime model.</p></div><div className="ide-editor-actions"><span className={dirty ? 'ide-dirty' : 'ide-clean'}>{dirty ? 'Unsaved changes' : 'Synced'}</span><button className="button primary" disabled={!dirty || busy} onClick={() => void applyYaml()} type="button"><Icon name="save" size={14} /> {busy ? 'Applying…' : 'Apply YAML'}</button><button className="icon-button" onClick={onCanvas} title="Open canvas compatibility view" type="button"><Icon name="studio" size={15} /></button></div></div>
-        <div className="yaml-editor-wrap"><Editor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => { setProblems([]); setError(null); onSourceChange(value ?? ''); }} onMount={(editor, monaco) => { editorRef.current = editor; editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { void saveShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { validateShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => { runShortcutRef.current(); }); }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} /></div>
+        <div className="yaml-editor-wrap"><Editor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => { setProblems([]); setError(null); onSourceChange(value ?? ''); }} onMount={(editor, monaco) => { editorRef.current = editor; monacoRef.current = monaco; editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { void saveShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { validateShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => { runShortcutRef.current(); }); }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} /></div>
         {error === null ? <small className="ide-hint">Review the compiled tree on the right, then apply the file when it is ready. Invalid definitions never replace the active runtime. Shortcuts: Cmd/Ctrl+S apply · Cmd/Ctrl+Enter validate · Cmd/Ctrl+Shift+Enter run.</small> : <div className="ide-error"><Icon name="warning" size={14} /> {error}</div>}
         <div className={`ide-bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`}>
           <div className="ide-bottom-tabs"><button className={bottomTab === 'problems' ? 'active' : ''} onClick={() => { setBottomTab('problems'); setBottomOpen(true); }} type="button">Problems <span className={visibleProblems.length === 0 ? 'panel-count clean' : 'panel-count'}>{visibleProblems.length}</span></button><button className={bottomTab === 'output' ? 'active' : ''} onClick={() => { setBottomTab('output'); setBottomOpen(true); }} type="button">Run Output <span className="panel-count clean">{recentRuns.length}</span></button><button aria-label={bottomOpen ? 'Collapse bottom panel' : 'Expand bottom panel'} className="bottom-panel-toggle" onClick={() => setBottomOpen((value) => !value)} type="button">{bottomOpen ? '⌄' : '⌃'}</button></div>
