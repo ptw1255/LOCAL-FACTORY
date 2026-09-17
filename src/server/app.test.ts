@@ -280,6 +280,10 @@ describe('platform API', () => {
     expect(compiled.statusCode).toBe(200);
     expect(compiled.json<{ id: string; workflows: unknown[] }>().id).toMatch(/^sha256:/);
     expect(compiled.json<{ workflows: unknown[] }>().workflows).toHaveLength(1);
+    const synchronized = await app.inject({ method: 'GET', url: '/api/workflows', headers });
+    expect(synchronized.json<{ items: Array<{ id: string; name: string }> }>().items).toEqual([
+      expect.objectContaining({ id: 'review', name: 'Review' }),
+    ]);
     const compiledAgain = await app.inject({ method: 'POST', url: '/api/projects/project-local/compile', headers, payload: { environment: 'local' } });
     expect(compiledAgain.statusCode).toBe(200);
     expect(compiledAgain.json<{ id: string }>().id).toBe(compiled.json<{ id: string }>().id);

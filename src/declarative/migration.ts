@@ -1,6 +1,6 @@
-import { parse, stringify } from 'yaml';
+import { isMap, isSeq, parse, parseDocument, stringify, type YAMLMap, type YAMLSeq } from 'yaml';
 
-import type { ProjectRecord, WorkflowDefinition } from '../domain/types.js';
+import type { ProjectRecord, WorkUnitDefinition, WorkflowDefinition } from '../domain/types.js';
 
 export interface MigrationResourceFile {
   path: string;
@@ -25,6 +25,125 @@ function envelope(kind: string, id: string, version: number, name: string | unde
 
 function file(path: string, document: Record<string, unknown>): MigrationResourceFile {
   return { path, source: stringify(document) };
+}
+
+/**
+ * Use the same deterministic convention as the migration planner for the
+ * WorkUnit module attached to a workflow node. Keeping this in one place lets
+ * Canvas edits update the referenced module instead of embedding runtime
+ * state back into the aggregate Workflow record.
+ */
+export function workUnitResourceId(workflowId: string, nodeId: string): string {
+  return `unit-${workflowId}-${nodeId}`;
+}
+
+/** Render a new standalone WorkUnit module. */
+export function renderWorkUnitResource(unitId: string, unit: WorkUnitDefinition): string {
+  return stringify(envelope('WorkUnit', unitId, unit.version, undefined, unit as unknown as Record<string, unknown>));
+}
+
+function parsedMap(document: ReturnType<typeof parseDocument>, path: string[]): YAMLMap {
+  const node = document.getIn(path, true);
+  if (!isMap(node)) throw new Error(`Expected a YAML mapping at ${path.join('.')}.`);
+  return node;
+}
+
+function parsedSequence(document: ReturnType<typeof parseDocument>, path: string[]): YAMLSeq {
+  const node = document.getIn(path, true);
+  if (!isSeq(node)) throw new Error(`Expected a YAML sequence at ${path.join('.')}.`);
+  return node;
+}
+
+function setOptionalMapValue(map: YAMLMap, key: string, value: unknown): void {
+  if (value === undefined) map.delete(key);
+  else map.set(key, value);
+}
+
+/**
+ * Patch a WorkUnit module in place. YAML's document model retains comments
+ * and unrelated keys while changing only the authored envelope fields.
+ */
+export function patchWorkUnitResource(source: string, unit: WorkUnitDefinition): string {
+  const document = parseDocument(source);
+  if (document.errors.length > 0) throw new Error(document.errors[0]?.message ?? 'Invalid WorkUnit YAML.');
+  if (document.get('kind') !== 'WorkUnit') throw new Error('Expected a WorkUnit resource.');
+  const metadata = parsedMap(document, ['metadata']);
+  const spec = parsedMap(document, ['spec']);
+  metadata.set('version', unit.version);
+  const fields: Array<keyof WorkUnitDefinition> = ['kind', 'version', 'inputSchema', 'outputSchema', 'timeoutMs', 'retryAttempts', 'idempotencyKey', 'compensation'];
+  for (const key of fields) setOptionalMapValue(spec, key, unit[key]);
+  for (const key of ['id', 'name', 'createdAt', 'updatedAt']) spec.delete(key);
+  return document.toString();
+}
+
+function workflowStepResource(workflow: WorkflowDefinition, node: WorkflowDefinition['nodes'][number]): Record<string, unknown> {
+  return {
+    id: node.id,
+    name: node.label,
+    type: node.type,
+    config: node.config,
+    ...(node.unit === undefined ? {} : { unit: `WorkUnit/${workUnitResourceId(workflow.id, node.id)}` }),
+  };
+}
+
+function workflowEdgeResources(workflow: WorkflowDefinition): Array<Record<string, unknown>> {
+  return workflow.edges.map((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    ...(edge.sourceHandle === undefined ? {} : { sourceHandle: edge.sourceHandle }),
+    ...(edge.targetHandle === undefined ? {} : { targetHandle: edge.targetHandle }),
+    ...(edge.condition === undefined ? {} : { condition: edge.condition }),
+  }));
+}
+
+/**
+ * Patch a workflow resource from a Canvas projection without replacing the
+ * YAML document. Existing step mappings are reused so comments attached to
+ * unchanged steps survive add/remove/configuration operations.
+ */
+export function patchWorkflowResource(source: string, workflow: WorkflowDefinition): string {
+  const document = parseDocument(source);
+  if (document.errors.length > 0) throw new Error(document.errors[0]?.message ?? 'Invalid Workflow YAML.');
+  if (document.get('kind') !== 'Workflow') throw new Error('Expected a Workflow resource.');
+  const metadata = parsedMap(document, ['metadata']);
+  const spec = parsedMap(document, ['spec']);
+  metadata.set('version', workflow.version);
+  setOptionalMapValue(metadata, 'name', workflow.name);
+  setOptionalMapValue(spec, 'description', workflow.description);
+  spec.set('trigger', workflow.trigger.type.replace(/Trigger$/, '').toLowerCase());
+  setOptionalMapValue(spec, 'inputSchema', workflow.inputSchema);
+  spec.set('edges', workflowEdgeResources(workflow));
+
+  const steps = parsedSequence(document, ['spec', 'steps']);
+  const existingById = new Map<string, YAMLMap>();
+  for (const item of steps.items) {
+    if (!isMap(item)) continue;
+    const id = item.get('id');
+    if (typeof id === 'string') existingById.set(id, item);
+  }
+  const semanticNodes = workflow.nodes.filter((node) => node.type !== workflow.trigger.type);
+  steps.items = semanticNodes.map((node) => {
+    const existing = existingById.get(node.id);
+    if (existing === undefined) return document.createNode(workflowStepResource(workflow, node));
+    existing.set('id', node.id);
+    existing.set('name', node.label);
+    existing.set('type', node.type);
+    existing.set('config', node.config);
+    setOptionalMapValue(existing, 'unit', node.unit === undefined ? undefined : `WorkUnit/${workUnitResourceId(workflow.id, node.id)}`);
+    const agentId = node.type === 'agentLoop' && typeof node.config.agentId === 'string' ? node.config.agentId : undefined;
+    const goal = node.type === 'agentLoop' && typeof node.config.goal === 'string' ? node.config.goal : undefined;
+    const maxIterations = node.type === 'agentLoop' && typeof node.config.maxIterations === 'number' ? node.config.maxIterations : undefined;
+    const operation = node.type === 'code' && typeof node.config.operation === 'string' ? node.config.operation : undefined;
+    const instructions = node.type === 'approval' && typeof node.config.instructions === 'string' ? node.config.instructions : undefined;
+    setOptionalMapValue(existing, 'agent', agentId);
+    setOptionalMapValue(existing, 'goal', goal);
+    setOptionalMapValue(existing, 'maxIterations', maxIterations);
+    setOptionalMapValue(existing, 'operation', operation);
+    setOptionalMapValue(existing, 'instructions', instructions);
+    return existing;
+  });
+  return document.toString();
 }
 
 export function renderCanvasResource(workflow: WorkflowDefinition, nodes = workflow.nodes, edges = workflow.edges): string {
@@ -109,6 +228,14 @@ export function planResourceMigration(project: ProjectRecord, workflows: Workflo
       trigger: workflow.trigger.type.replace(/Trigger$/, '').toLowerCase(),
       ...(workflow.inputSchema === undefined ? {} : { inputSchema: workflow.inputSchema }),
       steps,
+      edges: workflow.edges.map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        ...(edge.sourceHandle === undefined ? {} : { sourceHandle: edge.sourceHandle }),
+        ...(edge.targetHandle === undefined ? {} : { targetHandle: edge.targetHandle }),
+        ...(edge.condition === undefined ? {} : { condition: edge.condition }),
+      })),
     })));
     files.push({ path: `canvas/${workflow.id}.canvas.yaml`, source: renderCanvasResource(workflow) });
   }

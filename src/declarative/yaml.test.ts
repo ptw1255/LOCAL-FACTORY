@@ -115,6 +115,21 @@ describe('declarative project YAML', () => {
     expect(rendered).toContain('type: agentLoop');
   });
 
+  it('preserves explicit workflow edges when compiling resource files', () => {
+    const parsed = parseProjectYaml(`${source}\n`, { tenantId: 'tenant-test' });
+    const explicit = parseProjectYaml(source.replace(
+      '  - id: prepare\n',
+      '  - id: prepare\n',
+    ).replace(
+      '      - id: review\n        name: Review\n        kind: agent\n        agent: reviewer\n',
+      '      - id: review\n        name: Review\n        kind: agent\n        agent: reviewer\n    edges:\n      - id: edge-review-prepare\n        source: review\n        target: prepare\n        condition: retry\n',
+    ), { tenantId: 'tenant-test' });
+    expect(parsed.workflows[0]?.edges).toHaveLength(2);
+    expect(explicit.workflows[0]?.edges).toEqual([
+      { id: 'edge-review-prepare', source: 'review', target: 'prepare', condition: 'retry' },
+    ]);
+  });
+
   it('rejects unsupported document headers and node types', () => {
     expect(() => parseProjectYaml(source.replace('kind: Project', 'kind: Workflow'), { tenantId: 'tenant-test' })).toThrow(/kind/);
     expect(() => parseProjectYaml(source.replace('kind: deterministic', 'type: unsupported'), { tenantId: 'tenant-test' })).toThrow(/Unknown YAML step type/);

@@ -41,6 +41,14 @@ const kindSpecSchemas: Record<z.infer<typeof resourceEnvelopeSchema>['kind'], z.
     trigger: z.string().min(1).optional(),
     inputSchema: z.union([z.record(z.string(), z.unknown()), z.string().min(1)]).optional(),
     steps: z.array(z.record(z.string(), z.unknown())).min(1),
+    edges: z.array(z.object({
+      id: z.string().min(1).optional(),
+      source: z.string().min(1),
+      target: z.string().min(1),
+      sourceHandle: z.string().min(1).optional(),
+      targetHandle: z.string().min(1).optional(),
+      condition: z.string().optional(),
+    }).passthrough()).optional(),
   }).passthrough(),
   WorkUnit: workUnitSchema,
   Policy: z.object({

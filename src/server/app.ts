@@ -698,6 +698,31 @@ export async function createApp(
         await store.appendArtifact?.(artifact);
         await store.mutate((state) => {
           if (!state.artifacts.some((candidate) => candidate.id === artifact.id && candidate.projectId === artifact.projectId && candidate.tenantId === artifact.tenantId)) state.artifacts.push(artifact);
+          // Resource files are the authoring boundary. Keep the mutable
+          // compatibility index aligned with the last successful compile so
+          // subsequent API runs and reloads do not fall back to stale
+          // aggregate WorkflowDefinition records. The immutable artifact
+          // remains the execution pin; this index is only the latest source
+          // projection for legacy consumers.
+          const current = new Map(
+            state.workflows
+              .filter((workflow) => workflow.projectId === request.params.projectId && workflow.tenantId === scope.tenantId)
+              .map((workflow) => [workflow.id, workflow]),
+          );
+          state.workflows = state.workflows.filter((workflow) => !(workflow.projectId === request.params.projectId && workflow.tenantId === scope.tenantId));
+          const compiledAt = new Date().toISOString();
+          for (const workflow of compiled.workflows) {
+            const prior = current.get(workflow.id);
+            const synced = {
+              ...workflow,
+              ...(prior?.createdAt === undefined ? {} : { createdAt: prior.createdAt }),
+              updatedAt: compiledAt,
+            };
+            state.workflows.push(synced);
+            if (!state.workflowVersions.some((candidate) => candidate.id === synced.id && candidate.version === synced.version && candidate.projectId === synced.projectId && candidate.tenantId === synced.tenantId)) {
+              state.workflowVersions.push(structuredClone(synced));
+            }
+          }
         });
         return artifact;
       } catch (error) {

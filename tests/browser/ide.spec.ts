@@ -51,6 +51,35 @@ test.describe('IDE workspace', () => {
     await expect(dialog).toBeHidden();
     await expect(runButton).toBeFocused();
   });
+
+  test('persists semantic Canvas edits to workflow and WorkUnit modules', async ({ page, request }) => {
+    const migration = await request.post('/api/projects/project-local/migrate', { data: { dryRun: false } });
+    expect(migration.ok()).toBeTruthy();
+    const compile = await request.post('/api/projects/project-local/compile', { data: { environment: 'local' } });
+    expect(compile.ok()).toBeTruthy();
+
+    const view = page.getByRole('combobox', { name: 'Workspace view' });
+    await view.selectOption('canvas');
+    const transform = page.locator('button.palette-item').filter({ hasText: 'Transform' }).first();
+    await expect(transform).toBeVisible();
+    await transform.click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.locator('.toast').filter({ hasText: 'Saved version' })).toBeVisible();
+
+    const workflowFile = await request.get('/api/projects/project-local/files?path=workflows/workflow-agent-intake.workflow.yaml');
+    expect(workflowFile.ok()).toBeTruthy();
+    const workflowSource = await workflowFile.json() as { content: string };
+    expect(workflowSource.content).toContain('type: transform');
+    const files = await request.get('/api/projects/project-local/files');
+    expect(files.ok()).toBeTruthy();
+    const listing = await files.json() as { items: Array<{ path: string }> };
+    expect(listing.items.some((file) => file.path.match(/^units\/unit-workflow-agent-intake-transform-/))).toBeTruthy();
+
+    const workflows = await request.get('/api/workflows');
+    expect(workflows.ok()).toBeTruthy();
+    const current = await workflows.json() as { items: Array<{ id: string; nodes: Array<{ type: string }> }> };
+    expect(current.items.find((item) => item.id === 'workflow-agent-intake')?.nodes.some((node) => node.type === 'transform')).toBeTruthy();
+  });
 });
 
 test.describe('Observe and Deployments', () => {
