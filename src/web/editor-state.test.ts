@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextExplorerIndex, nextObserveTab, observeRunHash, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
+import { clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -68,6 +68,8 @@ describe('IDE editor tab state', () => {
     expect(observeRunHash('run 1')).toBe('#/observe?runId=run+1');
     expect(observeRunHash(null)).toBe('#/observe');
     expect(observeRunHash('   ')).toBe('#/observe');
+    expect(observeScopeHash(null, 'workflow/review', 'staging')).toBe('#/observe?workflowId=workflow%2Freview&environment=staging');
+    expect(observeScopeHash('run-1', 'all', 'all')).toBe('#/observe?runId=run-1');
   });
 
   it('prefers the newest compiled artifact for the selected workflow and environment', () => {
