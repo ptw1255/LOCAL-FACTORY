@@ -96,6 +96,11 @@ export const api = {
       `/api/projects/${encodeURIComponent(projectId)}/declarative`,
       { method: 'POST', body: JSON.stringify({ source }) },
     ),
+  migrateProject: (projectId: string, dryRun = false) =>
+    request<{ dryRun: boolean; migrated?: boolean; changedPaths?: string[] }>(
+      `/api/projects/${encodeURIComponent(projectId)}/migrate`,
+      { method: 'POST', body: JSON.stringify({ dryRun }) },
+    ),
   projectFiles: (projectId: string, search = '') => request<ItemsResponse<ProjectFileRecord> & { directories?: ProjectDirectoryRecord[] }>(`/api/projects/${encodeURIComponent(projectId)}/files${search.trim() === '' ? '' : `?search=${encodeURIComponent(search.trim())}`}`),
   projectFile: (projectId: string, filePath: string) => request<ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files?path=${encodeURIComponent(filePath)}`),
   artifacts: (projectId: string) => request<ItemsResponse<ArtifactRecord>>(`/api/projects/${encodeURIComponent(projectId)}/artifacts`),

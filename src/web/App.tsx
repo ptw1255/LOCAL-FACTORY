@@ -1259,9 +1259,16 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         // artifact. The aggregate API remains a compatibility fallback for
         // projects that have not been migrated to resource files yet.
         const workflowPath = `workflows/${workflow.id}.workflow.yaml`;
-        const currentWorkflowFile = await api.projectFile(projectId, workflowPath).catch(() => undefined);
+        let currentWorkflowFile = await api.projectFile(projectId, workflowPath).catch(() => undefined);
         if (currentWorkflowFile?.content === undefined) {
-          saved = await api.saveWorkflow(projected);
+          // Legacy projects have an aggregate workflow but no authored files.
+          // Migrate them before applying a Canvas edit so the projection never
+          // writes a WorkflowDefinition directly to the control-plane store.
+          await api.migrateProject(projectId);
+          currentWorkflowFile = await api.projectFile(projectId, workflowPath).catch(() => undefined);
+        }
+        if (currentWorkflowFile?.content === undefined) {
+          throw new Error(`Workflow source ${workflowPath} could not be created by migration.`);
         } else {
           const nextVersion = workflow.version + 1;
           const sourceWorkflow: WorkflowDefinition = { ...projected, version: nextVersion };

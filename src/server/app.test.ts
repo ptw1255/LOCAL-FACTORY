@@ -496,6 +496,23 @@ describe('platform API', () => {
     expect(saved.json<{ files: Array<{ path: string; content: string }> }>().files.map((file) => file.content)).toEqual(['version: 2', 'version: 2']);
   });
 
+  it('uses the URL project scope for migration even when the header is stale', async () => {
+    const projectResponse = await app.inject({ method: 'POST', url: '/api/projects', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' }, payload: { name: 'Migration target', description: '' } });
+    expect(projectResponse.statusCode).toBe(200);
+    const targetProject = projectResponse.json<{ id: string }>();
+    await store.mutate((state) => {
+      state.workflows.push({ ...structuredClone(seedWorkflow), projectId: targetProject.id, tenantId: 'tenant-local' });
+    });
+    const staleHeaders = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const migrated = await app.inject({ method: 'POST', url: `/api/projects/${targetProject.id}/migrate`, headers: staleHeaders, payload: { dryRun: false } });
+    expect(migrated.statusCode).toBe(200);
+    const targetFiles = await app.inject({ method: 'GET', url: `/api/projects/${targetProject.id}/files`, headers: staleHeaders });
+    expect(targetFiles.statusCode).toBe(200);
+    expect(targetFiles.json<{ items: Array<{ path: string }> }>().items.some((file) => file.path === 'factory.yaml')).toBe(true);
+    const sourceFiles = await app.inject({ method: 'GET', url: '/api/projects/project-local/files', headers: staleHeaders });
+    expect(sourceFiles.json<{ items: Array<{ path: string }> }>().items.some((file) => file.path === 'factory.yaml')).toBe(false);
+  });
+
   it('rejects create-only batch writes when a target path already exists', async () => {
     const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
     await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'existing.yaml', content: 'version: 1' } });

@@ -799,7 +799,7 @@ export async function createApp(
   app.post<{ Params: { projectId: string }; Body: unknown }>(
     '/api/projects/:projectId/migrate',
     async (request, reply) => {
-      const scope = scopeFromRequest(request);
+      const scope = { ...scopeFromRequest(request), projectId: request.params.projectId };
       const source = await store.read((state) => {
         const project = state.projects.find((candidate) => candidate.id === request.params.projectId && candidate.tenantId === scope.tenantId);
         if (project === undefined) return undefined;
