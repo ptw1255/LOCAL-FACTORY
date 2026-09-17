@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampBottomPanelHeight, filterProjectItems, nextExplorerIndex, nextObserveTab, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection } from './App';
+import { clampBottomPanelHeight, filterProjectItems, nextExplorerIndex, nextObserveTab, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, sourceSyntaxDiagnostics } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -51,5 +51,16 @@ describe('IDE editor tab state', () => {
     expect(nextObserveTab('traces', 'Home')).toBe('runs');
     expect(nextObserveTab('runs', 'End')).toBe('metrics');
     expect(nextObserveTab('runs', 'Enter')).toBeNull();
+  });
+
+  it('maps parser errors to source-aware Problems diagnostics', () => {
+    expect(sourceSyntaxDiagnostics('kind: Workflow\nspec:\n  - broken', 'workflows/review.workflow.yaml', [{ message: 'bad indentation', pos: [23, 24] }])).toEqual([{
+      severity: 'error',
+      path: 'workflows/review.workflow.yaml',
+      line: 3,
+      column: 3,
+      code: 'yaml.parse',
+      message: 'bad indentation',
+    }]);
   });
 });
