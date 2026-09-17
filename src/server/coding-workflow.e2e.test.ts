@@ -59,7 +59,11 @@ describe('coding workflow API', () => {
     try {
       const started = await app.inject({ method: 'POST', url: `/api/workflows/${workflow.id}/runs`, headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' }, payload: {} });
       expect(started.statusCode).toBe(200);
-      const runId = (started.json() as { id: string }).id;
+      const startedRun = started.json() as { id: string; traceId?: string; releaseBundleHash?: string; pinnedAgentVersions?: Record<string, number> };
+      const runId = startedRun.id;
+      expect(startedRun.traceId).toEqual(expect.any(String));
+      expect(startedRun.releaseBundleHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+      expect(startedRun.pinnedAgentVersions).toEqual(expect.objectContaining({ 'request-assessor': expect.any(Number) }));
       expect((await waitFor(app, runId, 'waiting')).status).toBe('waiting');
       let waitingItems: Array<{ status: string; correlationId?: string; idempotencyKey?: string }> = [];
       for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -90,7 +94,8 @@ describe('coding workflow API', () => {
       });
       const approved = await restartedApp.inject({ method: 'POST', url: `/api/runs/${runId}/approve`, headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' }, payload: {} });
       expect(approved.statusCode).toBe(200);
-      expect((await waitFor(restartedApp, runId, 'succeeded')).status).toBe('succeeded');
+      const completed = await waitFor(restartedApp, runId, 'succeeded');
+      expect(completed).toEqual(expect.objectContaining({ releaseBundleHash: startedRun.releaseBundleHash, pinnedAgentVersions: startedRun.pinnedAgentVersions }));
       const evidence = await restartedApp.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
       const evidenceItems = (evidence.json() as { items: Array<{ unitId: string; status: string; idempotencyKey?: string; correlationId?: string }> }).items;
       expect(evidenceItems.some((entry) => entry.unitId === 'prepare' && entry.status === 'succeeded' && entry.correlationId !== undefined)).toBe(true);
@@ -141,7 +146,10 @@ describe('coding workflow API', () => {
     const app = await createApp({ store, repositoryWorkspace, githubRepository: github, serveStatic: false });
     try {
       const started = await app.inject({ method: 'POST', url: `/api/workflows/${workflow.id}/runs`, payload: {} });
-      const runId = (started.json() as { id: string }).id;
+      const startedRun = started.json() as { id: string; traceId?: string; releaseBundleHash?: string; pinnedAgentVersions?: Record<string, number> };
+      const runId = startedRun.id;
+      expect(startedRun.releaseBundleHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+      expect(startedRun.pinnedAgentVersions).toEqual({});
       let terminal: Record<string, unknown> | undefined;
       // Repository operations involve real git subprocesses; keep the wait
       // finite but allow normal local scheduling latency.
@@ -163,6 +171,7 @@ describe('coding workflow API', () => {
       expect(operations.some((entry) => entry.unitId === 'commit' && entry.status === 'succeeded')).toBe(true);
       expect(operations.some((entry) => entry.unitId === 'pr' && entry.status === 'succeeded' && entry.metadata?.['pull_request.number'] === 12 && entry.metadata?.['provider.url'] === 'https://github.com/example/repo/pull/12')).toBe(true);
       expect(operations.some((entry) => entry.unitId === 'ci' && entry.status === 'succeeded' && entry.metadata?.['ci.status'] === 'success' && entry.metadata?.['ci.ref'] === baseRevision)).toBe(true);
+      expect(operations.filter((entry) => entry.status === 'succeeded').length).toBeGreaterThanOrEqual(7);
       await expect(readFile(path.join(repoRoot, 'README.md'), 'utf8')).resolves.toBe('source');
     } finally { await app.close(); }
   });
