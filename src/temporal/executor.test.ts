@@ -123,8 +123,10 @@ describe('TemporalWorkflowExecutor', () => {
       run.status = 'failed';
       run.error = 'transient failure';
     });
-    const retried = await executor.retry(failed.id);
-    expect(retried).toEqual(expect.objectContaining({ replayOfRunId: failed.id, artifactId: 'sha256:retry-artifact', input: { retryable: true }, executionEngine: 'temporal' }));
+    const retried = await executor.retry(failed.id, { idempotencyKey: 'temporal-retry-1' });
+    expect(retried).toEqual(expect.objectContaining({ replayOfRunId: failed.id, artifactId: 'sha256:retry-artifact', input: { retryable: true }, retryIdempotencyKey: 'temporal-retry-1', executionEngine: 'temporal' }));
+    const repeated = await executor.retry(failed.id, { idempotencyKey: 'temporal-retry-1' });
+    expect(repeated.id).toBe(retried.id);
     expect(start).toHaveBeenCalledTimes(2);
     expect((await events.list(failed.id)).some((event) => event.type === 'run.retried' && event.attributes?.['run.retry_id'] === retried.id)).toBe(true);
   });

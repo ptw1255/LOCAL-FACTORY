@@ -221,6 +221,8 @@ export interface RunRecord {
   inputHash?: string;
   /** Source run when this execution was created by deterministic replay. */
   replayOfRunId?: string;
+  /** Client-supplied key making a retry request idempotent for one source run. */
+  retryIdempotencyKey?: string;
   /** Execution plane that owns this run. */
   executionEngine?: ExecutionEngine;
   /** Temporal identity used to recover or control a durable execution. */

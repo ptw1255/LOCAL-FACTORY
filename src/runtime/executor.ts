@@ -35,6 +35,7 @@ export interface RunCreationOptions {
   temporalWorkflowId?: string;
   temporalRunId?: string;
   temporalTaskQueue?: string;
+  retryIdempotencyKey?: string;
 }
 
 /** Stable identity for the workflow and versioned agent boxes executed by a run. */
@@ -86,6 +87,7 @@ export function createQueuedRun(workflow: WorkflowDefinition, options: RunCreati
       inputHash: createHash('sha256').update(JSON.stringify(options.input) ?? 'undefined').digest('hex'),
     }),
     ...(options.replayOfRunId === undefined ? {} : { replayOfRunId: options.replayOfRunId }),
+    ...(options.retryIdempotencyKey === undefined ? {} : { retryIdempotencyKey: options.retryIdempotencyKey }),
     executionEngine: options.executionEngine ?? 'local',
     ...(options.temporalWorkflowId === undefined ? {} : { temporalWorkflowId: options.temporalWorkflowId }),
     ...(options.temporalRunId === undefined ? {} : { temporalRunId: options.temporalRunId }),
@@ -198,11 +200,19 @@ export class LocalWorkflowExecutor {
   }
 
   /** Start a fresh, pinned run from a terminal failure while preserving provenance. */
-  public async retry(runId: string): Promise<RunRecord> {
+  public async retry(runId: string, options: { idempotencyKey?: string } = {}): Promise<RunRecord> {
     const source = await this.store.read((state) => state.runs.find((candidate) => candidate.id === runId));
     if (source === undefined) throw new Error('Run not found.');
     if (!['failed', 'timed_out', 'cancelled'].includes(source.status)) {
       throw new Error('Only failed, timed-out, or cancelled runs can be retried.');
+    }
+    const idempotencyKey = options.idempotencyKey?.trim();
+    if (idempotencyKey !== undefined && idempotencyKey !== '') {
+      const existing = await this.store.read((state) => state.runs.find((candidate) => candidate.retryIdempotencyKey === idempotencyKey));
+      if (existing !== undefined) {
+        if (existing.replayOfRunId !== source.id) throw new Error('Retry idempotency key is already associated with another source run.');
+        return existing;
+      }
     }
     const retry = await this.start(source.workflowDefinition, {
       ...(source.artifactId === undefined ? {} : { artifactId: source.artifactId }),
@@ -210,6 +220,7 @@ export class LocalWorkflowExecutor {
       ...(source.deploymentId === undefined ? {} : { deploymentId: source.deploymentId }),
       ...(source.input === undefined ? {} : { input: structuredClone(source.input) }),
       replayOfRunId: source.id,
+      ...(idempotencyKey === undefined || idempotencyKey === '' ? {} : { retryIdempotencyKey: idempotencyKey }),
     });
     await this.events.emit(source.id, 'run.retried', `Run retried as ${retry.id}.`, { attributes: { 'run.retry_id': retry.id } });
     return retry;

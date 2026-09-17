@@ -1823,7 +1823,7 @@ function RunsView() {
                 ? await api.supersedeRun(selectedRun.id)
               : action === 'cancel'
                 ? await api.cancelRun(selectedRun.id)
-                : await api.retryRun(selectedRun.id);
+                : await api.retryRun(selectedRun.id, `${selectedRun.id}:observe-retry`);
       setSelectedRun(updated);
       if (action === 'retry') setSelectedRunId(updated.id);
       await loadRuns(true);
