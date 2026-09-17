@@ -395,6 +395,10 @@ the `postgres_data` volume keeps it across restarts. The `DATABASE_URL` environm
 variable selects the PostgreSQL adapter. If it is omitted, the server falls back to
 the local JSON store at `.data/state.json`.
 
+The control plane polls persisted deployments every 30 seconds and reconciles desired
+versus observed state even when no browser is open. Override the interval for local
+testing with `DEPLOYMENT_RECONCILE_INTERVAL_MS`; the value must be a positive number.
+
 Compose sets `WORKSPACE_ROOT=/app/.data/workspaces`. Authored project files and empty
 directories are stored in that durable workspace volume rather than in PostgreSQL
 control-plane state; compiled artifacts, runs, deployments, evidence, and telemetry

@@ -110,6 +110,38 @@ describe('DeploymentReconciler', () => {
     await expect(events.list(`deployment:${deployment.id}`)).resolves.toEqual([expect.objectContaining({ type: 'deployment.transition', signal: 'trace' })]);
   });
 
+  it('polls every persisted deployment and isolates per-deployment failures', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const artifact = await store.mutate((state) => {
+      const value = { id: 'sha256:artifact-poll-all', tenantId: 'tenant-local', projectId: 'project-local', environment: 'local', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() };
+      state.artifacts.push(value);
+      return value;
+    });
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    let observations = 0;
+    const reconciler = new DeploymentReconciler(store, 30_000, {
+      observe: (deployment) => {
+        observations += 1;
+        if (deployment.environment === 'poll-fails') throw new Error('Probe unavailable.');
+        return { observedState: deployment.desiredState === 'running' ? 'live' : 'stopped', health: deployment.desiredState === 'running' ? 'healthy' : 'unknown', triggerStatus: deployment.desiredState === 'running' ? 'active' : 'inactive' };
+      },
+    });
+    const healthy = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'poll-healthy', artifactId: artifact.id, trigger: 'schedule' });
+    const failing = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'poll-fails', artifactId: artifact.id, trigger: 'schedule' });
+    await store.mutate((state) => {
+      const target = state.deployments.find((deployment) => deployment.id === healthy.id);
+      if (target === undefined) throw new Error('Healthy deployment missing.');
+      target.desiredState = 'running';
+    });
+
+    await expect(reconciler.reconcileAll()).resolves.toEqual({ reconciled: 1, failed: 1 });
+    expect(observations).toBeGreaterThanOrEqual(2);
+    await expect(reconciler.list(scope)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: healthy.id, observedState: 'live', health: 'healthy' }),
+      expect.objectContaining({ id: failing.id, observedState: 'failed', health: 'degraded', lastError: 'Probe unavailable.' }),
+    ]));
+  });
+
   it('records rejected artifact transitions as failed history', async () => {
     const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
     const artifact = await store.mutate((state) => {
