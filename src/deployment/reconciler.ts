@@ -148,7 +148,7 @@ export class DeploymentReconciler {
           const artifact = this.findArtifact(state.artifacts, targetArtifactId, scope);
           if (artifact === undefined || !artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)) throw new Error('Deployment artifact is not available for this workflow.');
           if (action === 'rollback' && (!deployment.healthyArtifactIds.includes(targetArtifactId) || targetArtifactId === deployment.artifactId)) throw new Error('Rollback requires a prior healthy artifact for this deployment.');
-          if (action === 'deploy' && isProtectedEnvironment(deployment.environment)) {
+          if ((action === 'deploy' || action === 'rollback') && isProtectedEnvironment(deployment.environment)) {
             this.requirePromotionEvidence(state, deployment, scope, options.runId, targetArtifactId, options.approvalId);
           }
           deployment.artifactId = targetArtifactId;

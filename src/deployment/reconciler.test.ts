@@ -269,6 +269,38 @@ describe('DeploymentReconciler', () => {
     expect(promoted).toMatchObject({ observedState: 'live', health: 'healthy', lastVerifiedRunId: run.id });
   });
 
+  it('requires bound approval evidence for protected rollback', async () => {
+    const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const artifacts = await store.mutate((state) => {
+      const values = ['rollback-a', 'rollback-b'].map((suffix) => ({ id: `sha256:${suffix}`, tenantId: scope.tenantId, projectId: scope.projectId, environment: 'production', compilerVersion: '0.1.0', sources: [], workflows: [structuredClone(seedWorkflow)], createdAt: new Date().toISOString() }));
+      state.artifacts.push(...values);
+      return values;
+    });
+    const makeRun = (id: string, artifactId: string): RunRecord => ({
+      tenantId: scope.tenantId, projectId: scope.projectId, id, workflowId: seedWorkflow.id, workflowName: seedWorkflow.name, workflowVersion: seedWorkflow.version, artifactId, traceId: id.padEnd(32, '0').slice(0, 32), status: 'succeeded', startedAt: new Date().toISOString(), costUsd: 0, humanTouchpoints: 0, workflowDefinition: structuredClone(seedWorkflow), completedNodeIds: [], activatedNodeIds: [], approvedNodeIds: [], approvedNodeHashes: {}, pendingApprovalHashes: {}, unitOutputs: {}, ciCheckpoints: {},
+    });
+    const runA = makeRun('run-rollback-a', artifacts[0]!.id);
+    const runB = makeRun('run-rollback-b', artifacts[1]!.id);
+    await store.mutate((state) => { state.runs.push(runA, runB); });
+    for (const run of [runA, runB]) {
+      await store.appendEvidence({ id: `${run.id}-patch`, tenantId: scope.tenantId, projectId: scope.projectId, runId: run.id, unitId: 'patch', operation: 'repositoryPatch', attempt: 1, status: 'succeeded', occurredAt: new Date().toISOString() });
+      await store.appendEvidence({ id: `${run.id}-ci`, tenantId: scope.tenantId, projectId: scope.projectId, runId: run.id, unitId: 'ci', operation: 'repositoryCi', attempt: 1, status: 'succeeded', occurredAt: new Date().toISOString(), metadata: { 'ci.status': 'success' } });
+    }
+    const reconciler = new DeploymentReconciler(store);
+    const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'production', artifactId: artifacts[0]!.id, trigger: 'manual' });
+    const initialApproval = await reconciler.requestApproval(deployment.id, scope, { artifactId: artifacts[0]!.id, runId: runA.id });
+    await reconciler.decideApproval(deployment.id, scope, initialApproval.id, 'approved');
+    await reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifacts[0]!.id, runId: runA.id, approvalId: initialApproval.id });
+    const nextApproval = await reconciler.requestApproval(deployment.id, scope, { artifactId: artifacts[1]!.id, runId: runB.id });
+    await reconciler.decideApproval(deployment.id, scope, nextApproval.id, 'approved');
+    await reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifacts[1]!.id, runId: runB.id, approvalId: nextApproval.id });
+    await expect(reconciler.action(deployment.id, scope, 'rollback', { artifactId: artifacts[0]!.id })).rejects.toThrow('successful coding-workflow run');
+    const rollbackApproval = await reconciler.requestApproval(deployment.id, scope, { artifactId: artifacts[0]!.id, runId: runA.id });
+    await reconciler.decideApproval(deployment.id, scope, rollbackApproval.id, 'approved');
+    await expect(reconciler.action(deployment.id, scope, 'rollback', { artifactId: artifacts[0]!.id, runId: runA.id, approvalId: rollbackApproval.id })).resolves.toMatchObject({ artifactId: artifacts[0]!.id, observedState: 'live', health: 'healthy' });
+  });
+
   it('does not retain a verified run when protected promotion health fails', async () => {
     const store = new JsonStore(path.join(await mkdtemp(path.join(os.tmpdir(), 'factory-deploy-')), 'state.json'));
     const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
