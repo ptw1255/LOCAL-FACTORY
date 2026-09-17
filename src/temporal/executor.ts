@@ -112,7 +112,6 @@ export class TemporalWorkflowExecutor {
         taskQueue,
         args: [{ runId: run.id, definition: run.workflowDefinition, releaseBundleHash: run.releaseBundleHash, pinnedAgentVersions: run.pinnedAgentVersions, ...(run.input === undefined ? {} : { input: run.input }) }],
         searchAttributes: {
-          WorkflowId: [workflow.id],
           // Keep the start request compatible with Temporal's local
           // auto-setup search-attribute set. Rich release, environment, and
           // agent provenance is carried in memo and persisted run evidence.

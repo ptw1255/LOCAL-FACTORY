@@ -60,7 +60,7 @@ describe('TemporalWorkflowExecutor', () => {
     workflow.version = 3;
     const run = await executor.start(workflow, { artifactId: 'sha256:release' });
     expect(run).toEqual(expect.objectContaining({ executionEngine: 'temporal', status: 'running', artifactId: 'sha256:release', releaseBundleHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/), pinnedAgentVersions: expect.any(Object), temporalWorkflowId: `factory-${run.id}`, temporalTaskQueue: 'factory-workflows-v3', temporalRunId: 'temporal-run-1' }));
-    expect(start).toHaveBeenCalledWith('executeWorkflow', expect.objectContaining({ workflowId: `factory-${run.id}`, taskQueue: 'factory-workflows-v3', searchAttributes: expect.objectContaining({ WorkflowId: [workflow.id], CustomKeywordField: ['running'] }) }));
+    expect(start).toHaveBeenCalledWith('executeWorkflow', expect.objectContaining({ workflowId: `factory-${run.id}`, taskQueue: 'factory-workflows-v3', searchAttributes: { CustomKeywordField: ['running'] } }));
 
     handle.resultDeferred.resolve({ completedNodeIds: ['trigger', 'prepare'], unitOutputs: { prepare: 'ok' }, lifecycle: [] });
     await waitFor(store, run.id, 'succeeded');
