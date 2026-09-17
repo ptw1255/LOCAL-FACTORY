@@ -193,6 +193,8 @@ export class TemporalWorkflowExecutor {
 
   public async cancel(runId: string): Promise<RunRecord> {
     const run = await this.requireRun(runId);
+    if (isTerminalRunStatus(run.status)) return run;
+    await this.handleFor(run).signal('status', 'cancelled');
     await this.handleFor(run).cancel();
     return this.updateRun(runId, (target) => {
       target.status = 'cancelled';
@@ -203,8 +205,10 @@ export class TemporalWorkflowExecutor {
 
   public async deny(runId: string, options: { reason?: string } = {}): Promise<RunRecord> {
     const run = await this.requireRun(runId);
+    if (isTerminalRunStatus(run.status)) return run;
     // Stop the durable execution, but persist one coherent operator decision.
     // Calling cancel() here would emit run.cancelled before denial is recorded.
+    await this.handleFor(run).signal('status', 'failed');
     await this.handleFor(run).cancel();
     const reason = options.reason?.trim() || 'Workflow approval was denied.';
     return this.updateRun(runId, (target) => {
