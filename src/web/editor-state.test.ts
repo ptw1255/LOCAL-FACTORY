@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
+import { seedWorkflow } from '../domain/seed';
+import { canvasOnlyChangesPresentation, clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
+import type { CanvasNode } from './WorkflowNodeCard';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -51,6 +53,21 @@ describe('IDE editor tab state', () => {
       ...Array.from({ length: 3 }, (_, index) => ({ id: `log-${index}`, signal: 'log', timestamp: `2026-01-01T00:00:0${index + 1}.000Z` })),
     ] as never;
     expect(recentRunLogs(events, 2).map((event) => event.id)).toEqual(['log-1', 'log-2']);
+  });
+
+  it('keeps Canvas position-only edits out of workflow semantics', () => {
+    const workflow = structuredClone(seedWorkflow);
+    const nodes = workflow.nodes.map((node) => ({
+      id: node.id,
+      type: 'workflow' as const,
+      position: { ...node.position },
+      data: { label: node.label, nodeType: node.type, category: 'Operations', description: '', config: node.config, unit: node.unit },
+    })) as CanvasNode[];
+    const edges = workflow.edges.map((edge) => ({ ...edge }));
+    nodes[0]!.position = { x: nodes[0]!.position.x + 120, y: nodes[0]!.position.y + 40 };
+    expect(canvasOnlyChangesPresentation(workflow, nodes, edges)).toBe(true);
+    nodes[1]!.data = { ...nodes[1]!.data, label: 'Changed semantics' };
+    expect(canvasOnlyChangesPresentation(workflow, nodes, edges)).toBe(false);
   });
 
   it('wraps Observe tab keyboard navigation and supports Home/End', () => {
