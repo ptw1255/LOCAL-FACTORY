@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampBottomPanelHeight, filterProjectItems, nextExplorerIndex, nextObserveTab, observeRunHash, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, sourceSyntaxDiagnostics } from './App';
+import { clampBottomPanelHeight, filterProjectItems, nextExplorerIndex, nextObserveTab, observeRunHash, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -68,5 +68,13 @@ describe('IDE editor tab state', () => {
     expect(observeRunHash('run 1')).toBe('#/observe?runId=run+1');
     expect(observeRunHash(null)).toBe('#/observe');
     expect(observeRunHash('   ')).toBe('#/observe');
+  });
+
+  it('prefers the newest compiled artifact for the selected workflow and environment', () => {
+    const older = { id: 'artifact-old', environment: 'local', createdAt: '2026-01-01T00:00:00.000Z', workflows: [{ id: 'workflow-a' }] } as never;
+    const newer = { id: 'artifact-new', environment: 'local', createdAt: '2026-01-02T00:00:00.000Z', workflows: [{ id: 'workflow-a' }] } as never;
+    expect(selectWorkflowArtifact([older, newer], 'workflow-a', 'local')?.id).toBe('artifact-new');
+    const justCompiled = { id: 'artifact-compiled', environment: 'local', createdAt: '2026-01-03T00:00:00.000Z', workflows: [{ id: 'workflow-a' }] } as never;
+    expect(selectWorkflowArtifact([older, newer], 'workflow-a', 'local', justCompiled)?.id).toBe('artifact-compiled');
   });
 });

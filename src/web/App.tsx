@@ -257,6 +257,15 @@ export function retainSelection<T extends { id: string }>(items: T[], selectedId
   return selectedId !== null && items.some((item) => item.id === selectedId) ? selectedId : items[0]?.id ?? null;
 }
 
+export function selectWorkflowArtifact(artifacts: ArtifactRecord[], workflowId: string, environment: string, preferred?: ArtifactRecord | null): ArtifactRecord | undefined {
+  const candidates = preferred === undefined || preferred === null
+    ? artifacts
+    : [preferred, ...artifacts.filter((artifact) => artifact.id !== preferred.id)];
+  return candidates
+    .filter((artifact) => artifact.environment === environment && artifact.workflows.some((workflow) => workflow.id === workflowId))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+}
+
 export type ObserveTab = 'runs' | 'logs' | 'traces' | 'metrics';
 
 export function nextObserveTab(tab: ObserveTab, key: string): ObserveTab | null {
@@ -722,6 +731,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [workflow, setWorkflow] = useState<WorkflowDefinition | null>(null);
   const [nodes, setNodes] = useState<CanvasNode[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  const latestCompiledArtifact = useRef<ArtifactRecord | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [paletteSearch, setPaletteSearch] = useState('');
@@ -1116,12 +1126,12 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         }
       }
       if (runMode === 'dry-run') {
-        const artifact = artifacts.filter((candidate) => candidate.environment === runEnvironment && candidate.workflows.some((candidateWorkflow) => candidateWorkflow.id === workflow.id)).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+        const artifact = selectWorkflowArtifact(artifacts, workflow.id, runEnvironment, latestCompiledArtifact.current);
         const preflight = await api.dryRun(workflow.id, { environment: runEnvironment, ...(artifact === undefined ? {} : { artifactId: artifact.id }), ...(input === undefined ? {} : { input }) });
         setNotice({ tone: 'success', text: `Dry run passed for ${preflight.workflowId} v${preflight.workflowVersion}${preflight.artifactId === undefined ? '' : ` · artifact ${preflight.artifactId.slice(0, 18)}`}; no execution was started.` });
         return;
       }
-      const artifact = artifacts.filter((candidate) => candidate.environment === runEnvironment && candidate.workflows.some((candidateWorkflow) => candidateWorkflow.id === workflow.id)).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+      const artifact = selectWorkflowArtifact(artifacts, workflow.id, runEnvironment, latestCompiledArtifact.current);
       const run = await api.startRun(workflow.id, { environment: runEnvironment, ...(artifact === undefined ? {} : { artifactId: artifact.id }), ...(input === undefined ? {} : { input }) });
       window.localStorage.setItem(`factory.onboarding.${projectId}.run`, 'true');
       setHasRun(true);
@@ -1241,7 +1251,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
           <form aria-label="Workflow run input" className="run-input-dialog" onSubmit={(event) => void submitRunInput(event)}>
             <div className="run-input-heading"><div><span className="eyebrow">Run preflight</span><h2>Provide workflow input</h2></div><button aria-label="Close run input" className="icon-button" onClick={() => setRunInputOpen(false)} type="button"><Icon name="close" size={14} /></button></div>
             <p>Input is validated against the workflow contract before any work unit executes.</p>
-            {(() => { const artifact = artifacts.filter((candidate) => candidate.environment === runEnvironment && candidate.workflows.some((candidateWorkflow) => candidateWorkflow.id === workflow.id)).sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]; return <p className="run-input-artifact">{artifact === undefined ? `No compiled ${runEnvironment} artifact is available; this run will use the saved workflow.` : `Pinned artifact: ${artifact.id}`}</p>; })()}
+            {(() => { const artifact = selectWorkflowArtifact(artifacts, workflow.id, runEnvironment, latestCompiledArtifact.current); return <p className="run-input-artifact">{artifact === undefined ? `No compiled ${runEnvironment} artifact is available; this run will use the saved workflow.` : `Pinned artifact: ${artifact.id}`}</p>; })()}
             <pre className="run-input-schema">{JSON.stringify(workflow.inputSchema, null, 2)}</pre>
             <label className="form-field"><span>Input JSON</span><textarea aria-describedby={runInputError === null ? undefined : 'run-input-error'} className={runInputError === null ? '' : 'invalid'} onChange={(event) => setRunInputDraft(event.target.value)} rows={9} spellCheck={false} value={runInputDraft} /></label>
             {runInputError === null ? null : <div className="field-error" id="run-input-error" role="alert">{runInputError}</div>}
@@ -1445,9 +1455,13 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         }}
         onSourceChange={(value) => { setYamlSource(value); setYamlDirty(true); }}
         onSourceLoaded={(value) => { setYamlSource(value); setYamlDirty(false); }}
-        onSourceImported={(nextWorkflows, source) => {
+        onSourceImported={(nextWorkflows, source, artifact) => {
           window.localStorage.setItem(`factory.onboarding.${projectId}.compiled`, 'true');
           setHasCompiled(true);
+          if (artifact !== undefined) {
+            latestCompiledArtifact.current = artifact;
+            setArtifacts((current) => [artifact, ...current.filter((candidate) => candidate.id !== artifact.id)]);
+          }
           setWorkflows(nextWorkflows);
           const next = nextWorkflows.find((item) => item.id === workflow.id) ?? nextWorkflows[0] ?? null;
           setWorkflow(next);
@@ -1508,7 +1522,7 @@ function OperationalTree({
   onDirtyChange: (dirty: boolean) => void;
   onSourceChange: (source: string) => void;
   onSourceLoaded: (source: string) => void;
-  onSourceImported: (workflows: WorkflowDefinition[], source: string) => void;
+  onSourceImported: (workflows: WorkflowDefinition[], source: string, artifact?: ArtifactRecord) => void;
   onRegisterSave: (save: () => Promise<boolean>) => void;
 }) {
   const agentById = new Map(workflow.agents.map((agent) => [agent.id, agent]));
@@ -1889,7 +1903,7 @@ function OperationalTree({
       if (isResourceFile) {
         await api.saveProjectFile(projectId, selectedPath, source, selectedFile?.sha256);
         const compiled = await api.compileProject(projectId);
-        onSourceImported(compiled.workflows, source);
+        onSourceImported(compiled.workflows, source, compiled);
       } else {
         const response = await api.importDeclarativeYaml(projectId, source);
         onSourceImported(response.workflows, source);
