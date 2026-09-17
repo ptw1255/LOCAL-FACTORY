@@ -48,6 +48,7 @@ describe('OtlpHttpExporter', () => {
     };
     expect(payload.resourceSpans).toHaveLength(1);
     expect(payload.resourceSpans[0]?.resource.attributes.map((item) => item.key)).toContain('project.id');
+    expect(payload.resourceSpans[0]?.resource.attributes.map((item) => item.key)).not.toContain('run.id');
     const span = (payload.resourceSpans[0]?.scopeSpans?.[0] as { spans?: Array<{ attributes?: Array<{ key: string }> }> } | undefined)?.spans?.[0];
     expect(span?.attributes?.map((item) => item.key)).toEqual(expect.arrayContaining(['run.id', 'trace.id', 'span.id', 'unit.id']));
   });

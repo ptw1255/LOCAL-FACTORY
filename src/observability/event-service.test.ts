@@ -4,7 +4,8 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import type { RunEvent } from '../domain/types.js';
+import type { RunEvent, RunRecord } from '../domain/types.js';
+import { seedWorkflow } from '../domain/seed.js';
 import { JsonStore } from '../storage/json-store.js';
 import { FileArtifactStore } from '../storage/artifact-store.js';
 import { EventService } from './event-service.js';
@@ -36,6 +37,51 @@ async function waitForNextMillisecond(timestamp: string): Promise<void> {
 }
 
 describe('EventService retention', () => {
+  it('inherits immutable run release context on every emitted signal', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const run: RunRecord = {
+      tenantId: 'tenant-local',
+      projectId: 'project-local',
+      id: 'run-context',
+      workflowId: seedWorkflow.id,
+      workflowName: seedWorkflow.name,
+      workflowVersion: 7,
+      releaseBundleHash: 'sha256:release-context',
+      pinnedAgentVersions: { planner: 3 },
+      artifactId: 'sha256:artifact-context',
+      environment: 'staging',
+      deploymentId: 'deployment-context',
+      traceId: 'a'.repeat(32),
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      costUsd: 0,
+      humanTouchpoints: 0,
+      workflowDefinition: structuredClone(seedWorkflow),
+      completedNodeIds: [],
+      activatedNodeIds: [],
+      approvedNodeIds: [],
+      approvedNodeHashes: {},
+      pendingApprovalHashes: {},
+      unitOutputs: {},
+      ciCheckpoints: {},
+    };
+    await store.mutate((state) => { state.runs.push(run); });
+    const service = new EventService(store);
+
+    const emitted = await service.emit(run.id, 'unit.started', 'started', { nodeId: 'planner', signal: 'trace' });
+
+    expect(emitted.attributes).toEqual(expect.objectContaining({
+      'workflow.id': seedWorkflow.id,
+      'workflow.version': 7,
+      'release.bundle.hash': 'sha256:release-context',
+      'agent.versions': JSON.stringify({ planner: 3 }),
+      'artifact.id': 'sha256:artifact-context',
+      'deployment.id': 'deployment-context',
+      'deployment.environment': 'staging',
+    }));
+  });
+
   it('offloads oversized event payloads and resolves them on demand', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));

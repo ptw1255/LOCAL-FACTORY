@@ -85,6 +85,13 @@ export class EventService {
         traceId: run?.traceId,
         tenantId: run?.tenantId,
         projectId: run?.projectId,
+        workflowId: run?.workflowId,
+        workflowVersion: run?.workflowVersion,
+        releaseBundleHash: run?.releaseBundleHash,
+        pinnedAgentVersions: run?.pinnedAgentVersions,
+        artifactId: run?.artifactId,
+        deploymentId: run?.deploymentId,
+        environment: run?.environment,
         parentSpanId,
       };
     });
@@ -113,6 +120,13 @@ export class EventService {
         ...telemetryResource,
         ...((options.tenantId ?? runContext.tenantId) === undefined ? {} : { 'tenant.id': options.tenantId ?? runContext.tenantId }),
         ...((options.projectId ?? runContext.projectId) === undefined ? {} : { 'project.id': options.projectId ?? runContext.projectId }),
+        ...(runContext.workflowId === undefined ? {} : { [telemetryAttributes.workflowId]: runContext.workflowId }),
+        ...(runContext.workflowVersion === undefined ? {} : { [telemetryAttributes.workflowVersion]: runContext.workflowVersion }),
+        ...(runContext.releaseBundleHash === undefined ? {} : { [telemetryAttributes.releaseBundleHash]: runContext.releaseBundleHash }),
+        ...(runContext.pinnedAgentVersions === undefined ? {} : { [telemetryAttributes.agentVersions]: JSON.stringify(runContext.pinnedAgentVersions) }),
+        ...(runContext.artifactId === undefined ? {} : { [telemetryAttributes.artifactId]: runContext.artifactId }),
+        ...(runContext.deploymentId === undefined ? {} : { [telemetryAttributes.deploymentId]: runContext.deploymentId }),
+        ...(runContext.environment === undefined ? {} : { [telemetryAttributes.deploymentEnvironment]: runContext.environment }),
         ...(options.attributes ?? {}),
         // Keep the correlation keys present on every signal. These are emitted as
         // OTLP attributes in addition to the native trace/span identifiers so
