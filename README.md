@@ -536,6 +536,10 @@ propose changes, while policy and human approval control promotion.
 - **Factory:** view throughput, success, cost, automation, human burden, and
   stage-level performance.
 
+The file-first Workspace keeps Monaco and the React Flow Canvas behind lazy browser
+boundaries. Opening source files does not load the Canvas projection until it is
+selected, and the bundle budget is enforced in CI with `npm run check:bundle`.
+
 Agent-loop nodes must reference an agent box declared in the workflow definition.
 Each box versions its purpose, instructions, skills, tools, model route, input/output
 schemas, connection and repository boundaries, budgets, termination rules, approval
