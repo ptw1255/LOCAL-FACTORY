@@ -567,6 +567,11 @@ describe('platform API', () => {
     const nextDatasetResponse = await app.inject({ method: 'POST', url: '/api/evaluation-datasets', payload: { name: 'Replay regression set', labels: ['release'], reportIds: [report.id] } });
     expect(nextDatasetResponse.statusCode).toBe(200);
     expect(nextDatasetResponse.json<{ version: number; labels: string[] }>()).toEqual(expect.objectContaining({ version: 2, labels: ['release'] }));
+    const evaluation = await app.inject({ method: 'POST', url: `/api/evaluation-datasets/${dataset.id}/evaluate`, payload: { threshold: 1 } });
+    expect(evaluation.statusCode).toBe(200);
+    expect(evaluation.json<{ totalCases: number; passedCases: number; passRate: number; promotionBlocked: boolean; statusCounts: Record<string, number> }>()).toEqual(expect.objectContaining({ totalCases: 1, passedCases: 1, passRate: 1, promotionBlocked: false, statusCounts: expect.objectContaining({ passed: 1 }) }));
+    const blockedEvaluation = await app.inject({ method: 'POST', url: `/api/evaluation-datasets/${dataset.id}/evaluate`, payload: { threshold: 1.01 } });
+    expect(blockedEvaluation.statusCode).toBe(422);
   });
 });
 
