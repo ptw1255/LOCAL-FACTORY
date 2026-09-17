@@ -12,6 +12,10 @@ test.describe('IDE workspace', () => {
     await expect(page.getByRole('tab', { name: /Problems/ })).toBeVisible();
     await expect(page.getByRole('tab', { name: /Run Output/ })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Collapse bottom panel' })).toBeVisible();
+    const resize = page.getByRole('separator', { name: 'Resize bottom panel' });
+    const initialHeight = await resize.getAttribute('aria-valuenow');
+    await resize.press('ArrowUp');
+    await expect(resize).not.toHaveAttribute('aria-valuenow', initialHeight ?? '');
 
     await view.selectOption('tree');
     await expect(page.getByText('Operational tree', { exact: true })).toBeVisible();
