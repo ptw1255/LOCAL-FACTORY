@@ -6,13 +6,14 @@ import { createInterface } from 'node:readline/promises';
 
 import { parseProjectYaml } from '../src/declarative/yaml.js';
 import { compileResourceFiles, parseResourceFile } from '../src/declarative/resources.js';
+import { planResourceMigration } from '../src/declarative/migration.js';
 import { EventService } from '../src/observability/event-service.js';
 import { LocalWorkflowExecutor } from '../src/runtime/executor.js';
 import { JsonStore } from '../src/storage/json-store.js';
 import { createSeedState } from '../src/domain/seed.js';
 import { addProjectResourcePaths, authoringSlug, canvasResourcePath, renderStarterCanvasFile, renderStarterWorkflowFile, renderWorkspaceProjectFile, workflowResourcePath } from './factory-authoring.js';
 import { browserOpenCommand, composeArguments, isLifecycleCommand, parseFactoryArgs, usageText, type FactoryArgs } from './factory-cli.js';
-import { pendingApproval, portalItemCount, renderTerminalPortal, renderTerminalSnapshot, type TerminalPortalPage, type TerminalPortalState, type TerminalSnapshot } from './factory-terminal.js';
+import { backTerminalState, editTerminalSource, pendingApproval, portalItemCount, renderTerminalPortal, renderTerminalSnapshot, type TerminalPortalPage, type TerminalPortalState, type TerminalPrompt, type TerminalSnapshot } from './factory-terminal.js';
 
 const dashboardUrl = (process.env.FACTORY_BASE_URL?.trim() || 'http://localhost:3100').replace(/\/$/, '');
 
@@ -156,10 +157,22 @@ async function createRemoteWorkspace(name: string, description = 'Local FACTORY 
 
 async function createRemoteWorkflow(projectId: string, name: string, requestedId?: string): Promise<{ workflowId: string; artifactId: string }> {
   const headers = projectHeaders(projectId);
-  const [projectFile, workflows] = await Promise.all([
-    requestJson<import('../src/domain/types.js').ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files?path=factory.yaml`, { headers }),
+  const [projects, files, workflows] = await Promise.all([
+    requestJson<{ items: import('../src/domain/types.js').ProjectRecord[] }>('/api/projects'),
+    requestJson<{ items: import('../src/domain/types.js').ProjectFileRecord[] }>(`/api/projects/${encodeURIComponent(projectId)}/files`, { headers }),
     requestJson<{ items: import('../src/domain/types.js').WorkflowDefinition[] }>('/api/workflows', { headers }),
   ]);
+  const listedProjectFile = files.items.find((file) => file.path === 'factory.yaml' || file.path === 'factory.yml');
+  let projectFile: import('../src/domain/types.js').ProjectFileRecord;
+  if (listedProjectFile === undefined) {
+    const project = projects.items.find((candidate) => candidate.id === projectId);
+    if (project === undefined) throw new Error(`Workspace ${projectId} was not found.`);
+    projectFile = await requestJson<import('../src/domain/types.js').ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ path: 'factory.yaml', content: renderWorkspaceProjectFile(project.id, project.name, project.description) }),
+    });
+  } else projectFile = await requestJson<import('../src/domain/types.js').ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files?path=${encodeURIComponent(listedProjectFile.path)}`, { headers });
   const baseId = authoringSlug(requestedId || name, 'workflow');
   const existingIds = new Set(workflows.items.map((workflow) => workflow.id));
   let workflowId = baseId;
@@ -178,6 +191,40 @@ async function createRemoteWorkflow(projectId: string, name: string, requestedId
   });
   const artifact = await compileRemoteWorkspace(projectId);
   return { workflowId, artifactId: artifact.id };
+}
+
+async function materializeRemoteWorkflow(
+  project: import('../src/domain/types.js').ProjectRecord,
+  workflow: import('../src/domain/types.js').WorkflowDefinition,
+  currentFiles: readonly import('../src/domain/types.js').ProjectFileRecord[],
+): Promise<{ artifactId: string; workflowPath: string }> {
+  const headers = projectHeaders(project.id);
+  const plan = planResourceMigration(project, [workflow]);
+  const currentByPath = new Map(currentFiles.map((file) => [file.path, file]));
+  const generatedResources = plan.files.filter((file) => file.path !== 'factory.yaml');
+  const listedFactoryFile = currentByPath.get('factory.yaml') ?? currentByPath.get('factory.yml');
+  const factoryFile = listedFactoryFile === undefined
+    ? undefined
+    : await requestJson<import('../src/domain/types.js').ProjectFileRecord>(`/api/projects/${encodeURIComponent(project.id)}/files?path=${encodeURIComponent(listedFactoryFile.path)}`, { headers });
+  const plannedFactory = plan.files.find((file) => file.path === 'factory.yaml');
+  if (plannedFactory === undefined) throw new Error('Workflow migration did not produce factory.yaml.');
+  const factoryPath = factoryFile?.path ?? 'factory.yaml';
+  const factorySource = factoryFile === undefined
+    ? plannedFactory.source
+    : addProjectResourcePaths(factoryFile.content, generatedResources.map((file) => file.path));
+  const writes: Array<{ path: string; content: string; expectedSha256: string | null }> = generatedResources
+    .filter((file) => !currentByPath.has(file.path))
+    .map((file) => ({ path: file.path, content: file.source, expectedSha256: null }));
+  if (factoryFile === undefined || factorySource !== factoryFile.content) writes.push({ path: factoryPath, content: factorySource, expectedSha256: factoryFile?.sha256 ?? null });
+  if (writes.length > 0) {
+    await requestJson(`/api/projects/${encodeURIComponent(project.id)}/files/batch`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ files: writes }),
+    });
+  }
+  const artifact = await compileRemoteWorkspace(project.id);
+  return { artifactId: artifact.id, workflowPath: workflowResourcePath(workflow.id) };
 }
 
 async function editLocalFile(filePath: string): Promise<void> {
@@ -290,6 +337,8 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
   if (!interactive) { render(); return; }
   let refreshing = false;
   let authoring = false;
+  let actionGeneration = 0;
+  let activePrompt: { resolve: (value: string | undefined) => void } | undefined;
   const refresh = async () => {
     if (refreshing) return;
     refreshing = true;
@@ -321,58 +370,57 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     }
     render();
   };
-  const editSelectedFile = async (projectId: string, filePath: string): Promise<boolean> => {
-    let saved = false;
-    authoring = true;
-    try {
-      // Raw mode captures the TUI keys; release it while the user's editor
-      // owns the terminal, then restore it when the editor exits.
-      process.stdin.setRawMode?.(false);
-      process.stdin.pause();
-      await editRemoteProjectFile(projectId, filePath);
-      saved = true;
-    } catch (error) {
-      snapshot = { ...snapshot, error: error instanceof Error ? error.message : String(error) };
-    } finally {
-      if (interactive) {
-        process.stdin.setRawMode?.(true);
-        process.stdin.resume();
-      }
-      authoring = false;
-      render();
-      return saved;
-    }
+  const openSourceEditor = async (file: import('../src/domain/types.js').ProjectFileRecord, returnPage: 'workspace' | 'workflow' | 'tree'): Promise<void> => {
+    if (activeProjectId === undefined) throw new Error('Create or select a workspace first.');
+    const source = await requestJson<import('../src/domain/types.js').ProjectFileRecord>(`/api/projects/${encodeURIComponent(activeProjectId)}/files?path=${encodeURIComponent(file.path)}`, {
+      headers: projectHeaders(activeProjectId),
+    });
+    state = {
+      page: 'source-editor',
+      cursor: 0,
+      editor: {
+        filePath: source.path,
+        content: source.content ?? '',
+        originalContent: source.content ?? '',
+        expectedSha256: source.sha256,
+        cursorOffset: 0,
+        returnPage,
+      },
+    };
+    render();
   };
+  const promptValue = (question: { label: string; defaultValue?: string }): Promise<string | undefined> => new Promise((resolve) => {
+    const prompt: TerminalPrompt = { label: question.label, value: '', ...(question.defaultValue === undefined ? {} : { defaultValue: question.defaultValue }) };
+    activePrompt = { resolve };
+    state = { ...state, prompt };
+    render();
+  });
   const promptValues = async (questions: Array<{ label: string; defaultValue?: string }>): Promise<string[]> => {
-    process.stdin.setRawMode?.(false);
-    process.stdout.write('\n');
-    const prompt = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      const answers: string[] = [];
-      for (const question of questions) {
-        const suffix = question.defaultValue === undefined ? '' : ` (${question.defaultValue})`;
-        const answer = (await prompt.question(`${question.label}${suffix}: `)).trim();
-        answers.push(answer || question.defaultValue || '');
-      }
-      return answers;
-    } finally {
-      prompt.close();
-      process.stdin.setRawMode?.(true);
-      process.stdin.resume();
+    const answers: string[] = [];
+    for (const question of questions) {
+      const answer = await promptValue(question);
+      if (answer === undefined) return [];
+      answers.push(answer.trim() || question.defaultValue || '');
     }
+    return answers;
   };
   const performAuthoring = async (action: () => Promise<string | undefined>): Promise<void> => {
     if (authoring) return;
+    const generation = ++actionGeneration;
     authoring = true;
     try {
       const notice = await action();
+      if (generation !== actionGeneration) return;
       await refreshPage();
       if (notice !== undefined) snapshot = { ...snapshot, error: undefined, notice };
     } catch (error) {
+      if (generation !== actionGeneration) return;
       snapshot = { ...snapshot, notice: undefined, error: error instanceof Error ? error.message : String(error) };
     } finally {
-      authoring = false;
-      render();
+      if (generation === actionGeneration) {
+        authoring = false;
+        render();
+      }
     }
   };
   const compileWorkspace = async (): Promise<{ id: string }> => {
@@ -424,6 +472,19 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     state = { page: 'run-detail', cursor: 0, selectedRunId: run.id };
     return `Started ${workflow.name} as run ${run.id}.`;
   };
+  const saveSourceEditor = async (): Promise<string | undefined> => {
+    const editor = state.editor;
+    if (state.page !== 'source-editor' || editor === undefined || activeProjectId === undefined) throw new Error('No source file is open.');
+    if (editor.content === editor.originalContent) return `${editor.filePath} has no unsaved changes.`;
+    const saved = await requestJson<import('../src/domain/types.js').ProjectFileRecord>(`/api/projects/${encodeURIComponent(activeProjectId)}/files`, {
+      method: 'PUT',
+      headers: projectHeaders(activeProjectId),
+      body: JSON.stringify({ path: editor.filePath, content: editor.content, expectedSha256: editor.expectedSha256 }),
+    });
+    state = { ...state, editor: { ...editor, originalContent: editor.content, expectedSha256: saved.sha256 } };
+    const artifact = await compileWorkspace();
+    return `Saved ${editor.filePath} and compiled ${artifact.id}.`;
+  };
   const moveCursor = (delta: number) => {
     const count = portalItemCount(snapshot, state.page);
     if (count === 0) return;
@@ -439,13 +500,29 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     }
     if (state.page === 'workspace') {
       const file = snapshot.files?.[state.cursor];
-      if (file !== undefined && snapshot.projectId !== undefined && await editSelectedFile(snapshot.projectId, file.path)) await refreshPage();
+      if (file !== undefined) await openSourceEditor(file, 'workspace');
       return;
     }
     if (state.page === 'workflow' || state.page === 'tree') {
+      const returnPage = state.page;
       const workflow = snapshot.workflows?.[state.cursor];
       const workflowPath = workflow === undefined ? undefined : snapshot.files?.find((file) => file.path === `workflows/${workflow.id}.workflow.yaml` || file.path === `workflows/${workflow.id}.workflow.yml`)?.path ?? `workflows/${workflow.id}.workflow.yaml`;
-      if (workflowPath !== undefined && snapshot.projectId !== undefined && await editSelectedFile(snapshot.projectId, workflowPath)) await refreshPage();
+      const file = workflowPath === undefined ? undefined : snapshot.files?.find((candidate) => candidate.path === workflowPath);
+      if (file !== undefined) await openSourceEditor(file, returnPage);
+      else if (workflow !== undefined && activeProjectId !== undefined) void performAuthoring(async () => {
+        const project = snapshot.projects?.find((candidate) => candidate.id === activeProjectId);
+        if (project === undefined) throw new Error('The active workspace was not found.');
+        const materialized = await materializeRemoteWorkflow(project, workflow, snapshot.files ?? []);
+        snapshot = await terminalSnapshot(undefined, activeProjectId);
+        const source = snapshot.files?.find((candidate) => candidate.path === materialized.workflowPath);
+        if (source === undefined) throw new Error(`Workflow source ${materialized.workflowPath} could not be loaded.`);
+        await openSourceEditor(source, returnPage);
+        return `Materialized ${workflow.name} as YAML and compiled ${materialized.artifactId}.`;
+      });
+      else if (workflowPath !== undefined) {
+        snapshot = { ...snapshot, error: `Workflow source ${workflowPath} was not found.` };
+        render();
+      }
       return;
     }
     if (state.page === 'runs') {
@@ -462,16 +539,66 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     if (state.page === 'run-detail') return;
     render();
   };
+  const selectSafely = () => {
+    void select().catch((error) => {
+      snapshot = { ...snapshot, notice: undefined, error: error instanceof Error ? error.message : String(error) };
+      render();
+    });
+  };
   const back = () => {
-    if (state.page === 'home') return;
-    state = state.page === 'run-detail' ? { page: 'runs', cursor: 0 } : { page: 'home', cursor: 0 };
+    const discarded = state.page === 'source-editor' && state.editor !== undefined && state.editor.content !== state.editor.originalContent;
+    state = backTerminalState(state);
+    if (discarded) snapshot = { ...snapshot, notice: 'Discarded unsaved source changes.', error: undefined };
     void refreshPage();
   };
   await new Promise<void>((resolve) => {
-    const interval = setInterval(() => { if (!authoring) void refreshPage(); }, args.intervalMs);
+    const interval = setInterval(() => { if (!authoring && state.page !== 'source-editor') void refreshPage(); }, args.intervalMs);
     const onData = (data: Buffer) => {
-      if (authoring) return;
       const key = data.toString();
+      if (key === '\u001b') {
+        if (activePrompt !== undefined) {
+          const prompt = activePrompt;
+          activePrompt = undefined;
+          state = { ...state, prompt: undefined };
+          prompt.resolve(undefined);
+        }
+        actionGeneration += 1;
+        authoring = false;
+        back();
+        return;
+      }
+      if (activePrompt !== undefined) {
+        if (key === '\r' || key === '\n') {
+          const prompt = activePrompt;
+          const value = state.prompt?.value ?? '';
+          activePrompt = undefined;
+          state = { ...state, prompt: undefined };
+          prompt.resolve(value);
+        } else if (key === '\u007f' || key === '\b') state = { ...state, prompt: state.prompt === undefined ? undefined : { ...state.prompt, value: state.prompt.value.slice(0, -1) } };
+        else {
+          const inserted = key.replace(/[\u0000-\u001f\u007f]/g, '');
+          if (inserted !== '' && state.prompt !== undefined) state = { ...state, prompt: { ...state.prompt, value: `${state.prompt.value}${inserted}` } };
+        }
+        render();
+        return;
+      }
+      if (state.page === 'source-editor') {
+        if (key === '\u0013') void performAuthoring(saveSourceEditor);
+        else if (!authoring) {
+          if (key === '\u0003') {
+            clearInterval(interval);
+            process.stdin.setRawMode?.(false);
+            process.stdin.pause();
+            process.stdin.off('data', onData);
+            resolve();
+          } else {
+            state = { ...state, editor: state.editor === undefined ? undefined : editTerminalSource(state.editor, key) };
+            render();
+          }
+        }
+        return;
+      }
+      if (authoring) return;
       if (key === 'q' || key === '\u0003') {
         clearInterval(interval);
         process.stdin.setRawMode?.(false);
@@ -479,7 +606,7 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
         process.stdin.off('data', onData);
         resolve();
       } else if (key === 'r') void refreshPage();
-      else if (key === 'e') void select();
+      else if (key === 'e') selectSafely();
       else if (key === 'n' && state.page === 'workspace') void performAuthoring(createWorkspace);
       else if (key === 'n' && (state.page === 'workflow' || state.page === 'tree')) void performAuthoring(createWorkflow);
       else if (key === 'w' && state.page === 'workspace') void performAuthoring(createWorkflow);
@@ -493,8 +620,8 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
       else if (key === 'd') void decide('deny');
       else if (key === '\u001b[A' || key === 'k') moveCursor(-1);
       else if (key === '\u001b[B' || key === 'j') moveCursor(1);
-      else if (key === '\r' || key === '\n') void select();
-      else if (key === '\u001b' || key === '\u007f') back();
+      else if (key === '\r' || key === '\n') selectSafely();
+      else if (key === '\u007f') back();
     };
     process.stdin.setRawMode?.(true);
     process.stdin.resume();

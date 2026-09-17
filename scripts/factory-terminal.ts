@@ -17,12 +17,29 @@ export interface TerminalSnapshot {
   notice?: string;
 }
 
-export type TerminalPortalPage = 'home' | 'workspace' | 'workflow' | 'tree' | 'runs' | 'approvals' | 'deployments' | 'connections' | 'proposals' | 'factory' | 'portals' | 'run-detail';
+export type TerminalPortalPage = 'home' | 'workspace' | 'workflow' | 'tree' | 'source-editor' | 'runs' | 'approvals' | 'deployments' | 'connections' | 'proposals' | 'factory' | 'portals' | 'run-detail';
+
+export interface TerminalSourceEditor {
+  filePath: string;
+  content: string;
+  originalContent: string;
+  expectedSha256: string;
+  cursorOffset: number;
+  returnPage: 'workspace' | 'workflow' | 'tree';
+}
+
+export interface TerminalPrompt {
+  label: string;
+  value: string;
+  defaultValue?: string;
+}
 
 export interface TerminalPortalState {
   page: TerminalPortalPage;
   cursor: number;
   selectedRunId?: string;
+  editor?: TerminalSourceEditor;
+  prompt?: TerminalPrompt;
   error?: string;
 }
 
@@ -107,6 +124,54 @@ export function portalItemCount(snapshot: TerminalSnapshot, page: TerminalPortal
   return 0;
 }
 
+export function backTerminalState(state: TerminalPortalState): TerminalPortalState {
+  if (state.page === 'home') return { page: 'home', cursor: 0 };
+  if (state.page === 'run-detail') return { page: 'runs', cursor: 0 };
+  if (state.page === 'source-editor') return { page: state.editor?.returnPage ?? 'workspace', cursor: 0 };
+  return { page: 'home', cursor: 0 };
+}
+
+function linePosition(content: string, offset: number): { line: number; column: number; lines: string[] } {
+  const safeOffset = Math.max(0, Math.min(offset, content.length));
+  const before = content.slice(0, safeOffset);
+  const lines = content.split('\n');
+  const line = before.split('\n').length - 1;
+  const lastNewline = before.lastIndexOf('\n');
+  return { line, column: safeOffset - lastNewline - 1, lines };
+}
+
+export function editTerminalSource(editor: TerminalSourceEditor, key: string): TerminalSourceEditor {
+  let cursorOffset = Math.max(0, Math.min(editor.cursorOffset, editor.content.length));
+  if (key === '\u001b[D') return { ...editor, cursorOffset: Math.max(0, cursorOffset - 1) };
+  if (key === '\u001b[C') return { ...editor, cursorOffset: Math.min(editor.content.length, cursorOffset + 1) };
+  if (key === '\u001b[H' || key === '\u0001') {
+    const position = linePosition(editor.content, cursorOffset);
+    return { ...editor, cursorOffset: cursorOffset - position.column };
+  }
+  if (key === '\u001b[F' || key === '\u0005') {
+    const position = linePosition(editor.content, cursorOffset);
+    return { ...editor, cursorOffset: cursorOffset + (position.lines[position.line]?.length ?? 0) - position.column };
+  }
+  if (key === '\u001b[A' || key === '\u001b[B') {
+    const position = linePosition(editor.content, cursorOffset);
+    const targetLine = Math.max(0, Math.min(position.lines.length - 1, position.line + (key === '\u001b[A' ? -1 : 1)));
+    if (targetLine === position.line) return editor;
+    const precedingLength = position.lines.slice(0, targetLine).reduce((total, line) => total + line.length + 1, 0);
+    return { ...editor, cursorOffset: precedingLength + Math.min(position.column, position.lines[targetLine]?.length ?? 0) };
+  }
+  if (key === '\u007f' || key === '\b') {
+    if (cursorOffset === 0) return editor;
+    return { ...editor, content: `${editor.content.slice(0, cursorOffset - 1)}${editor.content.slice(cursorOffset)}`, cursorOffset: cursorOffset - 1 };
+  }
+  if (key === '\u001b[3~' || key === '\u0004') {
+    if (cursorOffset >= editor.content.length) return editor;
+    return { ...editor, content: `${editor.content.slice(0, cursorOffset)}${editor.content.slice(cursorOffset + 1)}` };
+  }
+  const inserted = key === '\r' || key === '\n' ? '\n' : key === '\t' ? '  ' : key.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+  if (inserted === '' || inserted.startsWith('\u001b')) return editor;
+  return { ...editor, content: `${editor.content.slice(0, cursorOffset)}${inserted}${editor.content.slice(cursorOffset)}`, cursorOffset: cursorOffset + inserted.length };
+}
+
 function selectedMarker(selected: boolean): string {
   return selected ? `${terminalPurple}❯${terminalReset}` : ' ';
 }
@@ -140,7 +205,7 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
     lines.push(
       `${terminalBlue}WORKSPACE${terminalReset} ${terminalDim}· file-backed authoring${terminalReset}`,
       `  active  ${project?.name ?? 'No workspace selected'} ${terminalDim}${snapshot.projectId ?? ''}${terminalReset}`,
-      `${terminalDim}Select a resource file and press Enter or e to edit it in $EDITOR.${terminalReset}`,
+      `${terminalDim}Select a resource file and press Enter or e to edit it in the terminal.${terminalReset}`,
       '',
     );
     const files = snapshot.files ?? [];
@@ -166,9 +231,32 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
         const targets = outgoing.get(node.id) ?? [];
         lines.push(`    ${nodeIndex === workflow.nodes.length - 1 ? '└─' : '├─'} ${node.label} · ${node.type} · ${node.unit?.kind ?? 'unknown'}${targets.length === 0 ? '' : ` → ${targets.join(', ')}`}`);
       });
-      lines.push(`       source: workflows/${workflow.id}.workflow.yaml`);
+      const sourcePath = snapshot.files?.find((file) => file.path === `workflows/${workflow.id}.workflow.yaml` || file.path === `workflows/${workflow.id}.workflow.yml`)?.path;
+      lines.push(sourcePath === undefined
+        ? `       source: ${terminalYellow}runtime-only · Enter to materialize as YAML${terminalReset}`
+        : `       source: ${sourcePath}`);
     });
     lines.push('', `${terminalDim}n new workflow · e edit source · v validate/compile · p run selected${terminalReset}`);
+  } else if (state.page === 'source-editor') {
+    const editor = state.editor;
+    lines.push(`${terminalPurple}SOURCE EDITOR${terminalReset} ${terminalDim}· terminal-native YAML authoring${terminalReset}`, '');
+    if (editor === undefined) lines.push(`${terminalRed}No source file is open.${terminalReset}`);
+    else {
+      const position = linePosition(editor.content, editor.cursorOffset);
+      const firstLine = Math.max(0, position.line - 8);
+      const lastLine = Math.min(position.lines.length, firstLine + 18);
+      lines.push(`  ${editor.filePath} ${editor.content === editor.originalContent ? terminalDim + 'saved' : terminalYellow + 'modified'}${terminalReset}`, '');
+      for (let index = firstLine; index < lastLine; index += 1) {
+        const rawLine = (position.lines[index] ?? '').replace(/[\u0000-\u001f\u007f]/g, '');
+        const visibleLine = rawLine.length > 96 ? `${rawLine.slice(0, 95)}…` : rawLine;
+        if (index === position.line) {
+          const column = Math.min(position.column, visibleLine.length);
+          const withCursor = `${visibleLine.slice(0, column)}${terminalPurple}▏${terminalReset}${visibleLine.slice(column)}`;
+          lines.push(`${terminalPurple}>${terminalReset} ${String(index + 1).padStart(4)} │ ${withCursor}`);
+        } else lines.push(`  ${String(index + 1).padStart(4)} │ ${visibleLine}`);
+      }
+      lines.push('', `${terminalDim}Type to edit · Ctrl+S save and compile · Esc discard changes and return${terminalReset}`);
+    }
   } else if (state.page === 'runs') {
     lines.push(`${terminalBlue}RUNS${terminalReset} ${terminalDim}(${snapshot.runs.length}) · Enter opens timeline${terminalReset}`, '');
     if (snapshot.runs.length === 0) lines.push('  No runs recorded.');
@@ -214,6 +302,15 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
       for (const event of (snapshot.events ?? []).slice(-20)) lines.push(`  ${timestamp(event.timestamp)} ${short(event.type, 34).padEnd(34)} ${event.signal}`);
     }
   }
-  lines.push('', `${terminalDim}↑/↓ navigate · Enter select/edit · e edit source · r refresh · Esc back · q quit${terminalReset}`);
+  if (state.prompt !== undefined) {
+    const fallback = state.prompt.defaultValue === undefined ? '' : ` (${state.prompt.defaultValue})`;
+    lines.push('', `${terminalYellow}${state.prompt.label}${fallback}:${terminalReset} ${state.prompt.value}${terminalPurple}▏${terminalReset}`, `${terminalDim}Enter accepts · Esc cancels and returns home${terminalReset}`);
+  }
+  const keys = state.page === 'source-editor'
+    ? 'Arrows move · Ctrl+S save/compile · Esc back · Ctrl+C quit'
+    : state.prompt === undefined
+      ? '↑/↓ navigate · Enter select/edit · e edit source · r refresh · Esc back · q quit'
+      : 'Type a value · Enter accept · Esc cancel/back';
+  lines.push('', `${terminalDim}${keys}${terminalReset}`);
   return lines.join('\n');
 }
