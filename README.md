@@ -208,8 +208,29 @@ Check processes receive a minimal toolchain environment (PATH, temporary-directo
 locale, and CI hints); factory credentials, proxy settings, and connection
 configuration are not inherited. Allow-listed npm checks also run with offline,
 audit-disabled, and funding-disabled settings to prevent implicit package-manager
-network calls. OS/container network isolation remains a deployment responsibility,
-so run untrusted checks in a worker or container with an explicit network policy.
+network calls. For stronger isolation, declare the container sandbox on a
+`repositoryCheck` step. It uses a preloaded image (`--pull=never`), a read-only
+workspace, `network=none`, dropped capabilities, `no-new-privileges`, and bounded
+CPU, memory, PID, and temporary-file resources:
+
+```yaml
+kind: connector
+type: repositoryCheck
+config:
+  command: npm test
+  sandbox:
+    mode: container
+    image: node:22-bookworm-slim
+    memoryMb: 512
+    cpus: 1
+    pidsLimit: 256
+```
+
+The image must already exist on the worker; no network pull is permitted. The
+check result and correlated operation evidence include the selected sandbox mode,
+network policy, image, and resource limits. Process mode remains the default for
+lightweight local development, while untrusted checks should use the container
+mode (or an equivalent isolated worker deployment).
 
 If GitHub integration is configured with `GITHUB_TOKEN`,
 `GITHUB_REPOSITORY_OWNER`, and `GITHUB_REPOSITORY_NAME`, the bounded

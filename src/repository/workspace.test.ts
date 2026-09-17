@@ -3,7 +3,7 @@ import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { RepositoryConflictError, RepositoryPolicyError, RepositoryWorkspace } from './workspace.js';
+import { buildContainerCheckArgs, parseRepositoryCheckSandbox, RepositoryConflictError, RepositoryPolicyError, RepositoryWorkspace } from './workspace.js';
 
 const execFileAsync = (file: string, args: string[], options: { cwd?: string } = {}) => new Promise<void>((resolve, reject) => {
   execFile(file, args, options, (error) => error === null ? resolve() : reject(error));
@@ -37,6 +37,28 @@ describe('RepositoryWorkspace', () => {
     } }));
     await expect((await RepositoryWorkspace.open(root)).runCheck('npm run lint')).resolves.toMatchObject({ command: 'npm run lint', exitCode: 0, timedOut: false });
     await expect((await RepositoryWorkspace.open(root)).runCheck('npm run test:integration')).resolves.toMatchObject({ command: 'npm run test:integration', exitCode: 0, timedOut: false });
+  });
+
+  it('declares a bounded container sandbox without permitting network access', async () => {
+    const sandbox = parseRepositoryCheckSandbox({ mode: 'container', image: 'node:22-bookworm-slim', memoryMb: 256, cpus: 0.5, pidsLimit: 128 });
+    expect(sandbox).toEqual({ mode: 'container', image: 'node:22-bookworm-slim', memoryMb: 256, cpus: 0.5, pidsLimit: 128 });
+    const args = buildContainerCheckArgs('/tmp/factory-check', 'npm run test:integration', {
+      ...sandbox,
+      mode: 'container',
+      network: 'none',
+    });
+    expect(args).toEqual(expect.arrayContaining([
+      '--pull=never', '--network=none', '--read-only', '--security-opt=no-new-privileges', '--cap-drop=ALL',
+      '--cpus', '0.5', '--memory', '256m', '--pids-limit', '128',
+      '--mount', 'type=bind,src=/tmp/factory-check,dst=/workspace,readonly',
+    ]));
+    expect(args.slice(-5)).toEqual(['node:22-bookworm-slim', 'npm', '--offline', 'run', 'test:integration']);
+  });
+
+  it('rejects unbounded container sandbox settings', () => {
+    expect(() => parseRepositoryCheckSandbox({ mode: 'container', network: 'host' })).toThrow(/mode|sandbox/);
+    expect(() => parseRepositoryCheckSandbox({ mode: 'container', memoryMb: 16 })).toThrow(/memoryMb/);
+    expect(() => parseRepositoryCheckSandbox({ mode: 'container', image: 'docker.io/library/node:latest;rm' })).toThrow(/image/);
   });
 
   it('normalizes a timed-out allow-listed check', async () => {

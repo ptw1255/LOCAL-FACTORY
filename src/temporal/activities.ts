@@ -4,7 +4,7 @@ import { activityInfo, cancellationSignal } from '@temporalio/activity';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
 import type { WorkUnitDefinition, WorkflowNode } from '../domain/types.js';
-import { RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryWorkspace } from '../repository/workspace.js';
+import { parseRepositoryCheckSandbox, RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryWorkspace } from '../repository/workspace.js';
 import { WorkUnitDispatcher } from '../runtime/work-unit-dispatcher.js';
 import type { TemporalActivityLifecycle, TemporalObservabilitySink } from './observability.js';
 
@@ -222,7 +222,7 @@ async function executeNodeImplementation(
       const command = typeof input.config.command === 'string' ? input.config.command : 'npm test';
       const timeoutMs = typeof input.config.timeoutMs === 'number' ? input.config.timeoutMs : undefined;
       const required = input.config.required !== false;
-      const check = await repositoryWorkspace.runCheck(command, timeoutMs, signal);
+      const check = await repositoryWorkspace.runCheck(command, timeoutMs, signal, { sandbox: parseRepositoryCheckSandbox(input.config.sandbox) });
       const result = { ...check, required, promotionBlocked: required && (check.timedOut || check.exitCode !== 0) };
       if (required && check.timedOut) throw new RepositoryCheckTimeoutError(`Required repository check timed out: ${command}.`, check);
       if (required && check.exitCode !== 0) throw new RepositoryCheckError(`Required repository check failed: ${command}.`, check);
