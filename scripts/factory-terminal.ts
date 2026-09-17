@@ -228,7 +228,7 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
     const files = snapshot.files ?? [];
     if (files.length === 0) lines.push('  No project files loaded.');
     files.forEach((file, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(file.path, 64).padEnd(64)} ${terminalDim}${short(file.sha256, 12)}${terminalReset}`));
-    lines.push('', `${terminalDim}n new Project · s switch Project · w new Workflow · v validate/compile · o raw source${terminalReset}`, '  Intent → proposal → validation → approval → apply → artifact.');
+    lines.push('', `${terminalDim}n new Project · s switch Project · w draft Workflow with AI · v validate/compile · o raw source${terminalReset}`, '  Intent → guided brief → blueprint → proposal → validation → approval → apply → artifact.');
   } else if (state.page === 'workflow' || state.page === 'tree') {
     const project = snapshot.projects?.find((candidate) => candidate.id === snapshot.projectId);
     lines.push(
@@ -241,9 +241,9 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
     if (workflows.length === 0) {
       if (project === undefined) lines.push(`${terminalYellow}  Select or create a Project before creating a Workflow.${terminalReset}`);
       else lines.push(
-        `${selectedMarker(true)} Create first Workflow`,
-        `${terminalDim}    Enter or n creates a file-backed starter with a manual trigger and output WorkUnit.${terminalReset}`,
-        `${terminalDim}    After creation, press a to author the operational graph from your intent.${terminalReset}`,
+        `${selectedMarker(true)} Draft first Workflow with AI`,
+        `${terminalDim}    Enter or n starts a guided brief and turns it into a reviewable WorkUnit blueprint.${terminalReset}`,
+        `${terminalDim}    The Project changes only after compiler validation and explicit approval.${terminalReset}`,
       );
     }
     workflows.forEach((workflow, index) => {
@@ -261,8 +261,8 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
         : `       source: ${sourcePath}`);
     });
     lines.push('', workflows.length === 0
-      ? `${terminalDim}${project === undefined ? 'Enter open Projects' : 'Enter/n create first Workflow'} · s switch Project · Esc Core${terminalReset}`
-      : `${terminalDim}n new Workflow · a author with AI · Enter inspect WorkUnits · o raw source · v validate · p run${terminalReset}`);
+      ? `${terminalDim}${project === undefined ? 'Enter open Projects' : 'Enter/n guided AI draft'} · s switch Project · Esc Core${terminalReset}`
+      : `${terminalDim}n draft new Workflow · a revise with guided AI · Enter inspect WorkUnits · o raw source · v validate · p run${terminalReset}`);
   } else if (state.page === 'workflow-detail') {
     const workflow = snapshot.workflows?.find((candidate) => candidate.id === state.selectedWorkflowId);
     lines.push(`${terminalPurple}WORKFLOW${terminalReset} ${terminalDim}· WorkUnit graph${terminalReset}`, '');
@@ -342,10 +342,32 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
     (snapshot.proposals ?? []).forEach((proposal, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(proposal.id, 22).padEnd(22)} ${colorStatus(proposal.status).padEnd(20)} ${proposal.changes.length} files · ${short(proposal.goal, 52)}`));
   } else if (state.page === 'proposal-detail') {
     const proposal = snapshot.proposals?.find((candidate) => candidate.id === state.selectedProposalId);
-    lines.push(`${terminalPurple}AI AUTHORING PROPOSAL${terminalReset} ${terminalDim}· semantic diff${terminalReset}`, '');
+    lines.push(`${terminalPurple}AI AUTHORING PROPOSAL${terminalReset} ${terminalDim}· brief → blueprint → resource changes${terminalReset}`, '');
     if (proposal === undefined) lines.push(`${terminalRed}Proposal not found.${terminalReset}`);
     else {
-      lines.push(`  ${proposal.id} · ${colorStatus(proposal.status)}`, `  goal  ${proposal.goal}`, '');
+      lines.push(`  ${proposal.id} · ${colorStatus(proposal.status)}`, `  objective  ${proposal.goal}`, '');
+      if (proposal.brief !== undefined) {
+        lines.push(
+          `${terminalBlue}DRAFT BRIEF${terminalReset}`,
+          `  trigger       ${proposal.brief.trigger}`,
+          `  input         ${proposal.brief.input}`,
+          `  preparation   ${proposal.brief.preparation}`,
+          `  agent task    ${proposal.brief.agentTask || 'none'}`,
+          `  external      ${proposal.brief.externalAction || 'none'}`,
+          `  approval      ${proposal.brief.approval}`,
+          `  output        ${proposal.brief.output}`,
+          `  constraints   ${proposal.brief.constraints || 'none'}`,
+          '',
+        );
+      }
+      if (proposal.blueprint !== undefined) {
+        lines.push(`${terminalPurple}WORKFLOW BLUEPRINT${terminalReset}`);
+        proposal.blueprint.stages.forEach((stage, index) => lines.push(
+          `  ${index === proposal.blueprint!.stages.length - 1 ? '└─' : '├─'} ${stage.label} ${terminalDim}· ${stage.type} · ${stage.executionKind}${terminalReset}`,
+        ));
+        lines.push('');
+      }
+      lines.push(`${terminalBlue}RESOURCE CHANGES${terminalReset}`);
       for (const line of proposal.semanticDiff) lines.push(`  ${line}`);
       if (proposal.issues.length > 0) {
         lines.push('', `${terminalYellow}VALIDATION${terminalReset}`);

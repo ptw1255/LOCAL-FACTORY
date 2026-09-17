@@ -28,4 +28,37 @@ describe('ProposalService', () => {
     ]);
     expect(proposal.issues.filter((issue) => issue.level === 'error')).toHaveLength(0);
   });
+
+  it('turns a structured authoring brief into an ordered workflow blueprint', () => {
+    const service = new ProposalService({} as never);
+    const proposal = service.plan({ ...seedWorkflow, agents: [] }, 'Review incoming changes and publish a decision.', {
+      objective: 'Review incoming changes and publish a decision.',
+      trigger: 'webhook',
+      input: 'Repository and patch metadata',
+      preparation: 'Validate and normalize repository context',
+      agentTask: 'Assess the patch for correctness and risk',
+      externalAction: 'Notify the pull request owner',
+      approval: 'before-side-effects',
+      output: 'Return a structured review decision',
+      constraints: 'Use declared read-only tools',
+    });
+
+    expect(proposal.workflow.nodes.map((node) => node.type)).toEqual([
+      'webhookTrigger',
+      'transform',
+      'agentLoop',
+      'approval',
+      'notification',
+      'output',
+    ]);
+    expect(proposal.workflow.nodes.map((node) => node.label)).toEqual(expect.arrayContaining([
+      'Validate and normalize repository context',
+      'Assess the patch for correctness and risk',
+      'Approve side effect',
+    ]));
+    expect(proposal.workflow.nodes.find((node) => node.type === 'agentLoop')?.config.goal).toBe('Assess the patch for correctness and risk');
+    expect(proposal.workflow.agents[0]).toEqual(expect.objectContaining({ id: `${seedWorkflow.id}-agent`, purpose: 'Assess the patch for correctness and risk' }));
+    expect(proposal.workflow.nodes.find((node) => node.type === 'agentLoop')?.config.agentId).toBe(`${seedWorkflow.id}-agent`);
+    expect(proposal.workflow.inputSchema).toEqual({ type: 'object', description: 'Repository and patch metadata' });
+  });
 });

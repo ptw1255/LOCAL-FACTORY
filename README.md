@@ -89,15 +89,19 @@ with `o`, not the primary authoring experience.
 AI authoring follows a controlled lifecycle:
 
 ```text
-intent → file proposal → compiler validation → human approval → optimistic apply → artifact
+intent → guided brief → WorkUnit blueprint → file proposal → validation → approval → apply → artifact
 ```
 
-Press `a` on a Workflow to propose a goal-driven revision. Review its semantic file
-diff under Proposals, then use `a` to approve and `y` to apply. `v` revalidates and
-`d` rejects without changing files. Every lifecycle action records a correlated log
-event and durable operation evidence. Apply checks the original file hashes, writes
-the proposal as one optimistic batch, and compiles an immutable artifact; stale or
-invalid proposals fail closed.
+Press `a` on a Workflow to open the guided draft. FACTORY asks for the objective,
+trigger, input contract, deterministic preparation, bounded agent responsibility,
+external action, approval boundary, observable output, and constraints. It converts those answers into
+an ordered WorkUnit blueprint, renders that blueprint before the semantic file diff,
+creates baseline input/output JSON Schema descriptions and any required bounded Agent
+envelope, and validates the generated resource scheme with the real compiler. Use `a` to approve,
+`y` to apply, `v` to revalidate, or `d` to reject without changing files. Every
+lifecycle action records a correlated log event and durable operation evidence. Apply
+checks the original file hashes, writes the proposal as one optimistic batch, and
+compiles an immutable artifact; stale or invalid proposals fail closed.
 
 External authoring agents can submit exact resource files through
 `POST /api/projects/:projectId/authoring/proposals` or `factory author import`. This is
@@ -116,16 +120,16 @@ The imported JSON shape is:
 }
 ```
 
-Project controls are `n` to create a Project, `s` to switch Projects, `w` to create a
-starter Workflow, and `v` to validate and compile. Workflow controls are `a` to author
-with AI, Enter to inspect WorkUnits, `v` to compile, and `p` to run. Escape is global
+Project controls are `n` to create a Project, `s` to switch Projects, `w` to draft a
+Workflow with AI, and `v` to validate and compile. Workflow controls are `a` to revise
+through the guided draft, Enter to inspect WorkUnits, `v` to compile, and `p` to run. Escape is global
 navigation: it cancels a prompt, leaves advanced source editing, walks from WorkUnit to
 Workflow to home, and returns from a run to Runs.
 
 The Core landing page always shows the active Project name and ID. A Project with no
-Workflows gets an explicit **Create first Workflow** row: press Enter or `n` to create
-the minimal file-backed manual-trigger → output graph, then press `a` to author it from
-your intent. If no Project is selected, Enter routes back to Projects first.
+Workflows gets an explicit **Draft first Workflow with AI** row: press Enter or `n` to
+name the Workflow, complete the guided brief, and review the resulting blueprint and
+file proposal. If no Project is selected, Enter routes back to Projects first.
 
 The non-interactive equivalent is:
 

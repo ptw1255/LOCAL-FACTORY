@@ -382,13 +382,25 @@ describe('platform API', () => {
       payload: {
         workflowId: seedWorkflow.id,
         goal: 'Analyze each request with an agent, require human approval, and return an observable result.',
+        brief: {
+          objective: 'Analyze each request and return an observable result.',
+          trigger: 'manual',
+          input: 'Structured request context',
+          preparation: 'Validate and normalize the request',
+          agentTask: 'Analyze the request with a bounded agent',
+          externalAction: 'none',
+          approval: 'before-completion',
+          output: 'Return an observable result',
+          constraints: 'Use declared tools and configured budgets',
+        },
       },
     });
     expect(created.statusCode).toBe(201);
-    const proposal = created.json<{ id: string; status: string; changes: Array<{ path: string }>; semanticDiff: string[] }>();
+    const proposal = created.json<{ id: string; status: string; changes: Array<{ path: string }>; semanticDiff: string[]; blueprint: { stages: Array<{ type: string }> } }>();
     expect(proposal.status).toBe('validated');
     expect(proposal.changes.map((change) => change.path)).toContain(`workflows/${seedWorkflow.id}.workflow.yaml`);
     expect(proposal.semanticDiff.every((line) => /^(CREATE|UPDATE) /.test(line))).toBe(true);
+    expect(proposal.blueprint.stages.map((stage) => stage.type)).toEqual(['manualTrigger', 'transform', 'agentLoop', 'approval', 'output']);
 
     const blocked = await app.inject({ method: 'POST', url: `/api/projects/project-local/authoring/proposals/${proposal.id}/apply`, headers, payload: { actor: 'test-user' } });
     expect(blocked.statusCode).toBe(409);

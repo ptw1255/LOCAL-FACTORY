@@ -98,6 +98,9 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
     proposal.tenantId ??= proposal.workflow.tenantId ?? tenantId;
     proposal.projectId ??= proposal.workflow.projectId ?? projectId;
   }
+  for (const proposal of state.authoringProposals) {
+    if (proposal.brief !== undefined) proposal.brief.input ??= 'Structured workflow input';
+  }
   for (const deployment of state.deployments) {
     deployment.triggerStatus ??= deployment.desiredState === 'running' ? 'active' : 'inactive';
     deployment.healthyArtifactIds ??= [];

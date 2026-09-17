@@ -119,13 +119,34 @@ describe('FACTORY CLI argument handling', () => {
       projects: [{ id: 'project-empty', tenantId: 'tenant-local', name: 'Empty project', description: '', createdAt: '2026-01-01T00:00:00.000Z' }],
     } as never;
     const emptyWorkflow = renderTerminalPortal(withProject, { page: 'workflow', cursor: 0 }, { clear: false });
-    expect(emptyWorkflow).toContain('Create first Workflow');
-    expect(emptyWorkflow).toContain('Enter or n creates');
-    expect(emptyWorkflow).toContain('manual trigger and output WorkUnit');
+    expect(emptyWorkflow).toContain('Draft first Workflow with AI');
+    expect(emptyWorkflow).toContain('Enter or n starts a guided brief');
+    expect(emptyWorkflow).toContain('reviewable WorkUnit blueprint');
 
     const withoutProject = renderTerminalPortal({ runs: [], approvals: [], deployments: [], workflows: [] }, { page: 'workflow', cursor: 0 }, { clear: false });
     expect(withoutProject).toContain('Select or create a Project');
     expect(withoutProject).toContain('Enter open Projects');
+  });
+
+  it('renders the guided brief and WorkUnit blueprint before resource changes', () => {
+    const proposal = {
+      id: 'authoring-1', tenantId: 'tenant-local', projectId: 'project-local', workflowId: 'review', status: 'validated',
+      goal: 'Review incoming repository changes safely.',
+      brief: { objective: 'Review incoming repository changes safely.', trigger: 'webhook', input: 'Repository and patch metadata', preparation: 'Validate repository context', agentTask: 'Assess correctness and risk', externalAction: 'Notify the pull request owner', approval: 'before-side-effects', output: 'Return a review decision', constraints: 'Use read-only tools' },
+      blueprint: { trigger: 'webhookTrigger', stages: [
+        { id: 'webhookTrigger-1', type: 'webhookTrigger', label: 'Receive webhook', executionKind: 'deterministic' },
+        { id: 'agentLoop-2', type: 'agentLoop', label: 'Assess correctness and risk', executionKind: 'agent' },
+        { id: 'output-3', type: 'output', label: 'Return a review decision', executionKind: 'consumer' },
+      ] },
+      changes: [{ path: 'workflows/review.workflow.yaml', operation: 'update', content: '', summary: 'Update Workflow/review' }],
+      semanticDiff: ['UPDATE workflows/review.workflow.yaml — Update Workflow/review'], issues: [], createdAt: '2026-01-01T00:00:00.000Z',
+    } as never;
+    const output = renderTerminalPortal({ runs: [], approvals: [], deployments: [], proposals: [proposal] }, { page: 'proposal-detail', cursor: 0, selectedProposalId: 'authoring-1' }, { clear: false });
+    expect(output).toContain('DRAFT BRIEF');
+    expect(output).toContain('WORKFLOW BLUEPRINT');
+    expect(output).toContain('Receive webhook');
+    expect(output).toContain('webhookTrigger · deterministic');
+    expect(output).toContain('RESOURCE CHANGES');
   });
 
   it('always gives Escape a deterministic route out of terminal pages', () => {
