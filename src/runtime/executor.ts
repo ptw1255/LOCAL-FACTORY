@@ -1205,6 +1205,18 @@ export class LocalWorkflowExecutor {
     };
 
     if (strategy === 'ensemble') {
+      if (Object.keys(agent.outputSchema).length > 0) {
+        await this.events.emit(runId, 'llm.ensemble.rejected', 'Structured-output ensembles are not supported; use a single or fallback route.', {
+          nodeId,
+          signal: 'log',
+          severityText: 'WARN',
+          attributes: {
+            'llm.route.strategy': strategy,
+            'llm.ensemble.policy': 'structured-output-rejected',
+          },
+        });
+        throw new Error('Ensemble routing does not support structured outputs; use a single or fallback route.');
+      }
       const results: Array<{ provider: string; result: OpenAIModelResult | OllamaModelResult; adapterVersion?: string }> = [];
       let lastError: unknown;
       for (let index = 0; index < maxAttempts; index += 1) {
