@@ -78,3 +78,35 @@ jobs:
         run: docker build --tag agentic-workflow-factory:ci .
       - name: Enforce production image budget
         run: npm run check:image -- agentic-workflow-factory:ci
+
+  observability-docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Collector and Phoenix smoke gate
+        run: OTEL_DOCKER_SMOKE=1 npm run test:observability-smoke
+
+  temporal-docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Temporal restart and replay smoke gate
+        run: TEMPORAL_DOCKER_SMOKE=1 npm run test:temporal-smoke
