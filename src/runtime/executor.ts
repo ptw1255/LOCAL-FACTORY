@@ -808,9 +808,25 @@ export class LocalWorkflowExecutor {
       case 'code':
         result = this.executeDeterministicCode(node, inputs);
         break;
-      case 'evaluator':
-        result = this.executeDeterministicEvaluator(node, inputs);
+      case 'evaluator': {
+        const evaluation = this.executeDeterministicEvaluator(node, inputs);
+        result = evaluation;
+        await this.events.emit(runId, 'evaluator.completed', `${node.label} evaluator completed.`, {
+          nodeId: node.id,
+          signal: 'metric',
+          spanKind: 'evaluator',
+          attributes: {
+            'openinference.span.kind': 'EVALUATOR',
+            'evaluator.mode': evaluation.mode,
+            'evaluator.passed': evaluation.passed,
+            'evaluator.score': evaluation.score,
+            'evaluator.threshold': evaluation.threshold,
+            'metric.name': 'evaluator.score',
+            'metric.value': evaluation.score,
+          },
+        });
         break;
+      }
       case 'repositoryCheck': {
         const workspace = await this.workspaceForRun(runId);
         const command = typeof node.config.command === 'string' ? node.config.command : 'npm test';
@@ -999,7 +1015,7 @@ export class LocalWorkflowExecutor {
     }
   }
 
-  private executeDeterministicEvaluator(node: WorkflowNode, inputs: unknown[]): Record<string, unknown> {
+  private executeDeterministicEvaluator(node: WorkflowNode, inputs: unknown[]): { score: number; threshold: number; passed: boolean; mode: string } {
     const mode = typeof node.config.mode === 'string' ? node.config.mode : 'equals';
     const actual = inputs.at(-1) ?? node.config.actual;
     const expected = node.config.expected;
