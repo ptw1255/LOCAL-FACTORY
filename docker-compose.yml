@@ -6,6 +6,7 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3100
+      FACTORY_WEB: ${FACTORY_WEB:-enabled}
       # Compose is the local-development surface; production can opt back in.
       FACTORY_AUTH_MODE: ${FACTORY_AUTH_MODE:-local}
       DATABASE_URL: postgresql://factory:factory@postgres:5432/factory

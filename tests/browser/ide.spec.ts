@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 test.describe('IDE workspace', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/#/studio');
+    await expect(page.getByText('FACTORY', { exact: true }).first()).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Project definition' })).toBeVisible();
   });
 

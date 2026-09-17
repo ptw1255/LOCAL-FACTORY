@@ -37,6 +37,53 @@ Open <http://localhost:5173>. Vite proxies `/api` requests to the Fastify server
 port 3100. Without `DATABASE_URL`, runtime state is stored in `.data/state.json`.
 Without Vault configuration, credential writes are rejected rather than persisted.
 
+### FACTORY CLI
+
+The repository includes a terminal-first CLI for managing, running, observing, and
+deploying the local Docker factory. The web dashboard remains an optional visual
+surface; the CLI is the primary control plane.
+Run it through npm, or link the package once to expose the `factory` command:
+
+```bash
+npm run factory --help
+npm link
+factory                         # start the stack and enter the terminal monitor
+factory status                  # show Docker service status
+factory build                   # build images without starting services
+factory deploy                  # build, start, and wait for health
+factory logs app                # tail app logs
+factory down                   # stop services (volumes are preserved)
+factory observe --follow        # live runs, approvals, and deployments
+factory tui                     # interactive monitor (q/a/d/r controls)
+factory dashboard               # quick-launch terminal portals
+factory workspace               # terminal file-backed authoring
+factory workflow                # terminal Workflow graph/source authoring
+factory edit workflows/review.workflow.yaml  # edit a local resource with $EDITOR
+factory approve <run-id>        # approve a waiting run
+factory deny <run-id> "reason"  # deny a waiting run
+factory --no-web                # run a CLI-only stack without static dashboard serving
+```
+
+The default `factory` command is the single-command launcher requested for local
+development. It starts the Compose stack, waits for `/api/health`, and enters the
+terminal monitor. Use `factory dashboard` for the terminal quick-launch selector, or
+`factory open` when you explicitly want the optional browser dashboard.
+`factory observe <run-id> --follow` streams a correlated run timeline;
+`factory tui` adds keyboard controls (`q` quit, `r` refresh, `a` approve first pending
+approval, `d` deny it). In CI or another non-interactive shell, the monitor prints one
+snapshot and exits. Use `FACTORY_BASE_URL` for a different API URL and
+`factory --all` to include the optional Temporal, observability, and Ollama profiles.
+Add `--no-web` when the deployment should expose only the API/control plane for
+terminal-native operation.
+Declarative authoring commands remain available (`factory validate`, `factory plan`,
+`factory workflow`, and `factory run`). `factory tree` remains a compatibility alias.
+Inside Workspace, select a resource and press Enter (or `e`) to open it in
+`$VISUAL`/`$EDITOR`. The file is saved with an optimistic hash check and compiled
+immediately; invalid edits remain visible as diagnostics and never produce an
+executable artifact. Inside Workflow, the graph is a projection of the selected
+`workflows/*.workflow.yaml` envelope, so semantic edits are made in that source
+file while `canvas/*.canvas.yaml` remains layout-only.
+
 ### Control-plane authentication
 
 Local development defaults to an implicit admin principal so the Studio works without
@@ -300,7 +347,7 @@ Project YAML is the source of truth for loop topology, agent boxes, work-unit
 contracts, and runtime policy. The database stores the compiled runtime index,
 immutable versions, run state, and 48-hour telemetry; it is not the authoring
 surface. Keep YAML in Git, review it like code, and use the Studio primarily to
-inspect the operational tree or open the legacy canvas when visual editing helps.
+inspect the operational workflow graph or open the legacy canvas when visual editing helps.
 
 The repository includes a complete example at
 [`examples/code-review-loop.yaml`](examples/code-review-loop.yaml). Validate or
@@ -330,6 +377,8 @@ positions; policy and connection references remain explicit on workflow steps.
 ```bash
 npm run factory -- validate examples/code-review-loop.yaml
 npm run factory -- plan examples/code-review-loop.yaml
+npm run factory -- workflow examples/code-review-loop.yaml
+# compatibility alias:
 npm run factory -- tree examples/code-review-loop.yaml
 npm run factory -- run examples/code-review-loop.yaml workflow-code-review
 ```
@@ -629,7 +678,7 @@ propose changes, while policy and human approval control promotion.
 ## Product surfaces
 
 - **Studio:** IDE-style declarative workspace with a project explorer, editable YAML
-  source, compile/apply diagnostics, operational tree, agent-box inspection, and an
+  source, compile/apply diagnostics, operational workflow graph, agent-box inspection, and an
   optional React Flow canvas for compatibility editing.
 - **Runs:** inspect status, cost, human touchpoints, node events, agent iterations,
   failures, and approval waits.

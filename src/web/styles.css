@@ -4,20 +4,20 @@
     Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --bg: #080d16;
-  --panel: #0d1421;
-  --panel-2: #111a2a;
-  --panel-3: #162133;
-  --border: #233047;
-  --border-bright: #34445f;
+  --bg: #090817;
+  --panel: #100e20;
+  --panel-2: #17152b;
+  --panel-3: #211d3d;
+  --border: #2f2950;
+  --border-bright: #5448a0;
   --text: #edf3fb;
   --muted: #8d9bb0;
   --subtle: #64748b;
-  --accent: #40d3a2;
-  --accent-strong: #20b985;
-  --accent-soft: #11382f;
-  --blue: #68a3ff;
-  --violet: #a48aff;
+  --accent: #b58cff;
+  --accent-strong: #7c4dff;
+  --accent-soft: #25184a;
+  --blue: #5bc0ff;
+  --violet: #c4a6ff;
   --orange: #f5a65b;
   --red: #f16f7a;
   --yellow: #e9c65d;
@@ -25,7 +25,14 @@
 
 * { box-sizing: border-box; }
 html, body, #root { min-height: 100%; margin: 0; }
-body { background: var(--bg); color: var(--text); overflow-x: hidden; }
+body {
+  background:
+    radial-gradient(circle at 15% 0%, rgba(124, 77, 255, .14), transparent 34rem),
+    radial-gradient(circle at 90% 12%, rgba(91, 192, 255, .10), transparent 30rem),
+    var(--bg);
+  color: var(--text);
+  overflow-x: hidden;
+}
 button, input, select, textarea { color: inherit; font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .55; }
@@ -46,7 +53,7 @@ h1, h2, h3, p { margin-top: 0; }
 
 .app-shell { display: flex; min-height: 100vh; }
 .sidebar {
-  background: #0a101b;
+  background: rgba(10, 8, 27, .92);
   border-right: 1px solid var(--border);
   display: flex;
   flex: 0 0 230px;
@@ -60,17 +67,17 @@ h1, h2, h3, p { margin-top: 0; }
 .brand { align-items: center; display: flex; gap: 11px; padding: 0 8px 28px; }
 .brand-mark {
   align-items: center;
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent-strong), var(--blue));
   border-radius: 9px;
-  color: #07140f;
+  color: #0b0820;
   display: flex;
   height: 38px;
   justify-content: center;
   width: 38px;
 }
 .brand div { display: flex; flex-direction: column; line-height: 1.15; }
-.brand strong { font-size: 15px; letter-spacing: .01em; }
-.brand span:last-child { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.brand strong { font-size: 15px; letter-spacing: .18em; }
+.brand span:last-child { color: #9fb8ff; font-size: 12px; margin-top: 3px; }
 .nav-section-label, .eyebrow {
   color: var(--subtle);
   display: block;
@@ -97,7 +104,7 @@ h1, h2, h3, p { margin-top: 0; }
   width: 100%;
 }
 .sidebar nav button:hover { background: #111b2b; color: var(--text); }
-.sidebar nav button.active { background: #13271f; color: #78e4bd; }
+.sidebar nav button.active { background: linear-gradient(90deg, rgba(124, 77, 255, .22), rgba(91, 192, 255, .08)); color: #d5c6ff; }
 .sidebar nav button.active svg { color: var(--accent); }
 .nav-beta {
   background: #26334a;
@@ -119,7 +126,7 @@ h1, h2, h3, p { margin-top: 0; }
 .sidebar-footer div { display: flex; flex-direction: column; }
 .sidebar-footer strong { font-size: 11px; }
 .sidebar-footer span:last-child { color: var(--subtle); font-size: 10px; margin-top: 2px; }
-.system-dot { background: var(--accent); border-radius: 50%; box-shadow: 0 0 0 4px #12362d; display: inline-block; height: 7px; width: 7px; }
+.system-dot { background: var(--blue); border-radius: 50%; box-shadow: 0 0 0 4px rgba(91, 192, 255, .14); display: inline-block; height: 7px; width: 7px; }
 .main-content { flex: 1; min-width: 0; }
 .mobile-bar { display: none; }
 .nav-scrim { display: none; }
@@ -159,8 +166,8 @@ h1, h2, h3, p { margin-top: 0; }
   padding: 8px 13px;
   transition: background .15s, border-color .15s, color .15s;
 }
-.button.primary { background: var(--accent); color: #06130f; }
-.button.primary:hover { background: #65dfb6; }
+.button.primary { background: linear-gradient(135deg, var(--accent-strong), var(--blue)); color: #090817; }
+.button.primary:hover { background: linear-gradient(135deg, #9b78ff, #79d3ff); }
 .button.secondary { background: #172338; border-color: #30415d; color: #dfe8f5; }
 .button.secondary:hover, .button.ghost:hover { background: #1d2b42; border-color: #425673; }
 .button.ghost { background: transparent; border-color: var(--border); color: #b9c5d6; }
