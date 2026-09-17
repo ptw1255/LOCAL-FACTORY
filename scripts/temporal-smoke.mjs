@@ -15,7 +15,9 @@ const scopeHeaders = { 'content-type': 'application/json', 'x-tenant-id': 'tenan
 const diagnosticServices = ['app', 'postgres', 'vault', 'temporal', 'temporal-worker'];
 const compose = (...args) => execFileSync('docker', ['compose', '--profile', 'temporal', ...args], {
   stdio: 'inherit',
-  env: { ...process.env, EXECUTION_ENGINE: 'temporal', TEMPORAL_ADDRESS: 'temporal:7233' },
+  // The fixture update increments the seeded workflow to version 2; point the
+  // smoke worker at that queue so the restart test exercises actual execution.
+  env: { ...process.env, EXECUTION_ENGINE: 'temporal', TEMPORAL_ADDRESS: 'temporal:7233', TEMPORAL_WORKFLOW_VERSION: '2' },
 });
 
 function dumpDiagnostics() {
