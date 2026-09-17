@@ -1097,6 +1097,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       ) : null}
       {studioMode === 'canvas' ? <div className="studio-workspace">
         <aside className="node-palette">
+          <label className="ide-view-selector"><span>View</span><select aria-label="Workspace view" onChange={(event) => setStudioMode(event.target.value as 'files' | 'tree' | 'canvas')} value={studioMode}><option value="files">Files</option><option value="tree">Tree</option><option value="canvas">Canvas</option></select></label>
           <div className="panel-title">
             <div><span className="eyebrow">Components</span><h2>Node palette</h2></div>
             <span className="count-pill">{catalog.length}</span>
