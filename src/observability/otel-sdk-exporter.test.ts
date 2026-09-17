@@ -119,6 +119,21 @@ describe('OtelSdkExporter', () => {
     expect(exporter.health()).toMatchObject({ status: 'healthy', failureCount: 0 });
   });
 
+  it('never forwards credential-like attributes even when payload capture is enabled', async () => {
+    const traces = traceExporter();
+    const exporter = new OtelSdkExporter('http://unused', {
+      capturePayload: true,
+      exporterFactories: { trace: () => traces },
+    });
+
+    await exporter.export({ ...baseEvent, attributes: { ...baseEvent.attributes, prompt: 'allowed only by explicit capture', authorization: 'bearer secret', 'api.key': 'secret' } });
+
+    const attributes = traces.spans[0]?.attributes ?? {};
+    expect(attributes).toHaveProperty('prompt');
+    expect(attributes).not.toHaveProperty('authorization');
+    expect(attributes).not.toHaveProperty('api.key');
+  });
+
   it('records official SDK export failures without rejecting workflow execution', async () => {
     const failed: SpanExporter = {
       export: (_spans, callback) => callback({ code: ExportResultCode.FAILED }),

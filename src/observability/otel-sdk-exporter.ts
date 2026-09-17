@@ -95,7 +95,10 @@ class EventIdGenerator implements IdGenerator {
 
 function spanAttributes(event: RunEvent, capturePayload: boolean): Attributes {
   return Object.fromEntries(
-    Object.entries(event.attributes ?? {}).filter(([key]) => capturePayload || !/(prompt|input|output|completion|content)/i.test(key)),
+    Object.entries(event.attributes ?? {}).filter(([key]) => {
+      if (/(secret|token|password|authorization|api[._-]?key|credential)/i.test(key)) return false;
+      return capturePayload || !/(prompt|input|output|completion|content)/i.test(key);
+    }),
   );
 }
 
