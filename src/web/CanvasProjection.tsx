@@ -20,12 +20,16 @@ export interface CanvasProjectionProps {
   onNodesChange: (changes: NodeChange<CanvasNode>[]) => void;
   onSelectionChange: (selection: OnSelectionChangeParams) => void;
   onNodeDoubleClick?: (node: CanvasNode) => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 const nodeTypes = { workflow: WorkflowNodeCard };
 
 /** Compatibility canvas kept behind a lazy boundary so file-first authoring stays light. */
-export function CanvasProjection({ nodes, edges, onConnect, onEdgesChange, onNodesChange, onSelectionChange, onNodeDoubleClick }: CanvasProjectionProps) {
+export function CanvasProjection({ nodes, edges, onConnect, onEdgesChange, onNodesChange, onSelectionChange, onNodeDoubleClick, canUndo = false, canRedo = false, onUndo, onRedo }: CanvasProjectionProps) {
   const renderedNodes = nodes.map((node) => ({
     ...node,
     data: {
@@ -52,6 +56,10 @@ export function CanvasProjection({ nodes, edges, onConnect, onEdgesChange, onNod
       <div className="canvas-meta">
         <span>{nodes.length} nodes</span>
         <span>{edges.length} connections</span>
+        <span className="canvas-history-actions">
+          <button aria-label="Undo Canvas edit" className="text-button" disabled={!canUndo} onClick={onUndo} type="button">Undo</button>
+          <button aria-label="Redo Canvas edit" className="text-button" disabled={!canRedo} onClick={onRedo} type="button">Redo</button>
+        </span>
       </div>
       <ReactFlow
         colorMode="dark"
