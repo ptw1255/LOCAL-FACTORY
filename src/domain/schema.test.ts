@@ -6,6 +6,7 @@ import {
   agentDefinitionSchema,
   cloneWorkflowSchema,
   createConnectionSchema,
+  createAuthoringProposalSchema,
   createProjectSchema,
   createProposalSchema,
   createTenantSchema,
@@ -29,6 +30,8 @@ describe('declarative resource schemas', () => {
     expect(createConnectionSchema.parse({ name: 'Source control', connector: 'GitHub', environment: 'local', scopes: ['contents:read'] }))
       .toEqual({ name: 'Source control', connector: 'GitHub', environment: 'local', scopes: ['contents:read'] });
     expect(createProposalSchema.parse({ goal: 'Review the latest workflow change', workflowId: seedWorkflow.id })).toEqual({ goal: 'Review the latest workflow change', workflowId: seedWorkflow.id });
+    expect(createAuthoringProposalSchema.parse({ goal: 'Review the latest workflow change', workflowId: seedWorkflow.id })).toEqual({ goal: 'Review the latest workflow change', workflowId: seedWorkflow.id });
+    expect(createAuthoringProposalSchema.safeParse({ goal: 'Create a reviewed workflow resource', changes: [{ path: 'workflows/review.workflow.yaml', content: 'kind: Workflow' }] }).success).toBe(true);
     expect(createTenantSchema.parse({ name: 'Local tenant' })).toEqual({ name: 'Local tenant' });
     expect(createProjectSchema.parse({ name: 'Review loop' })).toEqual({ name: 'Review loop', description: '' });
     expect(cloneWorkflowSchema.parse({ sourceWorkflowId: seedWorkflow.id })).toEqual({ sourceWorkflowId: seedWorkflow.id });
@@ -42,6 +45,7 @@ describe('declarative resource schemas', () => {
     expect(workflowEdgeSchema.safeParse({ ...seedWorkflow.edges[0], target: '' }).success).toBe(false);
     expect(createConnectionSchema.safeParse({ name: ' ', connector: 'GitHub', environment: 'local', scopes: [] }).success).toBe(false);
     expect(createProposalSchema.safeParse({ goal: 'too short', workflowId: seedWorkflow.id }).success).toBe(false);
+    expect(createAuthoringProposalSchema.safeParse({ goal: 'This request has no target' }).success).toBe(false);
     expect(createProjectSchema.safeParse({ name: 'x'.repeat(101) }).success).toBe(false);
     expect(declarativeImportSchema.safeParse({ source: '' }).success).toBe(false);
   });

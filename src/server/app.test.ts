@@ -373,6 +373,73 @@ describe('platform API', () => {
     expect(listing.json<{ items: Array<{ path: string }> }>().items.some((file) => file.path === 'factory.yaml')).toBe(true);
   });
 
+  it('requires validation and approval before atomically applying an AI authoring proposal', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/projects/project-local/authoring/proposals',
+      headers,
+      payload: {
+        workflowId: seedWorkflow.id,
+        goal: 'Analyze each request with an agent, require human approval, and return an observable result.',
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const proposal = created.json<{ id: string; status: string; changes: Array<{ path: string }>; semanticDiff: string[] }>();
+    expect(proposal.status).toBe('validated');
+    expect(proposal.changes.map((change) => change.path)).toContain(`workflows/${seedWorkflow.id}.workflow.yaml`);
+    expect(proposal.semanticDiff.every((line) => /^(CREATE|UPDATE) /.test(line))).toBe(true);
+
+    const blocked = await app.inject({ method: 'POST', url: `/api/projects/project-local/authoring/proposals/${proposal.id}/apply`, headers, payload: { actor: 'test-user' } });
+    expect(blocked.statusCode).toBe(409);
+    const approved = await app.inject({ method: 'POST', url: `/api/projects/project-local/authoring/proposals/${proposal.id}/approve`, headers, payload: { actor: 'test-user' } });
+    expect(approved.statusCode).toBe(200);
+    expect(approved.json<{ status: string }>().status).toBe('approved');
+    const applied = await app.inject({ method: 'POST', url: `/api/projects/project-local/authoring/proposals/${proposal.id}/apply`, headers, payload: { actor: 'test-user' } });
+    expect(applied.statusCode).toBe(200);
+    expect(applied.json<{ status: string; artifactId: string }>()).toEqual(expect.objectContaining({ status: 'applied', artifactId: expect.stringMatching(/^sha256:/) }));
+
+    const listing = await app.inject({ method: 'GET', url: '/api/projects/project-local/files', headers });
+    expect(listing.json<{ items: Array<{ path: string }> }>().items.map((file) => file.path)).toEqual(expect.arrayContaining([
+      'factory.yaml',
+      `workflows/${seedWorkflow.id}.workflow.yaml`,
+    ]));
+    const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${encodeURIComponent(`authoring:${proposal.id}`)}`, headers });
+    expect(evidence.json<{ items: Array<{ operation: string }> }>().items.map((item) => item.operation)).toEqual([
+      'authoring.proposed',
+      'authoring.approved',
+      'authoring.applied',
+    ]);
+  });
+
+  it('accepts exact files from an external author and rejects a stale approved bundle', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const factorySource = 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: project-local\n  version: 1\n  name: Local\nspec:\n  resources:\n    - workflows/external.workflow.yaml\n';
+    const workflowSource = 'apiVersion: factory.agentic/v1\nkind: Workflow\nmetadata:\n  id: external\n  version: 1\n  name: External authoring\nspec:\n  trigger: manual\n  steps:\n    - id: done\n      type: output\n';
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/projects/project-local/authoring/proposals',
+      headers,
+      payload: {
+        goal: 'Create a workflow from an externally authored resource bundle.',
+        changes: [
+          { path: 'factory.yaml', content: factorySource },
+          { path: 'workflows/external.workflow.yaml', content: workflowSource },
+        ],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const proposal = created.json<{ id: string; status: string }>();
+    expect(proposal.status).toBe('validated');
+    expect((await app.inject({ method: 'POST', url: `/api/projects/project-local/authoring/proposals/${proposal.id}/approve`, headers, payload: { actor: 'reviewer' } })).statusCode).toBe(200);
+
+    expect((await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'factory.yaml', content: factorySource } })).statusCode).toBe(200);
+    const staleApply = await app.inject({ method: 'POST', url: `/api/projects/project-local/authoring/proposals/${proposal.id}/apply`, headers, payload: { actor: 'reviewer' } });
+    expect(staleApply.statusCode).toBe(409);
+    const listing = await app.inject({ method: 'GET', url: '/api/projects/project-local/files', headers });
+    expect(listing.json<{ items: Array<{ path: string }> }>().items.map((file) => file.path)).not.toContain('workflows/external.workflow.yaml');
+  });
+
   it('marks aggregate declarative endpoints as deprecated during the compatibility window', async () => {
     const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
     const exported = await app.inject({ method: 'GET', url: '/api/projects/project-local/declarative.yaml', headers });

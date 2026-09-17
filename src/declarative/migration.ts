@@ -207,6 +207,7 @@ export function planResourceMigration(project: ProjectRecord, workflows: Workflo
   }
   const units = new Map<string, WorkflowDefinition['nodes'][number]['unit']>();
   for (const workflow of [...workflows].sort((left, right) => left.id.localeCompare(right.id))) {
+    const triggerNodeId = workflow.nodes.find((node) => node.type === workflow.trigger.type)?.id;
     const steps = workflow.nodes
       .filter((node) => node.type !== workflow.trigger.type)
       .map((node) => {
@@ -230,14 +231,20 @@ export function planResourceMigration(project: ProjectRecord, workflows: Workflo
       steps,
       edges: workflow.edges.map((edge) => ({
         id: edge.id,
-        source: edge.source,
-        target: edge.target,
+        source: edge.source === triggerNodeId ? 'trigger' : edge.source,
+        target: edge.target === triggerNodeId ? 'trigger' : edge.target,
         ...(edge.sourceHandle === undefined ? {} : { sourceHandle: edge.sourceHandle }),
         ...(edge.targetHandle === undefined ? {} : { targetHandle: edge.targetHandle }),
         ...(edge.condition === undefined ? {} : { condition: edge.condition }),
       })),
     })));
-    files.push({ path: `canvas/${workflow.id}.canvas.yaml`, source: renderCanvasResource(workflow) });
+    const canvasNodes = workflow.nodes.map((node) => node.id === triggerNodeId ? { ...node, id: 'trigger' } : node);
+    const canvasEdges = workflow.edges.map((edge) => ({
+      ...edge,
+      source: edge.source === triggerNodeId ? 'trigger' : edge.source,
+      target: edge.target === triggerNodeId ? 'trigger' : edge.target,
+    }));
+    files.push({ path: `canvas/${workflow.id}.canvas.yaml`, source: renderCanvasResource(workflow, canvasNodes, canvasEdges) });
   }
   for (const [unitId, unit] of [...units.entries()].sort(([left], [right]) => left.localeCompare(right))) {
     if (unit !== undefined) files.push(file(`units/${unitId}.unit.yaml`, envelope('WorkUnit', unitId, unit.version, undefined, unit as unknown as Record<string, unknown>)));

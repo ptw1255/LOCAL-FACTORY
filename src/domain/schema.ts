@@ -139,6 +139,21 @@ export const createProposalSchema = z.object({
   workflowId: z.string().min(1),
 });
 
+export const createAuthoringProposalSchema = z.object({
+  goal: z.string().trim().min(10).max(4_000),
+  workflowId: z.string().trim().min(1).optional(),
+  changes: z.array(z.object({
+    path: z.string().trim().min(1).max(500),
+    content: z.string().max(1_000_000),
+  })).min(1).max(128).optional(),
+}).refine((value) => value.workflowId !== undefined || value.changes !== undefined, {
+  message: 'workflowId or changes is required.',
+});
+
+export const authoringDecisionSchema = z.object({
+  actor: z.string().trim().min(1).max(200).default('factory-user'),
+});
+
 export const createTenantSchema = z.object({
   name: z.string().trim().min(1).max(100),
 });

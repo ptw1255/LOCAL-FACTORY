@@ -50,7 +50,10 @@ function makeNode(type: string, index: number): WorkflowNode {
     throw new Error(`Cannot plan unknown node type "${type}".`);
   }
   return {
-    id: `${type}-${randomUUID().slice(0, 8)}`,
+    // Node identities become resource paths, so they must remain stable when
+    // the same intent produces the same plan. The proposal record itself is
+    // still uniquely identified below.
+    id: `${type}-${index + 1}`,
     type,
     label: catalogItem.label,
     position: { x: 60 + index * 260, y: 180 },
@@ -100,6 +103,16 @@ export class ProposalService {
     workflow: WorkflowDefinition,
     goal: string,
   ): Promise<AgentProposal> {
+    const proposal = this.plan(workflow, goal);
+    await this.store.mutate((state) => {
+      state.proposals.unshift(proposal);
+    });
+    return proposal;
+  }
+
+  /** Produce an AI authoring plan without persisting the legacy aggregate
+   * proposal. Project authoring wraps this plan in a reviewable file diff. */
+  public plan(workflow: WorkflowDefinition, goal: string): AgentProposal {
     const selected = selectPlan(goal);
     const now = new Date().toISOString();
     const nodes = selected.map((item, index) => makeNode(item.type, index));
@@ -116,7 +129,7 @@ export class ProposalService {
     const proposed: WorkflowDefinition = {
       ...structuredClone(workflow),
       id: workflow.id,
-      name: `${workflow.name} proposal`,
+      name: workflow.name,
       description: goal,
       version: workflow.version + 1,
       status: 'draft',
@@ -142,9 +155,6 @@ export class ProposalService {
       issues: validation.issues,
       createdAt: now,
     };
-    await this.store.mutate((state) => {
-      state.proposals.unshift(proposal);
-    });
     return proposal;
   }
 }

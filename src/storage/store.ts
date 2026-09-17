@@ -30,6 +30,7 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
   state.directories ??= [];
   state.deletedFiles ??= [];
   state.artifacts ??= [];
+  state.authoringProposals ??= [];
   state.evidence ??= [];
   state.approvals ??= [];
   state.deployments ??= [];

@@ -1,4 +1,4 @@
-import type { AgentProposal, ApprovalRecord, ConnectionRecord, DeploymentRecord, FactoryMetrics, ProjectFileRecord, ProjectRecord, RunEvent, RunRecord, WorkflowDefinition } from '../src/domain/types.js';
+import type { ApprovalRecord, AuthoringProposal, ConnectionRecord, DeploymentRecord, FactoryMetrics, ProjectFileRecord, ProjectRecord, RunEvent, RunRecord, WorkflowDefinition } from '../src/domain/types.js';
 import { factoryBanner } from './factory-cli.js';
 
 export interface TerminalSnapshot {
@@ -10,14 +10,14 @@ export interface TerminalSnapshot {
   projectId?: string;
   files?: ProjectFileRecord[];
   connections?: ConnectionRecord[];
-  proposals?: AgentProposal[];
+  proposals?: AuthoringProposal[];
   metrics?: FactoryMetrics;
   events?: RunEvent[];
   error?: string;
   notice?: string;
 }
 
-export type TerminalPortalPage = 'home' | 'workspace' | 'workflow' | 'tree' | 'source-editor' | 'runs' | 'approvals' | 'deployments' | 'connections' | 'proposals' | 'factory' | 'portals' | 'run-detail';
+export type TerminalPortalPage = 'home' | 'project' | 'workflow' | 'tree' | 'workflow-detail' | 'work-unit-detail' | 'proposal-detail' | 'source-editor' | 'runs' | 'approvals' | 'deployments' | 'connections' | 'proposals' | 'factory' | 'portals' | 'run-detail';
 
 export interface TerminalSourceEditor {
   filePath: string;
@@ -25,7 +25,7 @@ export interface TerminalSourceEditor {
   originalContent: string;
   expectedSha256: string;
   cursorOffset: number;
-  returnPage: 'workspace' | 'workflow' | 'tree';
+  returnPage: 'project' | 'workflow' | 'tree';
 }
 
 export interface TerminalPrompt {
@@ -38,6 +38,9 @@ export interface TerminalPortalState {
   page: TerminalPortalPage;
   cursor: number;
   selectedRunId?: string;
+  selectedWorkflowId?: string;
+  selectedNodeId?: string;
+  selectedProposalId?: string;
   editor?: TerminalSourceEditor;
   prompt?: TerminalPrompt;
   error?: string;
@@ -110,10 +113,11 @@ export function pendingApproval(snapshot: TerminalSnapshot): ApprovalRecord | un
   return snapshot.approvals.find((approval) => approval.decision === 'pending');
 }
 
-export function portalItemCount(snapshot: TerminalSnapshot, page: TerminalPortalPage): number {
+export function portalItemCount(snapshot: TerminalSnapshot, page: TerminalPortalPage, selectedWorkflowId?: string): number {
   if (page === 'home') return 9;
-  if (page === 'workspace') return Math.max(1, snapshot.files?.length ?? 0);
+  if (page === 'project') return Math.max(1, snapshot.files?.length ?? 0);
   if (page === 'workflow' || page === 'tree') return Math.max(1, snapshot.workflows?.length ?? 0);
+  if (page === 'workflow-detail') return snapshot.workflows?.find((workflow) => workflow.id === selectedWorkflowId)?.nodes.length ?? 0;
   if (page === 'runs') return snapshot.runs.length;
   if (page === 'approvals') return snapshot.approvals.length;
   if (page === 'deployments') return snapshot.deployments.length;
@@ -127,7 +131,10 @@ export function portalItemCount(snapshot: TerminalSnapshot, page: TerminalPortal
 export function backTerminalState(state: TerminalPortalState): TerminalPortalState {
   if (state.page === 'home') return { page: 'home', cursor: 0 };
   if (state.page === 'run-detail') return { page: 'runs', cursor: 0 };
-  if (state.page === 'source-editor') return { page: state.editor?.returnPage ?? 'workspace', cursor: 0 };
+  if (state.page === 'workflow-detail') return { page: 'workflow', cursor: 0 };
+  if (state.page === 'work-unit-detail') return { page: 'workflow-detail', cursor: 0, ...(state.selectedWorkflowId === undefined ? {} : { selectedWorkflowId: state.selectedWorkflowId }) };
+  if (state.page === 'proposal-detail') return { page: 'proposals', cursor: 0 };
+  if (state.page === 'source-editor') return { page: state.editor?.returnPage ?? 'project', cursor: 0 };
   return { page: 'home', cursor: 0 };
 }
 
@@ -189,35 +196,35 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
   if (state.page === 'home') {
     lines.push(`${terminalBlue}FACTORY CONTROL PLANE${terminalReset}`, `${terminalDim}Use ↑/↓ to choose a surface, Enter to open, Esc to return.${terminalReset}`, '');
     const items: Array<[string, string]> = [
-      ['Workspace', 'Edit files, validate, compile, and run'],
-      ['Workflow', 'Author and inspect the executable workflow graph'],
+      ['Projects', 'Select the file-backed Project boundary'],
+      ['Workflow', 'Inspect WorkUnit envelopes and author with AI'],
       ['Runs', `${snapshot.runs.length} recorded executions`],
       ['Approvals', `${snapshot.approvals.filter((approval) => approval.decision === 'pending').length} pending decisions`],
       ['Deployments', `${snapshot.deployments.length} managed environments`],
       ['Connections', `${snapshot.connections?.length ?? 0} provider connections`],
-      ['Proposals', `${snapshot.proposals?.length ?? 0} agent proposals`],
+      ['Proposals', `${snapshot.proposals?.length ?? 0} reviewable file changes`],
       ['Factory', 'Metrics, manifest, and runtime health'],
       ['Portals', 'Quick-launch terminal views'],
     ];
     items.forEach(([label, detail], index) => lines.push(`${selectedMarker(state.cursor === index)} ${label.padEnd(16)} ${terminalDim}${detail}${terminalReset}`));
-  } else if (state.page === 'workspace') {
+  } else if (state.page === 'project') {
     const project = snapshot.projects?.find((candidate) => candidate.id === snapshot.projectId);
     lines.push(
-      `${terminalBlue}WORKSPACE${terminalReset} ${terminalDim}· file-backed authoring${terminalReset}`,
-      `  active  ${project?.name ?? 'No workspace selected'} ${terminalDim}${snapshot.projectId ?? ''}${terminalReset}`,
-      `${terminalDim}Select a resource file and press Enter or e to edit it in the terminal.${terminalReset}`,
+      `${terminalBlue}PROJECT${terminalReset} ${terminalDim}· file-backed source boundary${terminalReset}`,
+      `  active  ${project?.name ?? 'No Project selected'} ${terminalDim}${snapshot.projectId ?? ''}${terminalReset}`,
+      `${terminalDim}AI authoring is the primary change path; raw source is available with o.${terminalReset}`,
       '',
     );
     const files = snapshot.files ?? [];
     if (files.length === 0) lines.push('  No project files loaded.');
     files.forEach((file, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(file.path, 64).padEnd(64)} ${terminalDim}${short(file.sha256, 12)}${terminalReset}`));
-    lines.push('', `${terminalDim}n new workspace · s switch workspace · w new workflow · v validate/compile${terminalReset}`, '  Save → compile → artifact is the authoring lifecycle.');
+    lines.push('', `${terminalDim}n new Project · s switch Project · w new Workflow · v validate/compile · o raw source${terminalReset}`, '  Intent → proposal → validation → approval → apply → artifact.');
   } else if (state.page === 'workflow' || state.page === 'tree') {
     const project = snapshot.projects?.find((candidate) => candidate.id === snapshot.projectId);
     lines.push(
       `${terminalPurple}WORKFLOW${terminalReset} ${terminalDim}· authoring projection${terminalReset}`,
-      `  workspace  ${project?.name ?? 'No workspace selected'}`,
-      `${terminalDim}The selected graph is compiled from YAML. Enter or e opens its source envelope.${terminalReset}`,
+      `  Project  ${project?.name ?? 'No Project selected'}`,
+      `${terminalDim}The graph connects WorkUnit envelopes. Enter inspects its units; a creates an AI proposal.${terminalReset}`,
       '',
     );
     const workflows = snapshot.workflows ?? [];
@@ -233,10 +240,47 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
       });
       const sourcePath = snapshot.files?.find((file) => file.path === `workflows/${workflow.id}.workflow.yaml` || file.path === `workflows/${workflow.id}.workflow.yml`)?.path;
       lines.push(sourcePath === undefined
-        ? `       source: ${terminalYellow}runtime-only · Enter to materialize as YAML${terminalReset}`
+        ? `       source: ${terminalYellow}runtime-only · create or import a file proposal${terminalReset}`
         : `       source: ${sourcePath}`);
     });
-    lines.push('', `${terminalDim}n new workflow · e edit source · v validate/compile · p run selected${terminalReset}`);
+    lines.push('', `${terminalDim}a author with AI · Enter inspect WorkUnits · o raw source · v validate · p run${terminalReset}`);
+  } else if (state.page === 'workflow-detail') {
+    const workflow = snapshot.workflows?.find((candidate) => candidate.id === state.selectedWorkflowId);
+    lines.push(`${terminalPurple}WORKFLOW${terminalReset} ${terminalDim}· WorkUnit graph${terminalReset}`, '');
+    if (workflow === undefined) lines.push(`${terminalRed}Workflow not found.${terminalReset}`);
+    else {
+      lines.push(`  ${workflow.name} [${workflow.id}]`, `  ${workflow.description}`, '');
+      const outgoing = new Map<string, string[]>();
+      workflow.edges.forEach((edge) => outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target]));
+      workflow.nodes.forEach((node, index) => {
+        const targets = outgoing.get(node.id) ?? [];
+        lines.push(`${selectedMarker(state.cursor === index)} ${node.label.padEnd(28)} WorkUnit/${node.id} · ${node.unit?.kind ?? 'unknown'}${targets.length === 0 ? '' : ` → ${targets.join(', ')}`}`);
+      });
+      lines.push('', `${terminalDim}Enter inspect WorkUnit · a revise with AI · o raw Workflow source · p run${terminalReset}`);
+    }
+  } else if (state.page === 'work-unit-detail') {
+    const workflow = snapshot.workflows?.find((candidate) => candidate.id === state.selectedWorkflowId);
+    const node = workflow?.nodes.find((candidate) => candidate.id === state.selectedNodeId);
+    lines.push(`${terminalBlue}WORKUNIT ENVELOPE${terminalReset} ${terminalDim}· executable box${terminalReset}`, '');
+    if (workflow === undefined || node === undefined) lines.push(`${terminalRed}WorkUnit not found.${terminalReset}`);
+    else {
+      const unit = node.unit;
+      lines.push(
+        `  identity       WorkUnit/${node.id}`,
+        `  workflow       ${workflow.name}`,
+        `  purpose        ${node.label}`,
+        `  execution kind ${unit?.kind ?? 'unknown'}`,
+        `  adapter type    ${node.type}`,
+        `  input schema    ${unit?.inputSchema ?? 'unknown'}`,
+        `  output schema   ${unit?.outputSchema ?? 'unknown'}`,
+        `  timeout         ${unit?.timeoutMs ?? 0}ms`,
+        `  retries         ${unit?.retryAttempts ?? 0}`,
+        `  idempotency     ${unit?.idempotencyKey ?? 'runtime-generated'}`,
+        `  source          ${node.sourcePath ?? 'compiled runtime definition'}${node.sourceLine === undefined ? '' : `:${node.sourceLine}`}`,
+      );
+      if (typeof node.config?.agentId === 'string') lines.push(`  agent            Agent/${node.config.agentId}`);
+      lines.push('', `${terminalDim}The envelope is generated from Project resources. Press Esc to return to the graph.${terminalReset}`);
+    }
   } else if (state.page === 'source-editor') {
     const editor = state.editor;
     lines.push(`${terminalPurple}SOURCE EDITOR${terminalReset} ${terminalDim}· terminal-native YAML authoring${terminalReset}`, '');
@@ -274,9 +318,22 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
     if ((snapshot.connections ?? []).length === 0) lines.push('  No connections recorded.');
     (snapshot.connections ?? []).forEach((connection, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(connection.name, 28).padEnd(28)} ${short(connection.connector, 18).padEnd(18)} ${colorStatus(connection.status)}  secret=${connection.secretConfigured ? 'configured' : 'missing'}`));
   } else if (state.page === 'proposals') {
-    lines.push(`${terminalPurple}PROPOSALS${terminalReset} ${terminalDim}· bounded agent-generated changes${terminalReset}`, '');
+    lines.push(`${terminalPurple}AUTHORING PROPOSALS${terminalReset} ${terminalDim}· validated Project changes${terminalReset}`, '');
     if ((snapshot.proposals ?? []).length === 0) lines.push('  No proposals recorded.');
-    (snapshot.proposals ?? []).forEach((proposal, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(proposal.id, 20).padEnd(20)} ${short(proposal.goal, 60)}`));
+    (snapshot.proposals ?? []).forEach((proposal, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(proposal.id, 22).padEnd(22)} ${colorStatus(proposal.status).padEnd(20)} ${proposal.changes.length} files · ${short(proposal.goal, 52)}`));
+  } else if (state.page === 'proposal-detail') {
+    const proposal = snapshot.proposals?.find((candidate) => candidate.id === state.selectedProposalId);
+    lines.push(`${terminalPurple}AI AUTHORING PROPOSAL${terminalReset} ${terminalDim}· semantic diff${terminalReset}`, '');
+    if (proposal === undefined) lines.push(`${terminalRed}Proposal not found.${terminalReset}`);
+    else {
+      lines.push(`  ${proposal.id} · ${colorStatus(proposal.status)}`, `  goal  ${proposal.goal}`, '');
+      for (const line of proposal.semanticDiff) lines.push(`  ${line}`);
+      if (proposal.issues.length > 0) {
+        lines.push('', `${terminalYellow}VALIDATION${terminalReset}`);
+        for (const issue of proposal.issues.slice(0, 10)) lines.push(`  ${issue.severity.toUpperCase()} ${issue.path}:${issue.line} ${issue.message}`);
+      }
+      lines.push('', `${terminalDim}v validate · a approve · y apply approved proposal · d reject${terminalReset}`);
+    }
   } else if (state.page === 'factory') {
     lines.push(`${terminalPurple}FACTORY${terminalReset} ${terminalDim}· runtime metrics and manifest${terminalReset}`, '');
     if (snapshot.metrics === undefined) lines.push('  Metrics unavailable.');
@@ -309,7 +366,7 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
   const keys = state.page === 'source-editor'
     ? 'Arrows move · Ctrl+S save/compile · Esc back · Ctrl+C quit'
     : state.prompt === undefined
-      ? '↑/↓ navigate · Enter select/edit · e edit source · r refresh · Esc back · q quit'
+      ? '↑/↓ navigate · Enter select · o advanced source · r refresh · Esc back · q quit'
       : 'Type a value · Enter accept · Esc cancel/back';
   lines.push('', `${terminalDim}${keys}${terminalReset}`);
   return lines.join('\n');

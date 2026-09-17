@@ -86,7 +86,7 @@ export function parseAuthTokens(value: string | undefined): AuthToken[] {
 
 function roleForRequest(method: string, url: string): AuthRole {
   if (method.toUpperCase() === 'GET' || method.toUpperCase() === 'HEAD') return 'reader';
-  if (/\/runs\/[^/]+\/(approve|deny|expire|supersede)/.test(url)) return 'reviewer';
+  if (/\/runs\/[^/]+\/(approve|deny|expire|supersede)|\/authoring\/proposals\/[^/]+\/(approve|reject)/.test(url)) return 'reviewer';
   if (/\/runs\/[^/]+\/(cancel|retry|resume|replay)|\/workflows\/[^/]+\/runs(?:\/|$)|\/deployments(?:\/|$)|\/repository(?:\/|$)/.test(url)) return 'operator';
   if (/\/tenants(?:\/|$)|\/connections(?:\/|$)/.test(url)) return 'admin';
   return 'author';

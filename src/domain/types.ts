@@ -503,6 +503,39 @@ export interface AgentProposal {
   createdAt: string;
 }
 
+export type AuthoringProposalStatus = 'draft' | 'validated' | 'approved' | 'applied' | 'rejected';
+
+/** One atomic, optimistic file mutation proposed by an AI author. Source text
+ * remains reviewable and portable while this record provides lifecycle state. */
+export interface AuthoringFileChange {
+  path: string;
+  operation: 'create' | 'update';
+  content: string;
+  baseSha256?: string;
+  summary: string;
+}
+
+export interface AuthoringProposal {
+  tenantId: string;
+  projectId: string;
+  id: string;
+  goal: string;
+  workflowId?: string;
+  status: AuthoringProposalStatus;
+  changes: AuthoringFileChange[];
+  semanticDiff: string[];
+  issues: SourceDiagnostic[];
+  createdAt: string;
+  validatedAt?: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  rejectedAt?: string;
+  rejectedBy?: string;
+  appliedAt?: string;
+  appliedBy?: string;
+  artifactId?: string;
+}
+
 export interface NodeCatalogItem {
   type: string;
   label: string;
@@ -536,6 +569,7 @@ export interface PlatformState {
   events: RunEvent[];
   connections: ConnectionRecord[];
   proposals: AgentProposal[];
+  authoringProposals: AuthoringProposal[];
   files: ProjectFileRecord[];
   directories: ProjectDirectoryRecord[];
   deletedFiles: DeletedProjectFileRecord[];

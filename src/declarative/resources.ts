@@ -81,6 +81,20 @@ const kindSpecSchemas: Record<z.infer<typeof resourceEnvelopeSchema>['kind'], z.
 
 export interface ResourceFile { path: string; source: string }
 
+/** Add resource paths to a Project envelope without rewriting unrelated
+ * author intent or comments. Used by both human and AI authoring flows. */
+export function mergeProjectResourcePaths(source: string, resourcePaths: readonly string[]): string {
+  const document = parseDocument(source);
+  if (document.errors.length > 0) throw new Error(document.errors[0]?.message ?? 'Invalid Project YAML.');
+  if (document.get('kind') !== 'Project') throw new Error('factory.yaml must contain a Project resource.');
+  const parsed = document.toJS() as { spec?: { resources?: unknown } };
+  const current = Array.isArray(parsed.spec?.resources)
+    ? parsed.spec.resources.filter((item): item is string => typeof item === 'string')
+    : [];
+  document.setIn(['spec', 'resources'], [...new Set([...current, ...resourcePaths])].sort());
+  return document.toString();
+}
+
 export interface CompiledResourceFiles {
   project: ProjectRecord;
   workflows: WorkflowDefinition[];
