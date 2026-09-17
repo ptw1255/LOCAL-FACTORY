@@ -16,6 +16,13 @@ const { executeNodeActivity } = proxyActivities<typeof activities>({
     maximumAttempts: 3,
   },
 });
+const { executeNodeSideEffectActivity } = proxyActivities<typeof activities>({
+  startToCloseTimeout: '2 minutes',
+  // Connector and consumer WorkUnits may have committed an external effect
+  // before a worker reported an error. Surface uncertainty for recovery rather
+  // than replaying the activity automatically.
+  retry: { maximumAttempts: 1 },
+});
 const { executeAgentIterationActivity } = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 minutes',
   retry: { maximumAttempts: 3 },
@@ -52,6 +59,11 @@ export interface TemporalCompensationPlan {
   nodeType: string;
   config: Record<string, unknown>;
   idempotencyKey: string;
+}
+
+/** Whether a node's WorkUnit crosses an external side-effect boundary. */
+export function isTemporalSideEffectingUnit(unit: WorkflowDefinition['nodes'][number]['unit']): boolean {
+  return unit?.kind === 'connector' || unit?.kind === 'consumer';
 }
 
 /** Build the deterministic reverse-order compensation plan for a failed run. */
@@ -246,7 +258,8 @@ export async function executeWorkflow(
       if (node.type === 'agentLoop') {
         activityResult = await executeAgentLoopActivities(input, node, activityConfig, parentSpanId, completed.size + 1);
       } else {
-        activityResult = await executeNodeActivity({
+        const executeActivity = isTemporalSideEffectingUnit(node.unit) ? executeNodeSideEffectActivity : executeNodeActivity;
+        activityResult = await executeActivity({
           runId: input.runId,
           workflowId: input.definition.id,
           workflowVersion: input.definition.version,
@@ -310,7 +323,9 @@ async function executeCompensations(
       if (plan.config.requiresApproval === true) {
         await condition(() => approved.has(plan.nodeId));
       }
-      await executeNodeActivity({
+      const compensationUnit = { ...defaultWorkUnit(plan.nodeType), idempotencyKey: plan.idempotencyKey };
+      const executeActivity = isTemporalSideEffectingUnit(compensationUnit) ? executeNodeSideEffectActivity : executeNodeActivity;
+      await executeActivity({
         runId: input.runId,
         workflowId: input.definition.id,
         workflowVersion: input.definition.version,
@@ -325,7 +340,7 @@ async function executeCompensations(
         traceId: input.runId,
         sequence,
         inputs: outputs.has(node.id) ? [outputs.get(node.id)] : [],
-        unit: { ...defaultWorkUnit(plan.nodeType), idempotencyKey: plan.idempotencyKey },
+        unit: compensationUnit,
       });
     } catch (error) {
       failures.push(`${plan.nodeId}: ${error instanceof Error ? error.message : 'unknown failure'}`);

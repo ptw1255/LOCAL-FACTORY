@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
 import type { AgentDefinition } from '../domain/types.js';
-import { planCompensations, requiresTemporalApproval } from './workflows.js';
+import { isTemporalSideEffectingUnit, planCompensations, requiresTemporalApproval } from './workflows.js';
 
 const toolAgent: AgentDefinition = {
   id: 'tool-agent', version: 1, name: 'Tool agent', purpose: 'Test', instructions: 'Test', skills: [], tools: ['repo.check'],
@@ -38,6 +38,13 @@ describe('Temporal compensation planning', () => {
 
   it('omits completed units without compensation metadata', () => {
     expect(planCompensations(seedWorkflow, ['trigger', 'prepare', 'missing'])).toEqual([]);
+  });
+
+  it('marks connector and consumer WorkUnits as one-shot Temporal activities', () => {
+    expect(isTemporalSideEffectingUnit(defaultWorkUnit('repositoryMutation'))).toBe(true);
+    expect(isTemporalSideEffectingUnit(defaultWorkUnit('notification'))).toBe(true);
+    expect(isTemporalSideEffectingUnit(defaultWorkUnit('code'))).toBe(false);
+    expect(isTemporalSideEffectingUnit(undefined)).toBe(false);
   });
 
   it('applies the agent envelope approval policy in Temporal', () => {
