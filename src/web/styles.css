@@ -238,6 +238,8 @@ h1, h2, h3, p { margin-top: 0; }
 .approval-record { background: #101a29; border: 1px solid var(--border); border-radius: 7px; display: grid; gap: 5px; margin-top: 8px; padding: 10px 12px; }
 .approval-record code { color: var(--subtle); font-size: 9px; overflow-wrap: anywhere; }
 .approval-record span, .approval-record small { color: var(--subtle); font-size: 10px; }
+.run-recovery-note { color: var(--muted); font-size: 11px; margin: 0 0 10px; }
+.tool-recovery-summary .approval-record .form-actions { margin-top: 6px; }
 
 /* Studio */
 .studio-page { height: 100vh; min-height: 680px; overflow: hidden; position: relative; }

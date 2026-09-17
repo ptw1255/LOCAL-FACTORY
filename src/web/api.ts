@@ -6,6 +6,7 @@ import type {
   NodeCatalogItem,
   RunEvent,
   OperationEvidence,
+  ToolCheckpointRecord,
   ApprovalRecord,
   DeploymentRecord,
   DeploymentEnvelope,
@@ -176,6 +177,10 @@ export const api = {
     request<ItemsResponse<RunEvent>>(`/api/projects/${encodeURIComponent(projectId)}/files/events${since === undefined ? '' : `?since=${encodeURIComponent(since)}`}`),
   evidence: (runId: string) =>
     request<ItemsResponse<OperationEvidence>>(`/api/evidence?runId=${encodeURIComponent(runId)}`),
+  toolCheckpoints: (runId: string) =>
+    request<ItemsResponse<ToolCheckpointRecord>>(`/api/runs/${encodeURIComponent(runId)}/tool-checkpoints`),
+  recoverToolCheckpoint: (runId: string, input: { unitId: string; callId: string; resolution: 'succeeded' | 'failed'; reason: string; outputHash?: string }) =>
+    request<RunRecord>(`/api/runs/${encodeURIComponent(runId)}/tool-recovery`, { method: 'POST', body: JSON.stringify(input) }),
   approvals: (runId: string) =>
     request<ItemsResponse<ApprovalRecord>>(`/api/approvals?runId=${encodeURIComponent(runId)}`),
   telemetry: (runId: string, signal?: 'log' | 'trace' | 'metric') =>

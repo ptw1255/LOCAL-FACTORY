@@ -101,6 +101,15 @@ export interface OperationEvidence {
   metadata?: Record<string, string | number | boolean>;
 }
 
+export interface ToolCheckpointRecord {
+  evidenceId: string;
+  unitId: string;
+  callId: string;
+  status: 'incomplete';
+  occurredAt: string;
+  correlationId?: string;
+}
+
 export interface ApprovalRecord {
   id: string;
   tenantId?: string;
