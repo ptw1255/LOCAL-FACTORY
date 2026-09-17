@@ -234,6 +234,11 @@ mode (or an equivalent isolated worker deployment). Repository checks, patch
 artifacts, and Git lifecycle results also carry a credential-free remote identity
 (or a stable local-workspace identity when no remote exists).
 
+Production workers can make the boundary mandatory with
+`REPOSITORY_CHECK_SANDBOX_REQUIRED=true`; any check that does not explicitly
+declare `sandbox.mode: container` is then rejected before execution. This policy
+is intentionally opt-in so the default local flow does not require Docker.
+
 The real Docker boundary is covered by an opt-in smoke test (CI runs it after
 pulling the pinned check image):
 

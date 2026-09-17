@@ -61,6 +61,20 @@ describe('RepositoryWorkspace', () => {
     expect(() => parseRepositoryCheckSandbox({ mode: 'container', image: 'docker.io/library/node:latest;rm' })).toThrow(/image/);
   });
 
+  it('can require container checks at the deployment policy boundary', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-check-policy-'));
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }));
+    vi.stubEnv('REPOSITORY_CHECK_SANDBOX_REQUIRED', 'true');
+    try {
+      await expect((await RepositoryWorkspace.open(root)).runCheck('npm test')).rejects.toMatchObject({
+        code: 'REPOSITORY_POLICY_VIOLATION',
+        policy: 'sandbox.mode',
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.skipIf(process.env.DOCKER_CHECK_SMOKE !== '1')('executes an allow-listed check inside the real container boundary', async () => {
     const workspace = await RepositoryWorkspace.open(process.cwd());
     const result = await workspace.runCheck('npm run typecheck', 120_000, undefined, {
