@@ -168,6 +168,8 @@ export class LocalWorkflowExecutor {
   private readonly activeRuns = new Map<string, AbortController>();
   private readonly pendingResumes = new Set<string>();
   private readonly runWorkspaces = new Map<string, RepositoryWorkspace>();
+  private readonly ownerId = `executor-${randomUUID()}`;
+  private readonly executionLeaseMs = 30_000;
 
   public constructor(
     private readonly store: PlatformStore,
@@ -188,15 +190,14 @@ export class LocalWorkflowExecutor {
         .filter((run) => ['queued', 'running'].includes(run.status))
         .map((run) => run.id),
     );
+    let recovered = 0;
     for (const runId of runIds) {
-      await this.events.emit(
-        runId,
-        'run.recovered',
-        'Resuming run from its last persisted node checkpoint.',
-      );
-      void this.execute(runId);
+      if (!await this.claimExecutionLease(runId)) continue;
+      recovered += 1;
+      await this.events.emit(runId, 'run.recovered', 'Resuming run from its last persisted node checkpoint.');
+      void this.execute(runId, true);
     }
-    return runIds.length;
+    return recovered;
   }
 
   public async start(workflow: WorkflowDefinition, options: RunCreationOptions = {}): Promise<RunRecord> {
@@ -499,13 +500,21 @@ export class LocalWorkflowExecutor {
     return run;
   }
 
-  public async execute(runId: string): Promise<void> {
+  public async execute(runId: string, leaseClaimed = false): Promise<void> {
     if (this.activeRuns.has(runId)) {
       this.pendingResumes.add(runId);
       return;
     }
+    if (!leaseClaimed && !await this.claimExecutionLease(runId)) return;
     const controller = new AbortController();
     this.activeRuns.set(runId, controller);
+    const leaseRenewal = setInterval(() => {
+      void this.renewExecutionLease(runId).then((held) => {
+        if (!held && !controller.signal.aborted) controller.abort(new Error('Execution lease was lost to another worker.'));
+      }).catch(() => {
+        if (!controller.signal.aborted) controller.abort(new Error('Execution lease could not be renewed.'));
+      });
+    }, Math.max(1_000, Math.floor(this.executionLeaseMs / 3)));
 
     try {
       const started = await this.transitionToRunning(runId);
@@ -687,11 +696,46 @@ export class LocalWorkflowExecutor {
       const timedOut = error instanceof Error && 'code' in error && ['WORK_UNIT_TIMED_OUT', 'REPOSITORY_CHECK_TIMED_OUT'].includes(String(error.code));
       await this.failRun(runId, message, timedOut ? 'timed_out' : 'failed');
     } finally {
+      clearInterval(leaseRenewal);
+      await this.releaseExecutionLease(runId);
       if (this.activeRuns.get(runId) === controller) {
         this.activeRuns.delete(runId);
         if (this.pendingResumes.delete(runId)) void this.execute(runId);
       }
     }
+  }
+
+  /** Atomically claim a queued/running run so only one process can execute it. */
+  private async claimExecutionLease(runId: string): Promise<boolean> {
+    const now = Date.now();
+    return this.store.mutate((state) => {
+      const run = state.runs.find((candidate) => candidate.id === runId);
+      if (run === undefined || !['queued', 'running'].includes(run.status)) return false;
+      const current = run.executionLease;
+      if (current !== undefined && Date.parse(current.expiresAt) > now) return false;
+      run.executionLease = {
+        ownerId: this.ownerId,
+        expiresAt: new Date(now + this.executionLeaseMs).toISOString(),
+      };
+      return true;
+    });
+  }
+
+  private async renewExecutionLease(runId: string): Promise<boolean> {
+    const now = Date.now();
+    return this.store.mutate((state) => {
+      const run = state.runs.find((candidate) => candidate.id === runId);
+      if (run === undefined || run.executionLease?.ownerId !== this.ownerId) return false;
+      run.executionLease.expiresAt = new Date(now + this.executionLeaseMs).toISOString();
+      return true;
+    });
+  }
+
+  private async releaseExecutionLease(runId: string): Promise<void> {
+    await this.store.mutate((state) => {
+      const run = state.runs.find((candidate) => candidate.id === runId);
+      if (run?.executionLease?.ownerId === this.ownerId) delete run.executionLease;
+    }).catch(() => undefined);
   }
 
   private findReadyNode(

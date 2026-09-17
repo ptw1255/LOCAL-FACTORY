@@ -226,6 +226,8 @@ export interface RunRecord {
   retryIdempotencyKey?: string;
   /** Execution plane that owns this run. */
   executionEngine?: ExecutionEngine;
+  /** Cross-process lease preventing duplicate local recovery/execution. */
+  executionLease?: { ownerId: string; expiresAt: string };
   /** Temporal identity used to recover or control a durable execution. */
   temporalWorkflowId?: string;
   temporalRunId?: string;
