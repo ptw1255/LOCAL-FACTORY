@@ -12,20 +12,22 @@ function temporalStartBackoff(attempt: number): number {
   return Math.min(2_000, 250 * 2 ** attempt);
 }
 
-function isNamespaceNotReady(error: unknown): boolean {
+function isTemporalStartRetryable(error: unknown): boolean {
   // Temporal's client wraps gRPC service failures in a generic ServiceError
-  // (`Failed to start Workflow`) and keeps the useful namespace detail on
+  // (`Failed to start Workflow`) and keeps useful startup details on
   // `cause.details`. Walk the bounded cause chain so startup retries still
-  // recognize that transient response without retrying unrelated failures.
+  // recognize namespace/cache and transport readiness responses without
+  // retrying unrelated failures.
   let current: unknown = error;
   const seen = new Set<unknown>();
   for (let depth = 0; depth < 8 && current !== undefined && current !== null && !seen.has(current); depth += 1) {
     seen.add(current);
-    if (typeof current === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b/i.test(current)) return true;
+    if (typeof current === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable/i.test(current)) return true;
     if (typeof current === 'object' || typeof current === 'function') {
-      const value = current as { message?: unknown; details?: unknown; cause?: unknown };
-      if (typeof value.message === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b/i.test(value.message)) return true;
-      if (typeof value.details === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b/i.test(value.details)) return true;
+      const value = current as { message?: unknown; details?: unknown; cause?: unknown; code?: unknown };
+      if (value.code === 14 || value.code === 'UNAVAILABLE') return true;
+      if (typeof value.message === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable/i.test(value.message)) return true;
+      if (typeof value.details === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b|connection refused|connect(?:ion)? failed|temporarily unavailable|service unavailable/i.test(value.details)) return true;
       current = value.cause;
       continue;
     }
@@ -150,7 +152,7 @@ export class TemporalWorkflowExecutor {
       try {
         return await this.options.client.workflow.start('executeWorkflow', options);
       } catch (error) {
-        if (!isNamespaceNotReady(error) || attempt === TEMPORAL_START_ATTEMPTS - 1) throw error;
+        if (!isTemporalStartRetryable(error) || attempt === TEMPORAL_START_ATTEMPTS - 1) throw error;
         await delay(temporalStartBackoff(attempt));
       }
     }
