@@ -234,6 +234,14 @@ mode (or an equivalent isolated worker deployment). Repository checks, patch
 artifacts, and Git lifecycle results also carry a credential-free remote identity
 (or a stable local-workspace identity when no remote exists).
 
+The real Docker boundary is covered by an opt-in smoke test (CI runs it after
+pulling the pinned check image):
+
+```bash
+docker pull node:22-bookworm-slim
+DOCKER_CHECK_SMOKE=1 npm test -- --run src/repository/workspace.test.ts
+```
+
 If GitHub integration is configured with `GITHUB_TOKEN`,
 `GITHUB_REPOSITORY_OWNER`, and `GITHUB_REPOSITORY_NAME`, the bounded
 `POST /api/repository/pull-request` endpoint can open a reviewable PR from an
