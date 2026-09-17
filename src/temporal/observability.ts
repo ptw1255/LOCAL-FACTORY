@@ -17,6 +17,7 @@ export interface TemporalActivityLifecycle {
   unitVersion: number;
   traceId: string;
   spanId: string;
+  parentSpanId?: string;
   sequence: number;
   attempt: number;
   idempotencyKey: string;
@@ -81,6 +82,7 @@ export class PlatformTemporalObservabilitySink implements TemporalObservabilityS
       signal: 'trace',
       traceId: lifecycle.traceId,
       spanId: lifecycle.spanId,
+      ...(lifecycle.parentSpanId === undefined ? {} : { parentSpanId: lifecycle.parentSpanId }),
       spanKind: temporalSpanKind(lifecycle.unitKind),
       severityText: lifecycle.status === 'failed' ? 'ERROR' : 'INFO',
       attributes: {

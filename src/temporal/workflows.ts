@@ -35,6 +35,7 @@ export async function executeWorkflow(
 ): Promise<TemporalWorkflowResult> {
   const completed = new Set<string>();
   const outputs = new Map<string, unknown>();
+  const lifecycleByNode = new Map<string, TemporalActivityLifecycle>();
   const lifecycle: TemporalActivityLifecycle[] = [];
   const trigger = input.definition.nodes.find(
     (node) => node.type === input.definition.trigger.type,
@@ -82,6 +83,10 @@ export async function executeWorkflow(
       );
     }
 
+    const parentSpanId = input.definition.edges
+      .filter((edge) => edge.target === node.id)
+      .map((edge) => lifecycleByNode.get(edge.source)?.spanId)
+      .find((spanId): spanId is string => spanId !== undefined);
     const activityResult = await executeNodeActivity({
       runId: input.runId,
       ...(input.definition.tenantId === undefined ? {} : { tenantId: input.definition.tenantId }),
@@ -91,6 +96,7 @@ export async function executeWorkflow(
       label: node.label,
       config: activityConfig,
       traceId: input.runId,
+      ...(parentSpanId === undefined ? {} : { parentSpanId }),
       sequence: completed.size + 1,
       inputs: input.definition.edges
         .filter((edge) => edge.target === node.id && outputs.has(edge.source))
@@ -100,6 +106,7 @@ export async function executeWorkflow(
     });
     completed.add(node.id);
     outputs.set(node.id, activityResult.result);
+    lifecycleByNode.set(node.id, activityResult.lifecycle);
     lifecycle.push(activityResult.lifecycle);
     for (const edge of input.definition.edges.filter(
       (candidate) =>

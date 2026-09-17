@@ -95,4 +95,15 @@ describe('PlatformTemporalObservabilitySink', () => {
     expect(await store.listEvents(first.runId)).toHaveLength(2);
     expect((await store.listEvidence(first.runId)).map((entry) => entry.attempt)).toEqual([1, 2]);
   });
+
+  it('persists parent span relationships for nested Temporal activities', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-observability-parent-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const sink = new PlatformTemporalObservabilitySink(store);
+    await sink.record(lifecycle({ nodeId: 'parent', spanId: 'p'.repeat(16) }));
+    await sink.record(lifecycle({ nodeId: 'child', spanId: 'c'.repeat(16), parentSpanId: 'p'.repeat(16), idempotencyKey: 'run-temporal:temporal:child:3' }));
+
+    const events = await store.listEvents('run-temporal');
+    expect(events.find((event) => event.nodeId === 'child')).toEqual(expect.objectContaining({ parentSpanId: 'p'.repeat(16) }));
+  });
 });
