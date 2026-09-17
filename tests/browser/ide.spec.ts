@@ -40,10 +40,29 @@ test.describe('Observe and Deployments', () => {
     await expect(page.getByRole('tab', { name: 'Metrics' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  test('shows the operational deployment screen and safe empty state', async ({ page }) => {
+  test('shows the operational deployment card, filters, and safe actions', async ({ page, request }) => {
+    const migration = await request.post('/api/projects/project-local/migrate', { data: { dryRun: false } });
+    expect(migration.ok()).toBeTruthy();
+    const compile = await request.post('/api/projects/project-local/compile', { data: { environment: 'local' } });
+    expect(compile.ok()).toBeTruthy();
+    const artifact = await compile.json() as { id: string };
+    const deployment = await request.post('/api/deployments', {
+      data: { workflowId: 'workflow-agent-intake', environment: 'local', artifactId: artifact.id, trigger: 'manual' },
+    });
+    expect(deployment.ok()).toBeTruthy();
+
     await page.goto('/#/deployments');
     await expect(page.getByRole('heading', { name: 'Deployments' })).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Filter deployments by observed state' })).toBeVisible();
-    await expect(page.getByText('No deployments yet', { exact: true })).toBeVisible();
+    const card = page.locator('article.connection-card').first();
+    await expect(card).toContainText('workflow-agent-intake');
+    await expect(card.getByText(/Health evidence/)).toBeVisible();
+    await expect(card.getByText(/Recent runs/)).toBeVisible();
+    await expect(card.getByText('Run logs', { exact: true })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Workspace' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'Observe' })).toBeVisible();
+    await page.getByRole('combobox', { name: 'Filter deployments by observed state' }).selectOption('stopped');
+    await expect(card).toBeVisible();
+    await page.getByRole('combobox', { name: 'Filter deployments by observed state' }).selectOption('all');
   });
 });

@@ -17,7 +17,7 @@ export default defineConfig({
     video: 'off',
   },
   webServer: {
-    command: 'DATA_FILE=.data/browser-state.json PORT=4173 HOST=127.0.0.1 NODE_ENV=test npm run server',
+    command: 'node scripts/browser-server.mjs',
     url: 'http://127.0.0.1:4173/api/health',
     reuseExistingServer: false,
     timeout: 120_000,
