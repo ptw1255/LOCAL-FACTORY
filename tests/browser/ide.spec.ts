@@ -23,6 +23,36 @@ test.describe('IDE workspace', () => {
     await expect(page.getByText('Node palette', { exact: true })).toBeVisible();
   });
 
+  test('opens, reorders, closes, and restores file-backed editor tabs', async ({ page, request }) => {
+    const migration = await request.post('/api/projects/project-local/migrate', { data: { dryRun: false } });
+    expect(migration.ok()).toBeTruthy();
+    const listingResponse = await request.get('/api/projects/project-local/files');
+    expect(listingResponse.ok()).toBeTruthy();
+    const listing = await listingResponse.json() as { items: Array<{ path: string }> };
+    const paths = listing.items.map((file) => file.path).filter((path) => path.endsWith('.yaml')).slice(0, 2);
+    expect(paths).toHaveLength(2);
+    const tabs = page.locator('.ide-tabs').getByRole('tab');
+    for (const filePath of paths) {
+      await page.locator('button.ide-file').filter({ hasText: filePath }).first().click();
+    }
+    const defaultTabClose = page.getByRole('button', { name: 'Close project.yaml' });
+    if (await defaultTabClose.count() > 0) await defaultTabClose.click();
+    await expect(tabs).toHaveCount(2);
+    const activeTab = tabs.filter({ hasText: paths[1]! }).first();
+    await activeTab.click();
+    await expect(activeTab).toHaveAttribute('aria-selected', 'true');
+    await activeTab.press('ArrowLeft');
+    await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true');
+    const reordered = await tabs.allTextContents();
+    expect(reordered[0]).toContain(paths[1]!);
+    expect(reordered[1]).toContain(paths[0]!);
+    await page.getByRole('button', { name: `Close ${paths[1]!}` }).click();
+    await expect(tabs).toHaveCount(1);
+    await page.reload();
+    await expect(page.locator('.ide-tabs').getByRole('tab')).toHaveCount(1);
+    await expect(page.locator('.ide-tabs').getByRole('tab').first()).toContainText(paths[0]!);
+  });
+
   test('opens and closes the command palette with the platform shortcut', async ({ page }) => {
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+P' : 'Control+P');
     const dialog = page.getByRole('dialog', { name: 'Command palette' });
