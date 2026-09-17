@@ -78,7 +78,9 @@ describe('RepositoryWorkspace', () => {
   it.skipIf(process.env.DOCKER_CHECK_SMOKE !== '1')('executes an allow-listed check inside the real container boundary', async () => {
     const workspace = await RepositoryWorkspace.open(process.cwd());
     const result = await workspace.runCheck('npm run typecheck', 120_000, undefined, {
-      sandbox: { mode: 'container', image: 'node:22-bookworm-slim', memoryMb: 512, cpus: 1, pidsLimit: 256 },
+      // TypeScript needs more than 512 MB under the container cgroup on the
+      // CI runner; keep the smoke limit bounded while avoiding a false OOM.
+      sandbox: { mode: 'container', image: 'node:22-bookworm-slim', memoryMb: 1_024, cpus: 1, pidsLimit: 256 },
     });
     expect(result).toMatchObject({ exitCode: 0, timedOut: false, sandbox: { mode: 'container', network: 'none', image: 'node:22-bookworm-slim' } });
     expect(result.output).not.toContain('DOCKER_CHECK_SMOKE');
