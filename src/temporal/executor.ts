@@ -13,8 +13,25 @@ function temporalStartBackoff(attempt: number): number {
 }
 
 function isNamespaceNotReady(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /namespace not found/i.test(message);
+  // Temporal's client wraps gRPC service failures in a generic ServiceError
+  // (`Failed to start Workflow`) and keeps the useful namespace detail on
+  // `cause.details`. Walk the bounded cause chain so startup retries still
+  // recognize that transient response without retrying unrelated failures.
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 8 && current !== undefined && current !== null && !seen.has(current); depth += 1) {
+    seen.add(current);
+    if (typeof current === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b/i.test(current)) return true;
+    if (typeof current === 'object' || typeof current === 'function') {
+      const value = current as { message?: unknown; details?: unknown; cause?: unknown };
+      if (typeof value.message === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b/i.test(value.message)) return true;
+      if (typeof value.details === 'string' && /namespace\b[\s\S]{0,120}\bnot found\b/i.test(value.details)) return true;
+      current = value.cause;
+      continue;
+    }
+    break;
+  }
+  return false;
 }
 
 function delay(durationMs: number): Promise<void> {

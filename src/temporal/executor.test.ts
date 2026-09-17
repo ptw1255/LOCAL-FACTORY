@@ -92,6 +92,28 @@ describe('TemporalWorkflowExecutor', () => {
     expect(await store.read((state) => state.runs.filter((candidate) => candidate.id === run.id))).toHaveLength(1);
   });
 
+  it('recognizes namespace readiness details wrapped by the Temporal client', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-namespace-cause-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-namespace-cause');
+    let attempts = 0;
+    const start = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw Object.assign(new Error('Failed to start Workflow'), {
+          cause: { details: "Namespace 'default' not found" },
+        });
+      }
+      return handle;
+    });
+    const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+
+    await expect(executor.start(structuredClone(seedWorkflow))).resolves.toEqual(expect.objectContaining({ status: 'running' }));
+    expect(start).toHaveBeenCalledTimes(2);
+  });
+
   it('does not retry non-transient Temporal start failures', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-start-failure-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
