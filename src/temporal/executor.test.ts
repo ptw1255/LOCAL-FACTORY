@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed.js';
 import { defaultWorkUnit } from '../domain/catalog.js';
+import type { AgentDefinition } from '../domain/types.js';
 import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
 import type { TemporalWorkflowResult } from './workflows.js';
@@ -234,6 +235,35 @@ describe('TemporalWorkflowExecutor', () => {
     await executor.approve(run.id);
     expect(handle.signal).toHaveBeenCalledWith('approve', 'prepare');
     expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.approvedNodeIds))).toEqual(['prepare']);
+  });
+
+  it('routes approval signals to an agent envelope boundary', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-agent-approval-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-agent-approval');
+    const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-temporal-agent-approval';
+    const agent: AgentDefinition = {
+      id: 'approval-agent', version: 1, name: 'Approval agent', purpose: 'Test', instructions: 'Test', skills: [], tools: ['repo.check'],
+      model: { provider: 'ollama', model: 'test' }, inputSchema: {}, outputSchema: {},
+      boundaries: { allowedConnections: [], allowedRepositories: [], protectedPaths: [], network: 'deny-by-default', dataClasses: ['internal'] },
+      limits: { maxIterations: 2, maxCostUsd: 1, maxDurationMs: 60_000 }, termination: { successConditions: ['Task complete.'], failureConditions: [], escalationConditions: [] },
+      approval: { beforeSideEffects: true, beforeTools: [] }, observability: { captureInputs: false, captureOutputs: false, redactedFields: [] },
+    };
+    workflow.agents = [agent];
+    const node = workflow.nodes.find((candidate) => candidate.type === 'agentLoop');
+    if (node === undefined) throw new Error('Agent node is missing.');
+    node.config.agentId = agent.id;
+    node.config.maxIterations = agent.limits.maxIterations;
+    const run = await executor.start(workflow);
+
+    await executor.approve(run.id);
+
+    expect(handle.signal).toHaveBeenCalledWith('approve', node.id);
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.approvedNodeIds))).toEqual([node.id]);
   });
 
   it('routes approval signals to a pending compensation boundary', async () => {
