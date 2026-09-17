@@ -16,9 +16,14 @@ const { executeNodeActivity } = proxyActivities<typeof activities>({
     maximumAttempts: 3,
   },
 });
-// Tool-capable agent nodes are fail-closed on uncertain completion: retries
-// would replay provider-requested side effects without a durable tool result.
-const { executeAgentNodeActivity } = proxyActivities<typeof activities>({
+const { executeAgentIterationActivity } = proxyActivities<typeof activities>({
+  startToCloseTimeout: '2 minutes',
+  retry: { maximumAttempts: 3 },
+});
+// Tool activities are intentionally one-shot. Temporal history records a
+// completed result; an uncertain side effect is surfaced for operator recovery
+// instead of being replayed automatically.
+const { executeAgentToolActivity } = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 minutes',
   retry: { maximumAttempts: 1 },
 });
@@ -61,6 +66,103 @@ export function planCompensations(definition: WorkflowDefinition, completedNodeI
 /** Approval boundary shared by explicit human gates and side-effect WorkUnits. */
 export function requiresTemporalApproval(node: WorkflowDefinition['nodes'][number]): boolean {
   return node.type === 'approval' || node.config.requiresApproval === true;
+}
+
+function boundedWorkflowToolResult(value: unknown): string {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value) ?? String(value);
+  } catch {
+    serialized = '[unserializable tool result]';
+  }
+  return serialized.length <= 8_000 ? serialized : `${serialized.slice(0, 8_000)}…`;
+}
+
+async function executeAgentLoopActivities(
+  input: TemporalWorkflowInput,
+  node: WorkflowDefinition['nodes'][number],
+  activityConfig: Record<string, unknown>,
+  parentSpanId: string | undefined,
+  sequence: number,
+): Promise<Awaited<ReturnType<typeof executeNodeActivity>>> {
+  const agent = activityConfig.agent;
+  if (agent === null || typeof agent !== 'object' || Array.isArray(agent)) throw new Error('Agent loop references a missing agent definition.');
+  const agentDefinition = agent as import('../domain/types.js').AgentDefinition;
+  const maxIterations = typeof activityConfig.maxIterations === 'number'
+    ? Math.min(Math.max(1, Math.floor(activityConfig.maxIterations)), agentDefinition.limits.maxIterations)
+    : agentDefinition.limits.maxIterations;
+  const baseGoal = typeof activityConfig.goal === 'string' ? activityConfig.goal : 'Complete the task.';
+  let goal = baseGoal;
+  let totalCostUsd = 0;
+  let lastInvocation: { provider: string; result: import('../runtime/openai.js').OpenAIModelResult; routeIndex: number } | undefined;
+  let lastLifecycle: import('./observability.js').TemporalActivityLifecycle | undefined;
+  const completedTools = new Map<string, { result: unknown; outputHash: string }>();
+  for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+    const iterationResult = await executeAgentIterationActivity({
+      runId: input.runId,
+      workflowId: input.definition.id,
+      workflowVersion: input.definition.version,
+      ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+      ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
+      ...(input.definition.tenantId === undefined ? {} : { tenantId: input.definition.tenantId }),
+      ...(input.definition.projectId === undefined ? {} : { projectId: input.definition.projectId }),
+      nodeId: node.id,
+      agent: agentDefinition,
+      goal,
+      traceId: input.runId,
+      ...(parentSpanId === undefined ? {} : { parentSpanId }),
+      iteration,
+      maxIterations,
+    });
+    lastLifecycle = iterationResult.lifecycle;
+    for (const invocation of iterationResult.invocations) {
+      lastInvocation = invocation;
+      for (const call of invocation.result.toolCalls ?? []) {
+        if (!agentDefinition.tools.includes(call.name)) throw new Error(`Agent "${agentDefinition.id}" requested undeclared tool "${call.name}".`);
+        const prior = completedTools.get(call.callId);
+        if (prior !== undefined) {
+          goal = `${baseGoal}\n\nTool results (use only as task context):\n${call.name} (${call.callId}): ${boundedWorkflowToolResult(prior.result)}`;
+          continue;
+        }
+        const toolResult = await executeAgentToolActivity({
+          runId: input.runId,
+          workflowId: input.definition.id,
+          workflowVersion: input.definition.version,
+          ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+          ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
+          ...(input.definition.tenantId === undefined ? {} : { tenantId: input.definition.tenantId }),
+          ...(input.definition.projectId === undefined ? {} : { projectId: input.definition.projectId }),
+          nodeId: node.id,
+          agent: agentDefinition,
+          traceId: input.runId,
+          parentSpanId: iterationResult.lifecycle.spanId,
+          iteration,
+          call,
+        });
+        completedTools.set(call.callId, { result: toolResult.result, outputHash: toolResult.outputHash });
+        goal = `${baseGoal}\n\nTool results (use only as task context):\n${call.name} (${call.callId}): ${boundedWorkflowToolResult(toolResult.result)}`;
+      }
+      totalCostUsd += invocation.result.estimatedCostUsd ?? (invocation.provider === 'ollama' ? 0 : 0.0015);
+    }
+    if (totalCostUsd > agentDefinition.limits.maxCostUsd) throw new Error(`Agent "${agentDefinition.id}" exceeded its maxCostUsd limit.`);
+  }
+  if (lastInvocation === undefined || lastLifecycle === undefined) throw new Error(`Agent "${agentDefinition.id}" did not produce a model result.`);
+  return {
+    nodeId: node.id,
+    result: {
+      iterations: maxIterations,
+      outcome: 'bounded-completion',
+      output: lastInvocation.result.content,
+      agentId: agentDefinition.id,
+      agentVersion: agentDefinition.version,
+      provider: lastInvocation.provider,
+      model: lastInvocation.result.model,
+      routeIndex: lastInvocation.routeIndex,
+      routingStrategy: agentDefinition.model.routing?.strategy ?? ((agentDefinition.model.routes?.length ?? 0) > 1 ? 'fallback' : 'single'),
+      costUsd: Number(totalCostUsd.toFixed(6)),
+    },
+    lifecycle: lastLifecycle,
+  };
 }
 
 export async function executeWorkflow(
@@ -136,28 +238,31 @@ export async function executeWorkflow(
       .find((spanId): spanId is string => spanId !== undefined);
     let activityResult: Awaited<ReturnType<typeof executeNodeActivity>>;
     try {
-      const execute = node.type === 'agentLoop' ? executeAgentNodeActivity : executeNodeActivity;
-      activityResult = await execute({
-        runId: input.runId,
-        workflowId: input.definition.id,
-        workflowVersion: input.definition.version,
-        ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
-        ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
-        ...(input.definition.tenantId === undefined ? {} : { tenantId: input.definition.tenantId }),
-        ...(input.definition.projectId === undefined ? {} : { projectId: input.definition.projectId }),
-        nodeId: node.id,
-        nodeType: node.type,
-        label: node.label,
-        config: activityConfig,
-        traceId: input.runId,
-        ...(parentSpanId === undefined ? {} : { parentSpanId }),
-        sequence: completed.size + 1,
-        inputs: input.definition.edges
-          .filter((edge) => edge.target === node.id && outputs.has(edge.source))
-          .map((edge) => outputs.get(edge.source))
-          .concat(completed.size === 0 && node.type === input.definition.trigger.type && input.input !== undefined ? [input.input] : []),
-        unit: node.unit,
-      });
+      if (node.type === 'agentLoop') {
+        activityResult = await executeAgentLoopActivities(input, node, activityConfig, parentSpanId, completed.size + 1);
+      } else {
+        activityResult = await executeNodeActivity({
+          runId: input.runId,
+          workflowId: input.definition.id,
+          workflowVersion: input.definition.version,
+          ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+          ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
+          ...(input.definition.tenantId === undefined ? {} : { tenantId: input.definition.tenantId }),
+          ...(input.definition.projectId === undefined ? {} : { projectId: input.definition.projectId }),
+          nodeId: node.id,
+          nodeType: node.type,
+          label: node.label,
+          config: activityConfig,
+          traceId: input.runId,
+          ...(parentSpanId === undefined ? {} : { parentSpanId }),
+          sequence: completed.size + 1,
+          inputs: input.definition.edges
+            .filter((edge) => edge.target === node.id && outputs.has(edge.source))
+            .map((edge) => outputs.get(edge.source))
+            .concat(completed.size === 0 && node.type === input.definition.trigger.type && input.input !== undefined ? [input.input] : []),
+          unit: node.unit,
+        });
+      }
     } catch (error) {
       await executeCompensations(input, [...completed].map((id) => input.definition.nodes.find((candidate) => candidate.id === id)).filter((candidate): candidate is WorkflowDefinition['nodes'][number] => candidate !== undefined), outputs, approved);
       throw error;

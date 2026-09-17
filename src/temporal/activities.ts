@@ -230,6 +230,146 @@ export async function executeAgentNodeActivity(input: NodeActivityInput): Promis
   return executeNodeActivity(input);
 }
 
+export interface TemporalAgentIterationInput {
+  runId: string;
+  workflowId?: string;
+  workflowVersion?: number;
+  releaseBundleHash?: string;
+  pinnedAgentVersions?: Record<string, number>;
+  tenantId?: string;
+  projectId?: string;
+  nodeId: string;
+  agent: AgentDefinition;
+  goal: string;
+  traceId: string;
+  parentSpanId?: string;
+  iteration: number;
+  maxIterations: number;
+}
+
+export interface TemporalAgentIterationResult {
+  invocations: Array<{ provider: string; result: OpenAIModelResult; routeIndex: number }>;
+  lifecycle: TemporalActivityLifecycle;
+}
+
+export interface TemporalAgentToolInput {
+  runId: string;
+  workflowId?: string;
+  workflowVersion?: number;
+  releaseBundleHash?: string;
+  pinnedAgentVersions?: Record<string, number>;
+  tenantId?: string;
+  projectId?: string;
+  nodeId: string;
+  agent: AgentDefinition;
+  traceId: string;
+  parentSpanId?: string;
+  iteration: number;
+  call: { callId: string; name: string; arguments: string };
+}
+
+export interface TemporalAgentToolResult {
+  result: unknown;
+  outputHash: string;
+  lifecycle: TemporalActivityLifecycle;
+}
+
+/** Provider-only activity. Model calls are safe to retry; tool calls are not. */
+export async function executeAgentIterationActivity(input: TemporalAgentIterationInput): Promise<TemporalAgentIterationResult> {
+  const startedAt = Date.now();
+  const spanId = createHash('sha256').update(`${input.runId}:agent-iteration:${input.nodeId}:${input.iteration}`).digest('hex').slice(0, 16);
+  const baseLifecycle = {
+    runId: input.runId,
+    ...(input.workflowId === undefined ? {} : { workflowId: input.workflowId }),
+    ...(input.workflowVersion === undefined ? {} : { workflowVersion: input.workflowVersion }),
+    ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+    ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
+    ...(input.tenantId === undefined ? {} : { tenantId: input.tenantId }),
+    ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+    nodeId: input.nodeId,
+    nodeType: 'agent.iteration',
+    agentId: input.agent.id,
+    agentVersion: input.agent.version,
+    unitKind: 'agent' as const,
+    unitVersion: 1,
+    traceId: input.traceId,
+    spanId,
+    ...(input.parentSpanId === undefined ? {} : { parentSpanId: input.parentSpanId }),
+    sequence: input.iteration,
+    attempt: currentActivityAttempt(),
+    idempotencyKey: `${input.runId}:agent-iteration:${input.nodeId}:${input.iteration}`,
+    inputHash: hashPayload({ agentId: input.agent.id, agentVersion: input.agent.version, goal: input.goal }),
+  };
+  await recordLifecycle({ ...baseLifecycle, status: 'started', occurredAt: new Date(startedAt).toISOString() });
+  try {
+    const invocations = await invokeTemporalRoutes(input.agent, input.goal, currentActivityCancellationSignal() ?? new AbortController().signal, input.traceId);
+    const lifecycle: TemporalActivityLifecycle = {
+      ...baseLifecycle,
+      status: 'succeeded',
+      occurredAt: new Date().toISOString(),
+      durationMs: Date.now() - startedAt,
+      outputHash: hashPayload(invocations.map((invocation) => ({ provider: invocation.provider, result: invocation.result, routeIndex: invocation.routeIndex }))),
+    };
+    await recordLifecycle(lifecycle);
+    return { invocations, lifecycle };
+  } catch (error) {
+    await recordLifecycle({ ...baseLifecycle, status: 'failed', occurredAt: new Date().toISOString(), durationMs: Date.now() - startedAt, error: error instanceof Error ? error.message.slice(0, 2_000) : 'Temporal agent iteration failed.' });
+    throw error;
+  }
+}
+
+/**
+ * Per-call activity boundary. The workflow proxy config sets maximumAttempts=1
+ * for this activity so a worker interruption after a side effect fails closed.
+ */
+export async function executeAgentToolActivity(input: TemporalAgentToolInput): Promise<TemporalAgentToolResult> {
+  if (!input.agent.tools.includes(input.call.name)) throw new Error(`Agent "${input.agent.id}" requested undeclared tool "${input.call.name}".`);
+  const executor = temporalToolExecutors.get(input.call.name);
+  if (executor === undefined) throw new Error(`No Temporal executor registered for declared tool "${input.call.name}".`);
+  let parsedArguments: unknown;
+  try {
+    parsedArguments = JSON.parse(input.call.arguments) as unknown;
+  } catch {
+    throw new Error(`Tool "${input.call.name}" returned invalid JSON arguments.`);
+  }
+  const startedAt = Date.now();
+  const nodeId = `${input.nodeId}:tool:${input.call.callId}`;
+  const idempotencyKey = `${input.runId}:agent-tool:${input.nodeId}:${input.call.callId}`;
+  const baseLifecycle = {
+    runId: input.runId,
+    ...(input.workflowId === undefined ? {} : { workflowId: input.workflowId }),
+    ...(input.workflowVersion === undefined ? {} : { workflowVersion: input.workflowVersion }),
+    ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+    ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
+    ...(input.tenantId === undefined ? {} : { tenantId: input.tenantId }),
+    ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+    nodeId,
+    nodeType: 'agent.tool',
+    agentId: input.agent.id,
+    agentVersion: input.agent.version,
+    unitKind: 'connector' as const,
+    unitVersion: 1,
+    traceId: input.traceId,
+    spanId: createHash('sha256').update(`${idempotencyKey}:span`).digest('hex').slice(0, 16),
+    ...(input.parentSpanId === undefined ? {} : { parentSpanId: input.parentSpanId }),
+    sequence: input.iteration,
+    attempt: currentActivityAttempt(),
+    idempotencyKey,
+    inputHash: hashPayload({ name: input.call.name, callId: input.call.callId, arguments: parsedArguments }),
+  };
+  await recordLifecycle({ ...baseLifecycle, status: 'started', occurredAt: new Date(startedAt).toISOString() });
+  try {
+    const result = await executor({ runId: input.runId, nodeId: input.nodeId, agentId: input.agent.id, callId: input.call.callId, name: input.call.name, arguments: parsedArguments, signal: currentActivityCancellationSignal() ?? new AbortController().signal });
+    const outputHash = hashPayload(result);
+    const lifecycle: TemporalActivityLifecycle = { ...baseLifecycle, status: 'succeeded', occurredAt: new Date().toISOString(), durationMs: Date.now() - startedAt, outputHash };
+    await recordLifecycle(lifecycle);
+    return { result: boundedToolResultValue(result), outputHash, lifecycle };
+  } catch (error) {
+    await recordLifecycle({ ...baseLifecycle, status: 'failed', occurredAt: new Date().toISOString(), durationMs: Date.now() - startedAt, error: error instanceof Error ? error.message.slice(0, 2_000) : 'Temporal tool failed.' });
+    throw error;
+  }
+}
+
 /**
  * Temporal's activity context is unavailable when the activity is invoked
  * directly in unit tests or local tooling. Keep that path deterministic while
@@ -292,6 +432,11 @@ function boundedToolResult(value: unknown): string {
     serialized = '[unserializable tool result]';
   }
   return serialized.length <= 8_000 ? serialized : `${serialized.slice(0, 8_000)}…`;
+}
+
+function boundedToolResultValue(value: unknown): unknown {
+  const serialized = boundedToolResult(value);
+  return serialized.length <= 8_000 ? value : serialized;
 }
 
 async function executeNodeImplementation(
