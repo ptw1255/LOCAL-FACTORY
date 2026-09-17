@@ -64,6 +64,34 @@ test.describe('Observe and Deployments', () => {
     await expect(page.getByRole('tab', { name: 'Metrics' })).toHaveAttribute('aria-selected', 'true');
   });
 
+  test('opens a completed run with correlated timeline and signal tabs', async ({ page, request }) => {
+    const workflowResponse = await request.get('/api/workflows/workflow-agent-intake');
+    expect(workflowResponse.ok()).toBeTruthy();
+    const workflow = await workflowResponse.json() as Record<string, any>;
+    workflow.agents = [];
+    workflow.nodes = workflow.nodes.filter((node: { type: string }) => ['manualTrigger', 'output'].includes(node.type));
+    workflow.edges = [{ id: 'e-trigger-output', source: 'trigger', target: 'output' }];
+    const saved = await request.put('/api/workflows/workflow-agent-intake', { data: workflow });
+    expect(saved.ok()).toBeTruthy();
+
+    const started = await request.post('/api/workflows/workflow-agent-intake/runs', {
+      data: { environment: 'local', input: { request: 'Observe browser fixture' } },
+    });
+    expect(started.ok()).toBeTruthy();
+    const run = await started.json() as { id: string };
+    await expect.poll(async () => {
+      const response = await request.get(`/api/runs/${run.id}`);
+      return (await response.json() as { status: string }).status;
+    }, { timeout: 10_000 }).toBe('succeeded');
+
+    await page.goto(`/#/observe?runId=${encodeURIComponent(run.id)}`);
+    await expect(page.getByRole('heading', { name: 'Observe' })).toBeVisible();
+    await expect(page.getByText('Event timeline', { exact: true })).toBeVisible();
+    await expect(page.locator('.run-trace-reference')).toBeVisible();
+    await page.getByRole('tab', { name: 'Logs' }).click();
+    await expect(page.getByRole('tab', { name: 'Logs' })).toHaveAttribute('aria-selected', 'true');
+  });
+
   test('shows the operational deployment card, filters, and safe actions', async ({ page, request }) => {
     const migration = await request.post('/api/projects/project-local/migrate', { data: { dryRun: false } });
     expect(migration.ok()).toBeTruthy();
@@ -95,7 +123,8 @@ test.describe('Observe and Deployments', () => {
 
     await page.goto('/#/deployments');
     const refreshedCard = page.locator('article.connection-card').first();
-    const source = refreshedCard.getByRole('button', { name: 'workflows/workflow-agent-intake.workflow.yaml' });
+    await expect(refreshedCard).toBeVisible();
+    const source = refreshedCard.getByTitle('Open workflows/workflow-agent-intake.workflow.yaml');
     await source.click();
     await expect(page).toHaveURL(/#\/studio$/);
     await expect(page.getByRole('heading', { name: 'Project definition' })).toBeVisible();
