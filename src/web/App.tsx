@@ -1294,6 +1294,7 @@ function OperationalTree({
   const [files, setFiles] = useState<ProjectFileRecord[]>([]);
   const [directories, setDirectories] = useState<string[]>([]);
   const [selectedPath, setSelectedPath] = useState(() => readStudioFile(projectId));
+  const [openPaths, setOpenPaths] = useState<string[]>(() => [readStudioFile(projectId)]);
   const [fileSearch, setFileSearch] = useState('');
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
   const [treeSearch, setTreeSearch] = useState('');
@@ -1369,6 +1370,7 @@ function OperationalTree({
   async function selectFile(file: ProjectFileRecord) {
     if (dirty && selectedPath !== file.path && !window.confirm('Discard unsaved changes in the current file?')) return;
     setSelectedPath(file.path);
+    setOpenPaths((current) => current.includes(file.path) ? current : [...current, file.path]);
     window.sessionStorage.setItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`, file.path);
     try {
       const loaded = await api.projectFile(projectId, file.path);
@@ -1386,6 +1388,18 @@ function OperationalTree({
       }
     } catch (loadError) {
       setError(errorText(loadError));
+    }
+  }
+
+  function closeTab(filePath: string): void {
+    if (filePath === selectedPath && dirty && !window.confirm('Discard unsaved changes in the current file?')) return;
+    if (filePath === selectedPath && dirty) onDirtyChange(false);
+    const remaining = openPaths.filter((path) => path !== filePath);
+    if (remaining.length === 0) return;
+    setOpenPaths(remaining);
+    if (filePath === selectedPath) {
+      const next = files.find((file) => file.path === remaining.at(-1));
+      if (next !== undefined) void selectFile(next);
     }
   }
 
@@ -1568,7 +1582,7 @@ function OperationalTree({
         <div className="ide-explorer-footer"><span className="system-dot" /> Git-backed definition</div>
       </aside>
       <section className="yaml-panel ide-editor">
-        <div className="ide-tab-bar"><span className="ide-tab active"><Icon name="code" size={13} /> {selectedPath} {dirty ? <span className="ide-tab-dot" /> : null}</span><span className="ide-branch">factory.agentic/v1</span></div>
+        <div className="ide-tab-bar"><div className="ide-tabs" role="tablist" aria-label="Open files">{openPaths.map((filePath) => <span className={`ide-tab ${selectedPath === filePath ? 'active' : ''}`} key={filePath}><button aria-selected={selectedPath === filePath} onClick={() => { const file = files.find((candidate) => candidate.path === filePath); if (file !== undefined) void selectFile(file); }} role="tab" type="button"><Icon name={filePath.includes('agent') ? 'agent' : 'code'} size={13} /> {filePath}{selectedPath === filePath && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>{openPaths.length > 1 ? <button aria-label={`Close ${filePath}`} className="ide-tab-close" onClick={() => closeTab(filePath)} type="button">×</button> : null}</span>)}</div><span className="ide-branch">factory.agentic/v1</span></div>
         <div className="ide-editor-heading"><div><span className="eyebrow">Declarative source</span><h2>Project definition</h2><p>Author the loop in YAML. Apply compiles it into the runtime model.</p></div><div className="ide-editor-actions"><span className={dirty ? 'ide-dirty' : 'ide-clean'}>{dirty ? 'Unsaved changes' : 'Synced'}</span><button className="button ghost" onClick={() => void formatSource()} type="button"><Icon name="code" size={14} /> Format</button><button className="button primary" disabled={!dirty || busy} onClick={() => void applyYaml()} type="button"><Icon name="save" size={14} /> {busy ? 'Applying…' : 'Apply YAML'}</button><button className="icon-button" onClick={onCanvas} title="Open canvas compatibility view" type="button"><Icon name="studio" size={15} /></button></div></div>
         <div className="yaml-editor-wrap"><Editor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => { setProblems([]); setError(null); onSourceChange(value ?? ''); }} onMount={(editor, monaco) => { editorRef.current = editor; monacoRef.current = monaco; editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { void saveShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF, () => { void formatShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { validateShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => { runShortcutRef.current(); }); }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} /></div>
         {error === null ? <small className="ide-hint">Review the compiled tree on the right, then apply the file when it is ready. Invalid definitions never replace the active runtime. Shortcuts: Cmd/Ctrl+S apply · Shift+Alt+F format · Cmd/Ctrl+Enter validate · Cmd/Ctrl+Shift+Enter run.</small> : <div className="ide-error"><Icon name="warning" size={14} /> {error}</div>}
