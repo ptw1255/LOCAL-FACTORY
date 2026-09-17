@@ -59,6 +59,10 @@ jobs:
         run: npm run check:bundle
       - name: Coding workflow integration gate
         run: npm run test:coding-workflow
+      - name: Container sandbox smoke gate
+        run: |
+          docker pull node:22-bookworm-slim
+          DOCKER_CHECK_SMOKE=1 npm test -- --run src/repository/workspace.test.ts
 
   image-budget:
     runs-on: ubuntu-latest

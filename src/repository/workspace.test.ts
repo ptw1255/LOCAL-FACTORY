@@ -61,6 +61,15 @@ describe('RepositoryWorkspace', () => {
     expect(() => parseRepositoryCheckSandbox({ mode: 'container', image: 'docker.io/library/node:latest;rm' })).toThrow(/image/);
   });
 
+  it.skipIf(process.env.DOCKER_CHECK_SMOKE !== '1')('executes an allow-listed check inside the real container boundary', async () => {
+    const workspace = await RepositoryWorkspace.open(process.cwd());
+    const result = await workspace.runCheck('npm run typecheck', 120_000, undefined, {
+      sandbox: { mode: 'container', image: 'node:22-bookworm-slim', memoryMb: 512, cpus: 1, pidsLimit: 256 },
+    });
+    expect(result).toMatchObject({ exitCode: 0, timedOut: false, sandbox: { mode: 'container', network: 'none', image: 'node:22-bookworm-slim' } });
+    expect(result.output).not.toContain('DOCKER_CHECK_SMOKE');
+  });
+
   it('normalizes a timed-out allow-listed check', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-check-timeout-'));
     await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node -e "setTimeout(() => {}, 1000)"' } }));
