@@ -95,7 +95,7 @@ export class DeploymentReconciler {
       if (!isProtectedEnvironment(deployment.environment)) throw new Error('Deployment approval is only required for protected environments.');
       const artifact = this.findArtifact(state.artifacts, input.artifactId, scope);
       if (artifact === undefined || !artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)) throw new Error('Deployment artifact is not available for this workflow.');
-      this.requireSuccessfulPromotionEvidence(state, deployment, scope, input.runId);
+      this.requireSuccessfulPromotionEvidence(state, deployment, scope, input.runId, input.artifactId);
       const existing = state.deploymentApprovals.find((approval) => approval.deploymentId === id && approval.artifactId === input.artifactId && approval.runId === input.runId && approval.decision === 'pending');
       if (existing !== undefined) return existing;
       const requestedAt = new Date().toISOString();
@@ -364,7 +364,7 @@ export class DeploymentReconciler {
     artifactId: string,
     approvalId: string | undefined,
   ): void {
-    this.requireSuccessfulPromotionEvidence(state, deployment, scope, runId);
+    this.requireSuccessfulPromotionEvidence(state, deployment, scope, runId, artifactId);
     const approval = approvalId === undefined ? undefined : state.deploymentApprovals.find((candidate) => candidate.id === approvalId && candidate.deploymentId === deployment.id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
     if (approval === undefined || approval.decision !== 'approved' || approval.artifactId !== artifactId || approval.runId !== runId || approval.bindingHash !== deploymentApprovalBindingHash(deployment.id, artifactId, runId ?? '')) {
       throw new Error('Protected deployment requires an approved deployment approval bound to the selected artifact and run.');
@@ -376,13 +376,14 @@ export class DeploymentReconciler {
     deployment: DeploymentRecord,
     scope: DeploymentScope,
     runId: string | undefined,
+    artifactId: string,
   ): void {
     if (runId === undefined || runId.trim() === '') {
       throw new Error('Protected deployment environments require a successful coding-workflow run.');
     }
     const run = state.runs.find((candidate) => candidate.id === runId && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
-    if (run === undefined || run.workflowId !== deployment.workflowId || run.status !== 'succeeded') {
-      throw new Error('Protected deployment requires a succeeded run for the selected workflow.');
+    if (run === undefined || run.workflowId !== deployment.workflowId || run.status !== 'succeeded' || run.artifactId !== artifactId) {
+      throw new Error('Protected deployment requires a succeeded run for the selected workflow and artifact.');
     }
     const runEvidence = state.evidence.filter((entry) => entry.runId === runId);
     const hasReviewablePatch = runEvidence.some((entry) => entry.status === 'succeeded' && (entry.operation === 'repositoryPatch' || entry.operation === 'repositoryMutation'));
