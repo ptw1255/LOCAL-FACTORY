@@ -289,6 +289,8 @@ export interface EvaluationDatasetRecord {
   tenantId: string;
   projectId: string;
   name: string;
+  version: number;
+  labels: string[];
   description?: string;
   createdAt: string;
   cases: EvaluationDatasetCase[];

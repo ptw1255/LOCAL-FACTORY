@@ -106,6 +106,8 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
   }
   for (const dataset of state.evaluationDatasets) {
     dataset.cases ??= [];
+    dataset.version ??= 1;
+    dataset.labels ??= [];
   }
   return state;
 }
