@@ -94,6 +94,12 @@ export function validateWorkflow(input: unknown): ValidationResult {
         nodeId: node.id,
       });
     }
+    const compensation = node.unit?.compensation;
+    if (compensation !== undefined) {
+      if (!knownNodeTypes.has(compensation.nodeType)) {
+        issues.push({ level: 'error', code: 'unit.compensation.unknown', message: `Compensation node type "${compensation.nodeType}" is not registered.`, nodeId: node.id });
+      }
+    }
 
     if (!knownNodeTypes.has(node.type)) {
       issues.push({

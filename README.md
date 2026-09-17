@@ -430,6 +430,30 @@ input containing only provider configuration and Vault references. Provider
 failures, unsupported capabilities, and undeclared tools fail closed without
 exposing credentials.
 
+Side-effecting WorkUnits may declare a deterministic compensation unit in their
+envelope. If a later Temporal activity fails, completed units are compensated in
+reverse order; each compensation gets its own stable node ID and idempotency key.
+Set `requiresApproval: true` in the compensation config to pause for the normal
+approval signal before the compensating activity runs:
+
+```yaml
+unit:
+  kind: connector
+  version: 1
+  inputSchema: any
+  outputSchema: any
+  timeoutMs: 60000
+  retryAttempts: 1
+  idempotencyKey: repository-mutation:v1
+  compensation:
+    nodeType: repositoryMutation
+    idempotencyKey: repository-mutation:compensate:v1
+    config:
+      capabilities: [repository.write]
+      requiresApproval: true
+      operations: []
+```
+
 PostgreSQL stores workflow and run control-plane state in `platform_state` and keeps
 runtime logs, traces, and metrics in the indexed `observability_events` table. Legacy
 JSON state events are moved into that table automatically on first startup. Runtime
