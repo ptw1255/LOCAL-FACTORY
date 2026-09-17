@@ -5,7 +5,96 @@ import type {
   SourceDiagnostic,
   WorkflowDefinition,
   WorkflowNode,
+  ViewId,
 } from './types';
+import type { IconName } from './icons';
+
+export const STUDIO_MODE_STORAGE_PREFIX = 'factory.studioMode.';
+export const BOTTOM_PANEL_STORAGE_PREFIX = 'factory.bottomPanel.';
+export const BOTTOM_PANEL_HEIGHT_STORAGE_PREFIX = 'factory.bottomPanelHeight.';
+export const STUDIO_FILE_STORAGE_PREFIX = 'factory.studioFile.';
+export const STUDIO_TABS_STORAGE_PREFIX = 'factory.studioTabs.';
+export const EXPLORER_WIDTH_STORAGE_PREFIX = 'factory.explorerWidth.';
+
+export const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName; beta?: boolean }> = {
+  studio: { label: 'Workspace', icon: 'studio' },
+  observe: { label: 'Observe', icon: 'runs' },
+  connections: { label: 'Connections', icon: 'connections' },
+  proposals: { label: 'Agent Proposals', icon: 'agent' },
+  factory: { label: 'Factory', icon: 'factory' },
+  deployments: { label: 'Deployments', icon: 'factory' },
+};
+
+export function readView(): ViewId {
+  const value = window.location.hash.replace('#/', '').split('?', 1)[0] ?? '';
+  if (value === 'runs' || value === 'runtime') return 'observe';
+  if (value === 'workspace') return 'studio';
+  return value in viewLabels ? (value as ViewId) : 'studio';
+}
+
+export function readObserveRunId(): string | null {
+  const hashQuery = window.location.hash.split('?', 2)[1];
+  if (hashQuery === undefined) return null;
+  const runId = new URLSearchParams(hashQuery).get('runId')?.trim();
+  return runId === undefined || runId === '' ? null : runId;
+}
+
+export function readObserveQueryValue(key: string): string | null {
+  const query = window.location.hash.split('?', 2)[1];
+  if (query === undefined) return null;
+  const value = new URLSearchParams(query).get(key)?.trim();
+  return value === undefined || value === '' ? null : value;
+}
+
+export function readStudioMode(projectId: string): 'files' | 'tree' | 'canvas' {
+  const value = window.localStorage.getItem(STUDIO_MODE_STORAGE_PREFIX + projectId);
+  return value === 'tree' || value === 'canvas' ? value : 'files';
+}
+
+export function readStudioFile(projectId: string): string {
+  const query = window.location.hash.split('?', 2)[1];
+  const fromHash = query === undefined ? null : new URLSearchParams(query).get('file');
+  return fromHash?.trim() || window.sessionStorage.getItem(STUDIO_FILE_STORAGE_PREFIX + projectId) || 'project.yaml';
+}
+
+export function readStudioTabs(projectId: string): string[] {
+  const active = readStudioFile(projectId);
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(STUDIO_TABS_STORAGE_PREFIX + projectId) ?? 'null') as unknown;
+    if (Array.isArray(stored)) {
+      const paths = stored.filter((value): value is string => typeof value === 'string' && value.trim() !== '');
+      if (paths.length > 0) return paths.includes(active) ? paths : [...paths, active];
+    }
+  } catch {
+    // Recover with the active file when older or malformed tab state exists.
+  }
+  return [active];
+}
+
+export function readExplorerWidth(projectId: string): number {
+  const parsed = Number(window.localStorage.getItem(EXPLORER_WIDTH_STORAGE_PREFIX + projectId));
+  return Number.isFinite(parsed) ? Math.min(360, Math.max(160, Math.round(parsed))) : 190;
+}
+
+export function readStudioLine(): number | undefined {
+  const query = window.location.hash.split('?', 2)[1];
+  const value = query === undefined ? undefined : Number(new URLSearchParams(query).get('line'));
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+export function readBottomPanelState(projectId: string): { open: boolean; tab: BottomPanelTab } {
+  const value = window.localStorage.getItem(BOTTOM_PANEL_STORAGE_PREFIX + projectId);
+  if (value === null) return { open: true, tab: 'problems' };
+  try {
+    const parsed = JSON.parse(value) as { open?: unknown; tab?: unknown };
+    return { open: parsed.open !== false, tab: parsed.tab === 'output' ? 'output' : 'problems' };
+  } catch { return { open: true, tab: 'problems' }; }
+}
+
+export function readBottomPanelHeight(projectId: string): number {
+  const parsed = Number(window.localStorage.getItem(BOTTOM_PANEL_HEIGHT_STORAGE_PREFIX + projectId));
+  return Number.isFinite(parsed) ? clampBottomPanelHeight(parsed) : 240;
+}
 
 export type ObserveTab = 'runs' | 'logs' | 'traces' | 'metrics';
 export type BottomPanelTab = 'problems' | 'output';
