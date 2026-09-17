@@ -1165,6 +1165,21 @@ export class LocalWorkflowExecutor {
         if (declaredRoutes.length === 0) return undefined;
         throw new Error(`Agent "${agent.id}" provider route ${index + 1} is missing a provider.`);
       }
+      const allowedConnections = agent.boundaries.allowedConnections.map((connection) => connection.trim().toLowerCase()).filter(Boolean);
+      if (allowedConnections.length > 0 && !allowedConnections.includes(provider)) {
+        await this.events.emit(runId, 'agent.connection.denied', `Agent ${agent.id} is not authorized to use the ${provider} connection.`, {
+          nodeId,
+          signal: 'log',
+          severityText: 'WARN',
+          attributes: {
+            'agent.id': agent.id,
+            'agent.version': agent.version,
+            'connection.provider': provider,
+            'connection.policy': 'allowedConnections',
+          },
+        });
+        throw new Error(`Agent "${agent.id}" is not authorized to use the "${provider}" connection.`);
+      }
       let result: OpenAIModelResult | OllamaModelResult;
       const registered = this.providerClients.get(provider);
       const requiredCapabilities = routeAgent.model.capabilities ?? [];
