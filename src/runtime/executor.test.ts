@@ -790,6 +790,25 @@ describe('LocalWorkflowExecutor', () => {
     expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.error).toContain('undeclared tool');
   });
 
+  it('enforces agent connection boundaries before invoking a provider', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agent === undefined || agentNode === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider: 'openai', model: 'gpt-5' };
+    agent.boundaries.allowedConnections = ['gemini'];
+    agentNode.config.maxIterations = 1;
+    let providerCalls = 0;
+    const openai = { chat: async () => { providerCalls += 1; return { content: 'should not run', model: 'gpt-5' }; } };
+    const connectionExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, openai);
+    const run = await connectionExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    expect(providerCalls).toBe(0);
+    const recorded = await events.list(run.id);
+    expect(recorded.some((event) => event.type === 'agent.connection.denied' && event.attributes?.['connection.provider'] === 'openai')).toBe(true);
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.error).toContain('not authorized');
+  });
+
   it('does not execute nodes unreachable from the declared trigger', async () => {
     const workflow = structuredClone(seedWorkflow);
     workflow.nodes.push({
