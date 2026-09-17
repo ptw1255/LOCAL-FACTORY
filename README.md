@@ -292,6 +292,10 @@ work (`POST /api/evaluation-datasets` with `{ "name": "...", "reportIds": [...] 
 Dataset cases reference reports and run/version provenance; prompts, outputs, and
 secrets are never copied into the dataset. List or inspect datasets with
 `GET /api/evaluation-datasets` and `GET /api/evaluation-datasets/:id`.
+Evaluate a dataset with `POST /api/evaluation-datasets/:id/evaluate` and a
+`threshold` between 0 and 1. The payload-free aggregate (pass rate, status counts,
+threshold, and promotion decision) is retained as `lastEvaluation` so Observe and
+deployment gates can inspect the most recent result after a restart.
 
 Workflows can also score an upstream value inline with the deterministic `evaluator`
 node. Supported modes are `equals`, `contains`, `fieldEquals`, `numericGte`, and
@@ -363,10 +367,13 @@ non-blocking for workflow execution but are therefore visible to operators.
 
 Deployments to `production`, `prod`, `preprod`, or `staging` are promotion-gated:
 the action must reference a succeeded run for the same workflow that has both a
-reviewable repository patch and a passing `repositoryCi` evidence record. The
-deployment stores that verified run ID and continues to record its release artifact,
-health, and transition history. Local environments remain available for adapter and
-UI development without this promotion gate.
+reviewable repository patch and a passing `repositoryCi` evidence record, plus a
+separate approval bound to the exact deployment, artifact, and run. Request and
+decide approvals with `POST /api/deployments/:id/approval`; list them with
+`GET /api/deployment-approvals`. Approval records expire and cannot be reused for
+another artifact or run. The deployment stores its verified run ID and continues
+to record its release artifact, health, and transition history. Local environments
+remain available for adapter and UI development without this promotion gate.
 
 ### Tenants and projects
 
