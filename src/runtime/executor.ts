@@ -1295,19 +1295,8 @@ export class LocalWorkflowExecutor {
     };
 
     if (strategy === 'ensemble') {
-      if (Object.keys(agent.outputSchema).length > 0) {
-        await this.events.emit(runId, 'llm.ensemble.rejected', 'Structured-output ensembles are not supported; use a single or fallback route.', {
-          nodeId,
-          signal: 'log',
-          severityText: 'WARN',
-          attributes: {
-            'llm.route.strategy': strategy,
-            'llm.ensemble.policy': 'structured-output-rejected',
-          },
-        });
-        throw new Error('Ensemble routing does not support structured outputs; use a single or fallback route.');
-      }
-      const results: Array<{ provider: string; result: OpenAIModelResult | OllamaModelResult; adapterVersion?: string }> = [];
+      const structured = Object.keys(agent.outputSchema).length > 0;
+      const results: Array<{ provider: string; result: OpenAIModelResult | OllamaModelResult; adapterVersion?: string; parsed?: unknown }> = [];
       let lastError: unknown;
       for (let index = 0; index < maxAttempts; index += 1) {
         try {
@@ -1316,7 +1305,17 @@ export class LocalWorkflowExecutor {
           if ('toolCalls' in result.result && Array.isArray(result.result.toolCalls) && result.result.toolCalls.length > 0) {
             throw new Error('Ensemble routing does not support tool calls because they could duplicate side effects.');
           }
-          results.push(result);
+          if (structured) {
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(result.result.content) as unknown;
+            } catch {
+              throw new Error(`Model ensemble route ${result.provider} returned invalid structured output.`);
+            }
+            results.push({ ...result, parsed });
+          } else {
+            results.push(result);
+          }
           await emitRouteSelected({ provider: result.provider, index });
         } catch (error) {
           lastError = error;
@@ -1342,9 +1341,28 @@ export class LocalWorkflowExecutor {
         const values = results.map((entry) => selector(entry.result)).filter((value): value is number => value !== undefined);
         return values.length === 0 ? undefined : values.reduce((total, value) => total + value, 0);
       };
+      let consensusCount: number | undefined;
+      const aggregateContent = structured
+        ? (() => {
+            const candidates = results
+              .filter((entry): entry is typeof entry & { parsed: unknown } => entry.parsed !== undefined)
+              .map((entry, index) => ({ entry, index, key: stableValue(entry.parsed) }));
+            const counts = new Map<string, { count: number; firstIndex: number; value: unknown }>();
+            for (const candidate of candidates) {
+              const existing = counts.get(candidate.key);
+              counts.set(candidate.key, existing === undefined
+                ? { count: 1, firstIndex: candidate.index, value: candidate.entry.parsed }
+                : { ...existing, count: existing.count + 1 });
+            }
+            const winner = [...counts.values()].sort((left, right) => right.count - left.count || left.firstIndex - right.firstIndex)[0];
+            if (winner === undefined) throw new Error(`Agent "${agent.id}" did not produce valid structured ensemble output.`);
+            consensusCount = winner.count;
+            return JSON.stringify(winner.value);
+          })()
+        : results.map((entry) => `[${entry.provider}]\n${entry.result.content}`).join('\n\n');
       const aggregate: OpenAIModelResult | OllamaModelResult = {
         ...first.result,
-        content: results.map((entry) => `[${entry.provider}]\n${entry.result.content}`).join('\n\n'),
+        content: aggregateContent,
         model: results.map((entry) => entry.result.model).join(' + '),
         ...(sum((result) => result.promptTokens) === undefined ? {} : { promptTokens: sum((result) => result.promptTokens) }),
         ...(sum((result) => result.completionTokens) === undefined ? {} : { completionTokens: sum((result) => result.completionTokens) }),
@@ -1352,6 +1370,12 @@ export class LocalWorkflowExecutor {
           ? { estimatedCostUsd: sum((result) => 'estimatedCostUsd' in result ? result.estimatedCostUsd : undefined) }
           : {}),
       };
+      if (structured && consensusCount !== undefined) await this.events.emit(runId, 'llm.ensemble.consensus', `Structured ensemble reached a ${consensusCount}/${results.length} consensus.`, {
+        nodeId,
+        signal: 'metric',
+        spanKind: 'llm',
+        attributes: { 'llm.route.strategy': strategy, 'llm.ensemble.candidate_count': results.length, 'llm.ensemble.consensus_count': consensusCount },
+      });
       return { provider: 'ensemble', result: aggregate, routeIndex: -1, routingStrategy: strategy };
     }
 
