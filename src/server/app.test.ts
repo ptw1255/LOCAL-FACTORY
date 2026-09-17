@@ -69,6 +69,24 @@ describe('platform API', () => {
     );
   });
 
+  it('surfaces configured telemetry exporter health without exposing exporter internals', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-health-'));
+    const healthApp = await createApp({
+      store: new JsonStore(path.join(directory, 'state.json')),
+      serveStatic: false,
+      telemetryExporter: {
+        export: async () => undefined,
+        health: () => ({ status: 'degraded', failureCount: 2, lastErrorAt: '2026-01-01T00:00:00.000Z' }),
+      },
+    });
+    try {
+      const response = await healthApp.inject({ method: 'GET', url: '/api/health' });
+      expect(response.json<{ observability: { otlpExportEnabled: boolean; exporterHealth: { status: string; failureCount: number } | null } }>().observability).toEqual(expect.objectContaining({ otlpExportEnabled: true, exporterHealth: { status: 'degraded', failureCount: 2, lastErrorAt: '2026-01-01T00:00:00.000Z' } }));
+    } finally {
+      await healthApp.close();
+    }
+  });
+
   it('selects the Temporal execution plane only when explicitly configured', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-api-'));
     const temporalStore = new JsonStore(path.join(directory, 'state.json'));
