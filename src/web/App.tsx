@@ -60,6 +60,7 @@ const PROJECT_STORAGE_KEY = 'factory.projectId';
 const STUDIO_MODE_STORAGE_PREFIX = 'factory.studioMode.';
 const BOTTOM_PANEL_STORAGE_PREFIX = 'factory.bottomPanel.';
 const STUDIO_FILE_STORAGE_PREFIX = 'factory.studioFile.';
+const STUDIO_TABS_STORAGE_PREFIX = 'factory.studioTabs.';
 
 const nodeTypes = { workflow: WorkflowNodeCard };
 const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName }> = {
@@ -98,6 +99,20 @@ function readStudioFile(projectId: string): string {
   const query = window.location.hash.split('?', 2)[1];
   const fromHash = query === undefined ? null : new URLSearchParams(query).get('file');
   return fromHash?.trim() || window.sessionStorage.getItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`) || 'project.yaml';
+}
+
+function readStudioTabs(projectId: string): string[] {
+  const active = readStudioFile(projectId);
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(`${STUDIO_TABS_STORAGE_PREFIX}${projectId}`) ?? 'null') as unknown;
+    if (Array.isArray(stored)) {
+      const paths = stored.filter((value): value is string => typeof value === 'string' && value.trim() !== '');
+      if (paths.length > 0) return paths.includes(active) ? paths : [...paths, active];
+    }
+  } catch {
+    // Recover with the active file when older or malformed tab state exists.
+  }
+  return [active];
 }
 
 function readStudioLine(): number | undefined {
@@ -1294,7 +1309,7 @@ function OperationalTree({
   const [files, setFiles] = useState<ProjectFileRecord[]>([]);
   const [directories, setDirectories] = useState<string[]>([]);
   const [selectedPath, setSelectedPath] = useState(() => readStudioFile(projectId));
-  const [openPaths, setOpenPaths] = useState<string[]>(() => [readStudioFile(projectId)]);
+  const [openPaths, setOpenPaths] = useState<string[]>(() => readStudioTabs(projectId));
   const [fileSearch, setFileSearch] = useState('');
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(() => new Set());
   const [treeSearch, setTreeSearch] = useState('');
@@ -1316,6 +1331,10 @@ function OperationalTree({
   useEffect(() => {
     window.localStorage.setItem(`${BOTTOM_PANEL_STORAGE_PREFIX}${projectId}`, JSON.stringify({ open: bottomOpen, tab: bottomTab }));
   }, [bottomOpen, bottomTab, projectId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(`${STUDIO_TABS_STORAGE_PREFIX}${projectId}`, JSON.stringify(openPaths));
+  }, [openPaths, projectId]);
 
   useEffect(() => {
     void api.projectFiles(projectId, fileSearch).then((response) => {
