@@ -389,6 +389,10 @@ export function sourceSyntaxDiagnostics(source: string, path: string, parseError
   });
 }
 
+export function sourceNodeForLine(workflow: WorkflowDefinition, path: string, line: number): WorkflowNode | undefined {
+  return workflow.nodes.find((node) => (node.sourcePath ?? `workflows/${workflow.id}.workflow.yaml`) === path && node.sourceLine === line);
+}
+
 export function clampBottomPanelHeight(value: number): number {
   return Math.min(640, Math.max(120, Math.round(value)));
 }
@@ -1776,6 +1780,11 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
         projectId={projectId}
         runStarted={runStarted}
         sourceSelection={sourceSelection}
+        onSourceNodeSelect={(nodeId) => {
+          setSelectedNodeId(nodeId);
+          setSelectedEdgeId(null);
+          setNodes((current) => current.map((node) => ({ ...node, selected: node.id === nodeId })));
+        }}
         source={yamlSource}
         workflow={workflow}
       />}
@@ -1805,6 +1814,7 @@ function OperationalTree({
   onRegisterSave,
   runStarted,
   sourceSelection,
+  onSourceNodeSelect,
 }: {
   workflow: WorkflowDefinition;
   source: string;
@@ -1827,6 +1837,7 @@ function OperationalTree({
   onRegisterSave: (save: () => Promise<boolean>) => void;
   runStarted: RunRecord | null;
   sourceSelection: SourceSelection | null;
+  onSourceNodeSelect: (nodeId: string) => void;
 }) {
   const agentById = new Map(workflow.agents.map((agent) => [agent.id, agent]));
   const [busy, setBusy] = useState(false);
@@ -1856,6 +1867,7 @@ function OperationalTree({
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
   const sourceSelectionDecorations = useRef<string[]>([]);
+  const sourceCursorListener = useRef<Monaco.IDisposable | null>(null);
   const saveShortcutRef = useRef<() => Promise<boolean>>(async () => false);
   const formatShortcutRef = useRef<() => Promise<void>>(async () => undefined);
   const validateShortcutRef = useRef(onValidate);
@@ -1874,6 +1886,7 @@ function OperationalTree({
 
   useEffect(() => () => {
     if (syntaxCheckTimer.current !== undefined) window.clearTimeout(syntaxCheckTimer.current);
+    sourceCursorListener.current?.dispose();
     // Invalidate an already-fired dynamic import as well as a pending timer.
     // Otherwise a route/project change can let a stale parser promise update
     // the next Workspace instance after this one has unmounted.
@@ -2418,7 +2431,7 @@ function OperationalTree({
       <section className="yaml-panel ide-editor">
         <div className="ide-tab-bar"><div className="ide-tabs" role="tablist" aria-label="Open files">{openPaths.map((filePath) => <span className={`ide-tab ${selectedPath === filePath ? 'active' : ''}`} draggable key={filePath} onDragEnd={() => { draggedTab.current = null; }} onDragOver={(event) => event.preventDefault()} onDragStart={() => { draggedTab.current = filePath; }} onDrop={() => { const source = draggedTab.current; draggedTab.current = null; if (source === null || source === filePath) return; setOpenPaths((current) => { const from = current.indexOf(source); const to = current.indexOf(filePath); if (from < 0 || to < 0) return current; const next = [...current]; next.splice(from, 1); next.splice(to, 0, source); return next; }); }}><button aria-selected={selectedPath === filePath} onClick={() => { const file = files.find((candidate) => candidate.path === filePath); if (file !== undefined) void selectFile(file); }} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); moveTab(filePath, event.key === 'ArrowLeft' ? -1 : 1); } }} role="tab" type="button"><Icon name={filePath.includes('agent') ? 'agent' : 'code'} size={13} /> {filePath}{selectedPath === filePath && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>{openPaths.length > 1 ? <button aria-label={`Close ${filePath}`} className="ide-tab-close" onClick={() => closeTab(filePath)} type="button">×</button> : null}</span>)}</div><span className="ide-branch">factory.agentic/v1</span></div>
         <div className="ide-editor-heading"><div><span className="eyebrow">Declarative source</span><h2>Project definition</h2><p>Author the loop in YAML. Apply compiles it into the runtime model.</p></div><div className="ide-editor-actions"><span className={dirty ? 'ide-dirty' : 'ide-clean'}>{dirty ? 'Unsaved changes' : 'Synced'}</span><button aria-pressed={showDiff} className="button ghost" disabled={baselineSource === source && !dirty} onClick={() => setShowDiff((value) => !value)} type="button"><Icon name="code" size={14} /> {showDiff ? 'Editor' : 'Diff'}</button><button className="button ghost" onClick={() => void formatSource()} type="button"><Icon name="code" size={14} /> Format</button><button className="button primary" disabled={!dirty || busy} onClick={() => void applyYaml()} type="button"><Icon name="save" size={14} /> {busy ? 'Applying…' : 'Apply YAML'}</button><button className="icon-button" onClick={onCanvas} title="Open canvas compatibility view" type="button"><Icon name="studio" size={15} /></button></div></div>
-        <div className="yaml-editor-wrap"><Suspense fallback={<div className="editor-loading">Loading editor…</div>}>{showDiff ? <LazyDiffEditor aria-label="Project source diff" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} original={baselineSource} modified={source} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, wordWrap: 'on', readOnly: true, renderSideBySide: true }} theme="vs-dark" /> : <LazyEditor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => { const nextSource = value ?? ''; setProblems([]); setError(null); onSourceChange(nextSource); scheduleSyntaxDiagnostics(nextSource, selectedPath); }} onMount={(editor, monaco) => { registerEditorLanguageProviders(monaco); editorLanguageContext.agentIds = workflow.agents.map((agent) => agent.id); editorLanguageContext.nodeIds = workflow.nodes.map((node) => node.id); editorRef.current = editor; monacoRef.current = monaco; applySourceHighlight(editor, monaco); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { void saveShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF, () => { void formatShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { validateShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter | monaco.KeyMod.Shift, () => { runShortcutRef.current(); }); }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} />}</Suspense></div>
+        <div className="yaml-editor-wrap"><Suspense fallback={<div className="editor-loading">Loading editor…</div>}>{showDiff ? <LazyDiffEditor aria-label="Project source diff" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} original={baselineSource} modified={source} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, wordWrap: 'on', readOnly: true, renderSideBySide: true }} theme="vs-dark" /> : <LazyEditor aria-label="Project source editor" height="100%" language={selectedPath.endsWith('.json') ? 'json' : 'yaml'} onChange={(value) => { const nextSource = value ?? ''; setProblems([]); setError(null); onSourceChange(nextSource); scheduleSyntaxDiagnostics(nextSource, selectedPath); }} onMount={(editor, monaco) => { registerEditorLanguageProviders(monaco); editorLanguageContext.agentIds = workflow.agents.map((agent) => agent.id); editorLanguageContext.nodeIds = workflow.nodes.map((node) => node.id); editorRef.current = editor; monacoRef.current = monaco; applySourceHighlight(editor, monaco); sourceCursorListener.current?.dispose(); sourceCursorListener.current = editor.onDidChangeCursorPosition(({ position }) => { const node = sourceNodeForLine(workflow, selectedPath, position.lineNumber); if (node !== undefined) onSourceNodeSelect(node.id); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => { void saveShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF, () => { void formatShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => { validateShortcutRef.current(); }); editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter | monaco.KeyMod.Shift, () => { runShortcutRef.current(); }); }} options={{ automaticLayout: true, minimap: { enabled: false }, fontSize: 12, tabSize: 2, wordWrap: 'on' }} theme="vs-dark" value={source} />}</Suspense></div>
       {error === null ? <small className="ide-hint">Review the compiled tree on the right, then apply the file when it is ready. Invalid definitions never replace the active runtime. Shortcuts: Cmd/Ctrl+S apply · Shift+Alt+F format · Cmd/Ctrl+Enter validate · Cmd/Ctrl+Shift+Enter run.</small> : <div className="ide-error"><Icon name="warning" size={14} /> {error}</div>}
         {quickOpen ? <div className="quick-open-backdrop" onMouseDown={(event) => { if (event.currentTarget === event.target) setQuickOpen(false); }} role="presentation"><section aria-label="Command palette" aria-modal="true" className="quick-open-dialog" ref={quickOpenDialogRef} role="dialog"><div className="quick-open-input"><Icon name="search" size={14} /><input aria-label="Search commands and files" autoComplete="off" onChange={(event) => setQuickQuery(event.target.value)} placeholder="Search commands or files…" ref={quickOpenInputRef} value={quickQuery} /></div><div className="quick-open-results"><div className="quick-open-heading">Commands</div>{([{ label: 'Apply source', hint: 'Save and compile active file', action: () => void applyYaml() }, { label: 'Validate workflow', hint: 'Run workflow validation', action: onValidate }, { label: 'Run workflow', hint: 'Start a workflow run', action: onRun }, { label: 'Open Observe', hint: 'Inspect runs and telemetry', action: onObserve }, ...(hintDismissed ? [{ label: 'Show workspace guide', hint: 'Reopen the quick-start hint', action: onReopenGuide }] : [])] as const).filter((command) => `${command.label} ${command.hint}`.toLowerCase().includes(quickQuery.trim().toLowerCase())).map((command) => <button className="quick-open-item" key={command.label} onClick={() => { setQuickOpen(false); command.action(); }} type="button"><Icon name="code" size={13} /><span><strong>{command.label}</strong><small>{command.hint}</small></span></button>)}<div className="quick-open-heading">Files</div>{quickMatches.map((file) => <button className="quick-open-item" key={file.path} onClick={() => { setQuickOpen(false); void selectFile(file); }} type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={13} /><span><strong>{file.path}</strong><small>{file.sha256 === '' ? 'Workspace file' : `Updated ${formatDate(file.updatedAt)}`}</small></span></button>)}{quickMatches.length === 0 ? <p className="inline-empty">No matching files.</p> : null}</div><div className="quick-open-footer"><span>Tab focus · Enter run · Esc close</span><kbd>⌘/Ctrl P</kbd></div></section></div> : null}
         <div className={`ide-bottom-panel ${bottomOpen ? 'open' : 'collapsed'}`} style={{ '--bottom-panel-height': `${bottomPanelHeight}px` } as CSSProperties}>

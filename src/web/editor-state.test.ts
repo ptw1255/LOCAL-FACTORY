@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed';
-import { canvasOnlyChangesPresentation, clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
+import { canvasOnlyChangesPresentation, clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceNodeForLine, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
 import type { CanvasNode } from './WorkflowNodeCard';
 
 describe('IDE editor tab state', () => {
@@ -95,6 +95,15 @@ describe('IDE editor tab state', () => {
       code: 'yaml.parse',
       message: 'bad indentation',
     }]);
+  });
+
+  it('maps a source cursor line back to its Canvas node', () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.nodes[0]!.sourcePath = 'workflows/demo.workflow.yaml';
+    workflow.nodes[0]!.sourceLine = 12;
+    expect(sourceNodeForLine(workflow, 'workflows/demo.workflow.yaml', 12)?.id).toBe(workflow.nodes[0]!.id);
+    expect(sourceNodeForLine(workflow, 'workflows/demo.workflow.yaml', 13)).toBeUndefined();
+    expect(sourceNodeForLine(workflow, 'workflows/other.workflow.yaml', 12)).toBeUndefined();
   });
 
   it('creates a shareable Observe URL for a selected run', () => {
