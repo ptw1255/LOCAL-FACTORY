@@ -205,9 +205,11 @@ with `{ "command": "npm test" }` to receive exit code, duration, timeout state, 
 truncated output evidence.
 
 Check processes receive a minimal toolchain environment (PATH, temporary-directory,
-locale, and CI hints); factory credentials and connection configuration are not
-inherited. OS/container network isolation remains a deployment responsibility, so
-run untrusted checks in a worker or container with an explicit network policy.
+locale, and CI hints); factory credentials, proxy settings, and connection
+configuration are not inherited. Allow-listed npm checks also run with offline,
+audit-disabled, and funding-disabled settings to prevent implicit package-manager
+network calls. OS/container network isolation remains a deployment responsibility,
+so run untrusted checks in a worker or container with an explicit network policy.
 
 If GitHub integration is configured with `GITHUB_TOKEN`,
 `GITHUB_REPOSITORY_OWNER`, and `GITHUB_REPOSITORY_NAME`, the bounded

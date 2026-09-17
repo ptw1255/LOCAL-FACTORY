@@ -154,7 +154,9 @@ export class RepositoryWorkspace {
     if (!ALLOWED_CHECKS.has(command)) throw new Error(`Unsupported repository check "${command}".`);
     const started = Date.now();
     try {
-      const result = await execFileAsync(command.split(' ')[0]!, command.split(' ').slice(1), { cwd: this.root, env: isolatedCheckEnvironment(), timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2, ...(signal === undefined ? {} : { signal }) });
+      const [executable, ...args] = command.split(' ');
+      const checkArgs = executable === 'npm' ? ['--offline', ...args] : args;
+      const result = await execFileAsync(executable!, checkArgs, { cwd: this.root, env: isolatedCheckEnvironment(), timeout: timeoutMs, maxBuffer: MAX_OUTPUT * 2, ...(signal === undefined ? {} : { signal }) });
       return { command, exitCode: 0, durationMs: Date.now() - started, output: truncate(`${result.stdout}${result.stderr}`), timedOut: false };
     } catch (error) {
       const failure = error as { code?: number | string; killed?: boolean; stdout?: string; stderr?: string; message?: string };
@@ -365,5 +367,10 @@ function isolatedCheckEnvironment(): NodeJS.ProcessEnv {
       environment[key] = value;
     }
   }
+  // Keep package-manager checks deterministic and avoid implicit audit/funding
+  // requests. Other commands still require an OS/container network boundary.
+  environment.npm_config_offline = 'true';
+  environment.npm_config_audit = 'false';
+  environment.npm_config_fund = 'false';
   return environment;
 }

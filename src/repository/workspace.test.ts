@@ -48,12 +48,12 @@ describe('RepositoryWorkspace', () => {
 
   it('does not expose factory credentials to repository check processes', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-check-environment-'));
-    await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node -e "process.stdout.write(process.env.FACTORY_CHECK_SECRET ?? \'missing\')"' } }));
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { typecheck: 'node -e "process.stdout.write((process.env.FACTORY_CHECK_SECRET ?? \'missing\') + \':\' + (process.env.npm_config_offline ?? \'unset\'))"' } }));
     vi.stubEnv('FACTORY_CHECK_SECRET', 'must-not-leak');
     try {
       const result = await (await RepositoryWorkspace.open(root)).runCheck('npm run typecheck');
       expect(result.exitCode).toBe(0);
-      expect(result.output).toContain('missing');
+      expect(result.output).toContain('missing:true');
       expect(result.output).not.toContain('must-not-leak');
     } finally {
       vi.unstubAllEnvs();
