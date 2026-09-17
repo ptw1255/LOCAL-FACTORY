@@ -25,6 +25,9 @@ import {
 import { api } from './api';
 import {
   clampBottomPanelHeight,
+  BOTTOM_PANEL_HEIGHT_STORAGE_PREFIX,
+  BOTTOM_PANEL_STORAGE_PREFIX,
+  EXPLORER_WIDTH_STORAGE_PREFIX,
   filterProjectItems,
   mergeRecentRuns,
   nextBottomPanelTab,
@@ -34,6 +37,16 @@ import {
   observeRunHash,
   observeScopeHash,
   projectSwitchRequiresConfirmation,
+  readBottomPanelHeight,
+  readBottomPanelState,
+  readExplorerWidth,
+  readObserveQueryValue,
+  readObserveRunId,
+  readStudioFile,
+  readStudioLine,
+  readStudioMode,
+  readStudioTabs,
+  readView,
   recentRunLogs,
   removeOpenPath,
   renameOpenPath,
@@ -41,7 +54,11 @@ import {
   selectWorkflowArtifact,
   sourceNodeForLine,
   sourceSyntaxDiagnostics,
+  STUDIO_FILE_STORAGE_PREFIX,
+  STUDIO_MODE_STORAGE_PREFIX,
+  STUDIO_TABS_STORAGE_PREFIX,
   tryAcquireRunLock,
+  viewLabels,
   type BottomPanelTab,
   type ObserveTab,
 } from './ide-state';
@@ -102,12 +119,6 @@ export type { BottomPanelTab, ObserveTab } from './ide-state';
 
 const TENANT_STORAGE_KEY = 'factory.tenantId';
 const PROJECT_STORAGE_KEY = 'factory.projectId';
-const STUDIO_MODE_STORAGE_PREFIX = 'factory.studioMode.';
-const BOTTOM_PANEL_STORAGE_PREFIX = 'factory.bottomPanel.';
-const BOTTOM_PANEL_HEIGHT_STORAGE_PREFIX = 'factory.bottomPanelHeight.';
-const STUDIO_FILE_STORAGE_PREFIX = 'factory.studioFile.';
-const STUDIO_TABS_STORAGE_PREFIX = 'factory.studioTabs.';
-const EXPLORER_WIDTH_STORAGE_PREFIX = 'factory.explorerWidth.';
 const STUDIO_DIRTY_STORAGE_PREFIX = 'factory.studioDirty.';
 
 const LazyEditor = lazy(async () => {
@@ -215,70 +226,6 @@ function applyCanvasEdgeChanges(changes: EdgeChange<Edge>[], edges: Edge[]): Edg
   }
   return next;
 }
-const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName; beta?: boolean }> = {
-  // Keep the /studio route as a backwards-compatible deep link while exposing
-  // the product surface as Workspace in navigation and copy.
-  studio: { label: 'Workspace', icon: 'studio' },
-  observe: { label: 'Observe', icon: 'runs' },
-  connections: { label: 'Connections', icon: 'connections' },
-  proposals: { label: 'Agent Proposals', icon: 'agent' },
-  factory: { label: 'Factory', icon: 'factory' },
-  deployments: { label: 'Deployments', icon: 'factory' },
-};
-
-function readView(): ViewId {
-  const value = window.location.hash.replace('#/', '').split('?', 1)[0] ?? '';
-  // Preserve saved links from the pre-Observe Runtime route and the newer
-  // Workspace naming while keeping one canonical in-app view.
-  if (value === 'runs' || value === 'runtime') return 'observe';
-  if (value === 'workspace') return 'studio';
-  return value in viewLabels ? (value as ViewId) : 'studio';
-}
-
-function readObserveRunId(): string | null {
-  const hashQuery = window.location.hash.split('?', 2)[1];
-  if (hashQuery === undefined) return null;
-  const runId = new URLSearchParams(hashQuery).get('runId')?.trim();
-  return runId === undefined || runId === '' ? null : runId;
-}
-
-function readObserveQueryValue(key: string): string | null {
-  const query = window.location.hash.split('?', 2)[1];
-  if (query === undefined) return null;
-  const value = new URLSearchParams(query).get(key)?.trim();
-  return value === undefined || value === '' ? null : value;
-}
-
-function readStudioMode(projectId: string): 'files' | 'tree' | 'canvas' {
-  const value = window.localStorage.getItem(`${STUDIO_MODE_STORAGE_PREFIX}${projectId}`);
-  return value === 'tree' || value === 'canvas' ? value : 'files';
-}
-
-function readStudioFile(projectId: string): string {
-  const query = window.location.hash.split('?', 2)[1];
-  const fromHash = query === undefined ? null : new URLSearchParams(query).get('file');
-  return fromHash?.trim() || window.sessionStorage.getItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`) || 'project.yaml';
-}
-
-function readStudioTabs(projectId: string): string[] {
-  const active = readStudioFile(projectId);
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(`${STUDIO_TABS_STORAGE_PREFIX}${projectId}`) ?? 'null') as unknown;
-    if (Array.isArray(stored)) {
-      const paths = stored.filter((value): value is string => typeof value === 'string' && value.trim() !== '');
-      if (paths.length > 0) return paths.includes(active) ? paths : [...paths, active];
-    }
-  } catch {
-    // Recover with the active file when older or malformed tab state exists.
-  }
-  return [active];
-}
-
-function readExplorerWidth(projectId: string): number {
-  const parsed = Number(window.localStorage.getItem(`${EXPLORER_WIDTH_STORAGE_PREFIX}${projectId}`));
-  return Number.isFinite(parsed) ? Math.min(360, Math.max(160, Math.round(parsed))) : 190;
-}
-
 function dialogFocusableElements(dialog: HTMLElement): HTMLElement[] {
   return [...dialog.querySelectorAll<HTMLElement>(
     'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -298,26 +245,6 @@ function trapDialogFocus(event: KeyboardEvent, dialog: HTMLElement): void {
     event.preventDefault();
     focusables[next]?.focus();
   }
-}
-
-function readStudioLine(): number | undefined {
-  const query = window.location.hash.split('?', 2)[1];
-  const value = query === undefined ? undefined : Number(new URLSearchParams(query).get('line'));
-  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : undefined;
-}
-
-function readBottomPanelState(projectId: string): { open: boolean; tab: 'problems' | 'output' } {
-  const value = window.localStorage.getItem(`${BOTTOM_PANEL_STORAGE_PREFIX}${projectId}`);
-  if (value === null) return { open: true, tab: 'problems' };
-  try {
-    const parsed = JSON.parse(value) as { open?: unknown; tab?: unknown };
-    return { open: parsed.open !== false, tab: parsed.tab === 'output' ? 'output' : 'problems' };
-  } catch { return { open: true, tab: 'problems' }; }
-}
-
-function readBottomPanelHeight(projectId: string): number {
-  const parsed = Number(window.localStorage.getItem(`${BOTTOM_PANEL_HEIGHT_STORAGE_PREFIX}${projectId}`));
-  return Number.isFinite(parsed) ? clampBottomPanelHeight(parsed) : 240;
 }
 
 function formatDate(value?: string): string {
