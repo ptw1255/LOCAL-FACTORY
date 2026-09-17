@@ -48,8 +48,8 @@ async function waitFor(url, predicate, timeoutMs = 120_000) {
   throw new Error(`Timed out waiting for ${url}.`);
 }
 
-async function json(url, options = {}) {
-  const response = await fetch(url, { ...options, signal: AbortSignal.timeout(10_000) });
+async function json(url, options = {}, timeoutMs = 10_000) {
+  const response = await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(`${options.method ?? 'GET'} ${url} failed with HTTP ${response.status}: ${JSON.stringify(body).slice(0, 500)}`);
   return body;
@@ -78,7 +78,15 @@ try {
     ],
   };
   await json('http://localhost:3100/api/workflows/workflow-agent-intake', { method: 'PUT', headers: scopeHeaders, body: JSON.stringify(workflow) });
-  const run = await json('http://localhost:3100/api/workflows/workflow-agent-intake/runs', { method: 'POST', headers: scopeHeaders, body: JSON.stringify({ input: { smoke: true } }) });
+  // A newly started Temporal namespace can briefly reject workflow starts while
+  // its cache warms. The executor retries that bounded startup condition, so
+  // this request must allow the retry window instead of applying the ordinary
+  // API-read deadline.
+  const run = await json(
+    'http://localhost:3100/api/workflows/workflow-agent-intake/runs',
+    { method: 'POST', headers: scopeHeaders, body: JSON.stringify({ input: { smoke: true } }) },
+    60_000,
+  );
   await new Promise((resolve) => setTimeout(resolve, 1_500));
   compose('restart', 'temporal-worker');
   await waitFor(`http://localhost:3100/api/runs/${encodeURIComponent(run.id)}`, async (response) => {

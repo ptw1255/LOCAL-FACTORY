@@ -1,4 +1,4 @@
-import type { AgentProposal, ApprovalRecord, ConnectionRecord, DeploymentRecord, FactoryMetrics, ProjectFileRecord, RunEvent, RunRecord, WorkflowDefinition } from '../src/domain/types.js';
+import type { AgentProposal, ApprovalRecord, ConnectionRecord, DeploymentRecord, FactoryMetrics, ProjectFileRecord, ProjectRecord, RunEvent, RunRecord, WorkflowDefinition } from '../src/domain/types.js';
 import { factoryBanner } from './factory-cli.js';
 
 export interface TerminalSnapshot {
@@ -6,6 +6,7 @@ export interface TerminalSnapshot {
   approvals: ApprovalRecord[];
   deployments: DeploymentRecord[];
   workflows?: WorkflowDefinition[];
+  projects?: ProjectRecord[];
   projectId?: string;
   files?: ProjectFileRecord[];
   connections?: ConnectionRecord[];
@@ -13,6 +14,7 @@ export interface TerminalSnapshot {
   metrics?: FactoryMetrics;
   events?: RunEvent[];
   error?: string;
+  notice?: string;
 }
 
 export type TerminalPortalPage = 'home' | 'workspace' | 'workflow' | 'tree' | 'runs' | 'approvals' | 'deployments' | 'connections' | 'proposals' | 'factory' | 'portals' | 'run-detail';
@@ -118,6 +120,7 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
   if (options.clear !== false) lines.push('\u001b[2J\u001b[H');
   lines.push(...renderPortalHeader(state));
   if (snapshot.error !== undefined) lines.push(`${terminalRed}Error:${terminalReset} ${snapshot.error}`, '');
+  if (snapshot.notice !== undefined) lines.push(`${terminalGreen}${snapshot.notice}${terminalReset}`, '');
   if (state.page === 'home') {
     lines.push(`${terminalBlue}FACTORY CONTROL PLANE${terminalReset}`, `${terminalDim}Use ↑/↓ to choose a surface, Enter to open, Esc to return.${terminalReset}`, '');
     const items: Array<[string, string]> = [
@@ -133,19 +136,39 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
     ];
     items.forEach(([label, detail], index) => lines.push(`${selectedMarker(state.cursor === index)} ${label.padEnd(16)} ${terminalDim}${detail}${terminalReset}`));
   } else if (state.page === 'workspace') {
-    lines.push(`${terminalBlue}WORKSPACE${terminalReset} ${terminalDim}· file-backed authoring${terminalReset}`, `${terminalDim}Select a resource file and press Enter or e to edit it in $EDITOR.${terminalReset}`, '');
+    const project = snapshot.projects?.find((candidate) => candidate.id === snapshot.projectId);
+    lines.push(
+      `${terminalBlue}WORKSPACE${terminalReset} ${terminalDim}· file-backed authoring${terminalReset}`,
+      `  active  ${project?.name ?? 'No workspace selected'} ${terminalDim}${snapshot.projectId ?? ''}${terminalReset}`,
+      `${terminalDim}Select a resource file and press Enter or e to edit it in $EDITOR.${terminalReset}`,
+      '',
+    );
     const files = snapshot.files ?? [];
     if (files.length === 0) lines.push('  No project files loaded.');
     files.forEach((file, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(file.path, 64).padEnd(64)} ${terminalDim}${short(file.sha256, 12)}${terminalReset}`));
-    lines.push('', '  Save → compile → artifact is the authoring lifecycle.');
+    lines.push('', `${terminalDim}n new workspace · s switch workspace · w new workflow · v validate/compile${terminalReset}`, '  Save → compile → artifact is the authoring lifecycle.');
   } else if (state.page === 'workflow' || state.page === 'tree') {
-    lines.push(`${terminalPurple}WORKFLOW${terminalReset} ${terminalDim}· executable graph projection${terminalReset}`, `${terminalDim}Enter or e opens the source Workflow envelope; semantic edits belong in YAML.${terminalReset}`, '');
+    const project = snapshot.projects?.find((candidate) => candidate.id === snapshot.projectId);
+    lines.push(
+      `${terminalPurple}WORKFLOW${terminalReset} ${terminalDim}· authoring projection${terminalReset}`,
+      `  workspace  ${project?.name ?? 'No workspace selected'}`,
+      `${terminalDim}The selected graph is compiled from YAML. Enter or e opens its source envelope.${terminalReset}`,
+      '',
+    );
     const workflows = snapshot.workflows ?? [];
     if (workflows.length === 0) lines.push('  No workflows loaded.');
     workflows.forEach((workflow, index) => {
-      lines.push(`${selectedMarker(state.cursor === index)} ${workflow.name} [${workflow.id}]`);
-      workflow.nodes.forEach((node, nodeIndex) => lines.push(`    ${nodeIndex === workflow.nodes.length - 1 ? '└─' : '├─'} ${node.label} · ${node.unit?.kind ?? 'unknown'}`));
+      lines.push(`${selectedMarker(state.cursor === index)} ${workflow.name} [${workflow.id}] v${workflow.version} · ${colorStatus(workflow.status)}`);
+      if (state.cursor !== index) return;
+      const outgoing = new Map<string, string[]>();
+      workflow.edges.forEach((edge) => outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target]));
+      workflow.nodes.forEach((node, nodeIndex) => {
+        const targets = outgoing.get(node.id) ?? [];
+        lines.push(`    ${nodeIndex === workflow.nodes.length - 1 ? '└─' : '├─'} ${node.label} · ${node.type} · ${node.unit?.kind ?? 'unknown'}${targets.length === 0 ? '' : ` → ${targets.join(', ')}`}`);
+      });
+      lines.push(`       source: workflows/${workflow.id}.workflow.yaml`);
     });
+    lines.push('', `${terminalDim}n new workflow · e edit source · v validate/compile · p run selected${terminalReset}`);
   } else if (state.page === 'runs') {
     lines.push(`${terminalBlue}RUNS${terminalReset} ${terminalDim}(${snapshot.runs.length}) · Enter opens timeline${terminalReset}`, '');
     if (snapshot.runs.length === 0) lines.push('  No runs recorded.');

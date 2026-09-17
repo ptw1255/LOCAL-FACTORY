@@ -58,6 +58,8 @@ factory tui                     # interactive monitor (q/a/d/r controls)
 factory dashboard               # quick-launch terminal portals
 factory workspace               # terminal file-backed authoring
 factory workflow                # terminal Workflow graph/source authoring
+factory workspace new "My workspace"
+factory workflow new "My workflow" --project <project-id>
 factory edit workflows/review.workflow.yaml  # edit a local resource with $EDITOR
 factory approve <run-id>        # approve a waiting run
 factory deny <run-id> "reason"  # deny a waiting run
@@ -83,6 +85,22 @@ immediately; invalid edits remain visible as diagnostics and never produce an
 executable artifact. Inside Workflow, the graph is a projection of the selected
 `workflows/*.workflow.yaml` envelope, so semantic edits are made in that source
 file while `canvas/*.canvas.yaml` remains layout-only.
+
+Workspace authoring controls are `n` to create a workspace, `s` to cycle between
+workspaces, `w` to create a starter workflow, and `v` to validate and compile.
+Workflow uses `n` to create another workflow, `e` or Enter to edit its source,
+`v` to validate and compile, and `p` to compile and run the selected workflow.
+The terminal graph shows the selected workflow's nodes, execution kinds, and
+outgoing edges; it is an operational projection rather than a second source of
+truth.
+
+The non-interactive equivalent is:
+
+```bash
+factory workspace new "Code review factory"
+factory workflow new "Review a pull request" --project <project-id-from-the-first-command>
+factory workflow --project <project-id>
+```
 
 ### Control-plane authentication
 

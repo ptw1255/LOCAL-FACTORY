@@ -27,6 +27,9 @@ export function factoryBanner(): string {
 
 export interface FactoryArgs {
   command: FactoryCommand;
+  authoringAction?: 'new';
+  name?: string;
+  projectId?: string;
   resourcePath?: string;
   workflowId?: string;
   service?: string;
@@ -49,18 +52,25 @@ const aliases: Readonly<Record<string, FactoryCommand>> = {
   watch: 'observe',
 };
 
+export function isLifecycleCommand(command: FactoryCommand): command is FactoryLifecycleCommand {
+  return lifecycleCommands.has(command);
+}
+
 export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
   const firstArgument = argv[0]?.toLowerCase();
   const hasCommand = firstArgument !== undefined && !firstArgument.startsWith('-');
   const rawCommand = hasCommand ? firstArgument : 'launch';
   const command = aliases[rawCommand] ?? (rawCommand as FactoryCommand);
   if (command !== 'help' && !lifecycleCommands.has(command) && !resourceCommands.has(command)) {
-    throw new Error(`Unknown command "${rawCommand}". Run "/factory help" for usage.`);
+    throw new Error(`Unknown command "${rawCommand}". Run "factory help" for usage.`);
   }
   if (command === 'help') return { command: 'help', profiles: [], follow: false, once: true, intervalMs: 2_000, web: true, help: true };
   const profiles: string[] = [];
   let resourcePath: string | undefined;
   let workflowId: string | undefined;
+  let authoringAction: 'new' | undefined;
+  let name: string | undefined;
+  let projectId: string | undefined;
   let service: string | undefined;
   let runId: string | undefined;
   let reason: string | undefined;
@@ -103,8 +113,21 @@ export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
       profiles.push(profile);
       continue;
     }
-    if (value.startsWith('-')) throw new Error(`Unknown option "${value}". Run "/factory help" for usage.`);
-    if (resourceCommands.has(command) && resourcePath === undefined) resourcePath = value;
+    if (value === '--project') {
+      projectId = argv[++index]?.trim();
+      if (projectId === undefined || projectId === '') throw new Error('--project requires a project id.');
+      continue;
+    }
+    if (value.startsWith('--project=')) {
+      projectId = value.slice('--project='.length).trim();
+      if (projectId === '') throw new Error('--project requires a project id.');
+      continue;
+    }
+    if (value.startsWith('-')) throw new Error(`Unknown option "${value}". Run "factory help" for usage.`);
+    if ((command === 'workspace' || command === 'workflow') && authoringAction === undefined && value === 'new') authoringAction = 'new';
+    else if (authoringAction === 'new' && name === undefined) name = value;
+    else if (authoringAction === 'new' && name !== undefined) name = `${name} ${value}`;
+    else if (resourceCommands.has(command) && resourcePath === undefined) resourcePath = value;
     else if ((command === 'run' || command === 'workflow') && workflowId === undefined) workflowId = value;
     else if (command === 'logs' && service === undefined) service = value;
     else if (['observe', 'approve', 'deny', 'cancel', 'pause', 'resume'].includes(command) && runId === undefined) runId = value;
@@ -113,8 +136,9 @@ export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
     else throw new Error(`Unexpected argument "${value}".`);
   }
   if (resourceCommands.has(command) && resourcePath === undefined && command !== 'workflow') throw new Error(`${command} requires a project.yaml or resource directory.`);
+  if (authoringAction === 'new' && (name === undefined || name.trim() === '')) throw new Error(`${command} new requires a name.`);
   if (['approve', 'deny', 'cancel', 'pause', 'resume'].includes(command) && runId === undefined) throw new Error(`${command} requires a run id.`);
-  return { command, ...(resourcePath === undefined ? {} : { resourcePath }), ...(workflowId === undefined ? {} : { workflowId }), ...(service === undefined ? {} : { service }), ...(runId === undefined ? {} : { runId }), ...(reason === undefined ? {} : { reason }), profiles: [...new Set(profiles)], follow, once, intervalMs, web, help: false };
+  return { command, ...(authoringAction === undefined ? {} : { authoringAction }), ...(name === undefined ? {} : { name }), ...(projectId === undefined ? {} : { projectId }), ...(resourcePath === undefined ? {} : { resourcePath }), ...(workflowId === undefined ? {} : { workflowId }), ...(service === undefined ? {} : { service }), ...(runId === undefined ? {} : { runId }), ...(reason === undefined ? {} : { reason }), profiles: [...new Set(profiles)], follow, once, intervalMs, web, help: false };
 }
 
 export function composeArguments(action: 'up' | 'down' | 'restart' | 'ps' | 'logs' | 'build', profiles: readonly string[], service?: string): string[] {
@@ -145,7 +169,7 @@ FACTORY · terminal workflow control plane
 
 Usage:
   factory                          Start Docker services and open the terminal monitor
-  /factory <command> [options]
+  factory <command> [options]
 
 Lifecycle:
   up | start                       Start the local stack
@@ -157,7 +181,8 @@ Lifecycle:
   deploy                            Build and start the stack
   open                             Open the browser dashboard directly
   dashboard | dashboards           Open the terminal Portals selector
-  workspace                        Open terminal file-backed authoring
+  workspace                        Open terminal file-backed authoring (n create, e edit)
+  workspace new <name>             Create a file-backed workspace
   observe [run-id]                 Show runs, approvals, and telemetry
   tui                              Interactive terminal monitor (q quit, a approve, d deny)
   approve <run-id> [reason]        Approve a waiting run
@@ -169,13 +194,16 @@ Lifecycle:
 Authoring:
   validate <path>                  Validate a project YAML/resource directory
   plan <path>                      Print the workflow plan
-  workflow <path> [workflow-id]     Inspect or author a workflow resource
+  workflow                         Open terminal Workflow authoring
+  workflow new <name>              Create and compile a starter workflow
+  workflow <path> [workflow-id]     Inspect a local workflow resource
   tree <path>                      Compatibility alias for workflow
   edit <path>                      Open a local resource in $EDITOR, then validate
   run <path> [workflow-id]         Execute a workflow locally
 
 Options:
   --profile <name>                 Enable a Compose profile (repeatable)
+  --project <id>                   Select a workspace/project for API commands
   --all                            Enable temporal, observability, and ollama
   --follow                         Keep observe output live
   --once                           Render one TUI snapshot and exit
@@ -185,6 +213,8 @@ Options:
 
 Environment:
   FACTORY_BASE_URL                 Dashboard URL (default: http://localhost:3100)
+  FACTORY_API_TOKEN                Bearer token for authenticated control planes
+  FACTORY_TENANT_ID                Tenant selected by terminal API commands
   FACTORY_PROJECT_ID               Project selected by terminal authoring (default: first project)
   FACTORY_ENVIRONMENT              Compile target for terminal saves (default: local)
   VISUAL / EDITOR                  Editor opened by Workspace and Workflow authoring
