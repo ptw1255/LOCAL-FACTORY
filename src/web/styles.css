@@ -347,7 +347,8 @@ h1, h2, h3, p { margin-top: 0; }
 .ide-editor { display: flex; flex-direction: column; padding: 0; }
 .ide-tab-bar { align-items: center; background: #0b121e; border-bottom: 1px solid var(--border); display: flex; height: 42px; justify-content: space-between; padding: 0 14px; }
 .ide-tabs { align-items: stretch; display: flex; height: 100%; min-width: 0; overflow-x: auto; }
-.ide-tab { align-items: center; color: #b8c8df; display: inline-flex; font-size: 10px; gap: 6px; height: 100%; }
+.ide-tab { align-items: center; color: #b8c8df; cursor: grab; display: inline-flex; font-size: 10px; gap: 6px; height: 100%; }
+.ide-tab:active { cursor: grabbing; }
 .ide-tab.active { border-bottom: 2px solid var(--accent); }
 .ide-tab > button:first-child { align-items: center; background: transparent; border: 0; color: inherit; display: inline-flex; font: inherit; gap: 6px; height: 100%; max-width: 220px; overflow: hidden; padding: 0 8px; text-overflow: ellipsis; white-space: nowrap; }
 .ide-tab > button:first-child:hover { background: #121f31; }
