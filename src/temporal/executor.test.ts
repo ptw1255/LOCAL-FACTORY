@@ -106,6 +106,29 @@ describe('TemporalWorkflowExecutor', () => {
     expect((await events.list(run.id)).some((event) => event.type === 'run.cancelled')).toBe(true);
   });
 
+  it('retries a terminal Temporal run with pinned provenance', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-retry-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-retry');
+    const start = vi.fn(async () => handle);
+    const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-temporal-retry';
+    const failed = await executor.start(workflow, { input: { retryable: true }, artifactId: 'sha256:retry-artifact' });
+    await store.mutate((state) => {
+      const run = state.runs.find((candidate) => candidate.id === failed.id);
+      if (run === undefined) throw new Error('Run missing.');
+      run.status = 'failed';
+      run.error = 'transient failure';
+    });
+    const retried = await executor.retry(failed.id);
+    expect(retried).toEqual(expect.objectContaining({ replayOfRunId: failed.id, artifactId: 'sha256:retry-artifact', input: { retryable: true }, executionEngine: 'temporal' }));
+    expect(start).toHaveBeenCalledTimes(2);
+    expect((await events.list(failed.id)).some((event) => event.type === 'run.retried' && event.attributes?.['run.retry_id'] === retried.id)).toBe(true);
+  });
+
   it('records approval denial as one failed decision after cancelling the handle', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-deny-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
