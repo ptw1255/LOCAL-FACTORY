@@ -102,7 +102,8 @@ describe('IDE editor tab state', () => {
     workflow.nodes[0]!.sourcePath = 'workflows/demo.workflow.yaml';
     workflow.nodes[0]!.sourceLine = 12;
     expect(sourceNodeForLine(workflow, 'workflows/demo.workflow.yaml', 12)?.id).toBe(workflow.nodes[0]!.id);
-    expect(sourceNodeForLine(workflow, 'workflows/demo.workflow.yaml', 13)).toBeUndefined();
+    expect(sourceNodeForLine(workflow, 'workflows/demo.workflow.yaml', 13)?.id).toBe(workflow.nodes[0]!.id);
+    expect(sourceNodeForLine(workflow, 'workflows/demo.workflow.yaml', 11)).toBeUndefined();
     expect(sourceNodeForLine(workflow, 'workflows/other.workflow.yaml', 12)).toBeUndefined();
   });
 
