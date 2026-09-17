@@ -1601,6 +1601,7 @@ export async function createApp(
         'authoring.proposal.id': proposal.id,
         'authoring.proposal.status': proposal.status,
         'authoring.change.count': proposal.changes.length,
+        'authoring.blueprint.stage_count': proposal.blueprint?.stages.length ?? 0,
         'authoring.actor': actor,
       },
     });
@@ -1616,8 +1617,8 @@ export async function createApp(
       attempt: 1,
       status: 'succeeded',
       input: { goal: proposal.goal },
-      output: { semanticDiff: proposal.semanticDiff },
-      metadata: { 'authoring.status': proposal.status, 'authoring.change_count': proposal.changes.length },
+      output: { semanticDiff: proposal.semanticDiff, blueprint: proposal.blueprint },
+      metadata: { 'authoring.status': proposal.status, 'authoring.change_count': proposal.changes.length, 'authoring.blueprint_stage_count': proposal.blueprint?.stages.length ?? 0 },
     });
   };
 
@@ -1629,6 +1630,7 @@ export async function createApp(
     if (project === undefined) return reply.status(404).send({ message: 'Project not found.' });
     const files = (await workspaceListing(scope)).files;
     let changes: AuthoringFileChange[];
+    let plannedWorkflow: import('../domain/types.js').WorkflowDefinition | undefined;
     if (parsed.data.changes !== undefined) {
       for (const change of parsed.data.changes) {
         const pathError = projectFilePathError(change.path, change.content);
@@ -1638,7 +1640,9 @@ export async function createApp(
     } else {
       const workflow = await store.read((state) => state.workflows.find((candidate) => candidate.id === parsed.data.workflowId && inScope(candidate, scope)));
       if (workflow === undefined) return reply.status(404).send({ message: 'Workflow not found.' });
-      changes = planWorkflowAuthoringChanges(project, proposals.plan(workflow, parsed.data.goal).workflow, files);
+      const planned = proposals.plan(workflow, parsed.data.goal, parsed.data.brief);
+      changes = planWorkflowAuthoringChanges(project, planned.workflow, files);
+      plannedWorkflow = planned.workflow;
     }
     if (changes.length === 0) return reply.status(422).send({ message: 'The authoring request does not change any Project files.' });
     const validation = validateAuthoringChanges(files, changes, scope);
@@ -1648,6 +1652,18 @@ export async function createApp(
       id: `authoring-${randomUUID()}`,
       goal: parsed.data.goal,
       ...(parsed.data.workflowId === undefined ? {} : { workflowId: parsed.data.workflowId }),
+      ...(parsed.data.brief === undefined ? {} : { brief: parsed.data.brief }),
+      ...(plannedWorkflow === undefined ? {} : {
+        blueprint: {
+          trigger: plannedWorkflow.trigger.type,
+          stages: plannedWorkflow.nodes.map((node) => ({
+            id: node.id,
+            type: node.type,
+            label: node.label,
+            executionKind: node.unit?.kind ?? 'deterministic',
+          })),
+        },
+      }),
       status: validation.valid ? 'validated' : 'draft',
       changes,
       semanticDiff: authoringSemanticDiff(changes),

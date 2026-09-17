@@ -505,6 +505,28 @@ export interface AgentProposal {
 
 export type AuthoringProposalStatus = 'draft' | 'validated' | 'approved' | 'applied' | 'rejected';
 
+export interface AuthoringBrief {
+  objective: string;
+  trigger: 'manual' | 'webhook' | 'schedule';
+  input: string;
+  preparation: string;
+  agentTask: string;
+  externalAction: string;
+  approval: 'none' | 'before-side-effects' | 'before-completion';
+  output: string;
+  constraints: string;
+}
+
+export interface AuthoringBlueprint {
+  trigger: string;
+  stages: Array<{
+    id: string;
+    type: string;
+    label: string;
+    executionKind: WorkUnitKind;
+  }>;
+}
+
 /** One atomic, optimistic file mutation proposed by an AI author. Source text
  * remains reviewable and portable while this record provides lifecycle state. */
 export interface AuthoringFileChange {
@@ -521,6 +543,8 @@ export interface AuthoringProposal {
   id: string;
   goal: string;
   workflowId?: string;
+  brief?: AuthoringBrief;
+  blueprint?: AuthoringBlueprint;
   status: AuthoringProposalStatus;
   changes: AuthoringFileChange[];
   semanticDiff: string[];

@@ -44,4 +44,29 @@ describe('AI Project authoring', () => {
     expect(validation.valid).toBe(false);
     expect(validation.issues).toContainEqual(expect.objectContaining({ code: 'authoring.conflict', path: workflow.path }));
   });
+
+  it('can draft a valid agent blueprint from a minimal first Workflow', () => {
+    const project = createSeedState().projects[0]!;
+    const starter = {
+      ...structuredClone(seedWorkflow),
+      id: 'first-workflow',
+      name: 'First workflow',
+      agents: [],
+      nodes: [structuredClone(seedWorkflow.nodes[0]!), structuredClone(seedWorkflow.nodes.at(-1)!)],
+      edges: [{ id: 'edge-trigger-output', source: seedWorkflow.nodes[0]!.id, target: seedWorkflow.nodes.at(-1)!.id }],
+    };
+    const currentFiles = planResourceMigration(project, [starter]).files.map((file) => ({
+      tenantId: project.tenantId, projectId: project.id, path: file.path, content: file.source,
+      sha256: createHash('sha256').update(file.source).digest('hex'), updatedAt: '2026-01-01T00:00:00.000Z',
+    }));
+    const planned = new ProposalService({} as never).plan(starter, 'Analyze the request and return a safe decision.', {
+      objective: 'Analyze the request and return a safe decision.', trigger: 'manual', input: 'Structured request context', preparation: 'Validate the request',
+      agentTask: 'Assess the request against policy', externalAction: 'none', approval: 'before-completion',
+      output: 'Return a structured decision', constraints: 'Use declared tools only',
+    });
+    const changes = planWorkflowAuthoringChanges(project, planned.workflow, currentFiles);
+
+    expect(changes.some((change) => change.path === 'agents/first-workflow-agent.agent.yaml')).toBe(true);
+    expect(validateAuthoringChanges(currentFiles, changes, { tenantId: project.tenantId, projectId: project.id })).toEqual({ valid: true, issues: [] });
+  });
 });

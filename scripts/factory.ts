@@ -10,6 +10,7 @@ import { EventService } from '../src/observability/event-service.js';
 import { LocalWorkflowExecutor } from '../src/runtime/executor.js';
 import { JsonStore } from '../src/storage/json-store.js';
 import { createSeedState } from '../src/domain/seed.js';
+import type { AuthoringBrief, WorkflowDefinition } from '../src/domain/types.js';
 import { addProjectResourcePaths, authoringSlug, canvasResourcePath, renderStarterCanvasFile, renderStarterWorkflowFile, renderWorkspaceProjectFile, workflowResourcePath } from './factory-authoring.js';
 import { browserOpenCommand, composeArguments, isLifecycleCommand, parseFactoryArgs, usageText, type FactoryArgs } from './factory-cli.js';
 import { backTerminalState, editTerminalSource, pendingApproval, portalItemCount, renderTerminalPortal, renderTerminalSnapshot, type TerminalPortalPage, type TerminalPortalState, type TerminalPrompt, type TerminalSnapshot } from './factory-terminal.js';
@@ -404,15 +405,14 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     state = { page: 'project', cursor: 0 };
     return `Created Project ${project.name} and compiled ${created.artifactId}.`;
   };
-  const createWorkflow = async (): Promise<string | undefined> => {
+  const createWorkflowResource = async (): Promise<{ workflowId: string; name: string; artifactId: string } | undefined> => {
     if (activeProjectId === undefined) throw new Error('Create or select a Project first.');
     const [name] = await promptValues([{ label: 'Workflow name' }]);
     if (name === undefined || name === '') return undefined;
     const suggestedId = authoringSlug(name, 'workflow');
     const [requestedId] = await promptValues([{ label: 'Workflow id', defaultValue: suggestedId }]);
     const created = await createRemoteWorkflow(activeProjectId, name, requestedId);
-    state = { page: 'workflow', cursor: 0 };
-    return `Created workflow ${name} (${created.workflowId}) and compiled ${created.artifactId}.`;
+    return { ...created, name };
   };
   const switchProject = async (): Promise<string | undefined> => {
     const projects = snapshot.projects ?? [];
@@ -424,22 +424,57 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     state = { ...state, cursor: 0 };
     return `Switched to Project ${next.name}.`;
   };
-  const selectedWorkflow = (): import('../src/domain/types.js').WorkflowDefinition | undefined => state.selectedWorkflowId === undefined
+  const selectedWorkflow = (): WorkflowDefinition | undefined => state.selectedWorkflowId === undefined
     ? snapshot.workflows?.[state.cursor]
     : snapshot.workflows?.find((workflow) => workflow.id === state.selectedWorkflowId);
-  const authorWithAi = async (): Promise<string | undefined> => {
+  const collectAuthoringBrief = async (workflow: WorkflowDefinition): Promise<AuthoringBrief | undefined> => {
+    const values = await promptValues([
+      { label: `[1/9] Objective for ${workflow.name}` },
+      { label: '[2/9] Trigger [manual/webhook/schedule]', defaultValue: 'manual' },
+      { label: '[3/9] Input contract', defaultValue: 'Structured workflow input' },
+      { label: '[4/9] Deterministic preparation', defaultValue: 'Validate and normalize the workflow input' },
+      { label: '[5/9] Agent responsibility (or none)', defaultValue: 'Analyze the input and produce a bounded recommendation' },
+      { label: '[6/9] External action (or none)', defaultValue: 'none' },
+      { label: '[7/9] Approval [none/before-side-effects/before-completion]', defaultValue: 'before-completion' },
+      { label: '[8/9] Observable output', defaultValue: 'Return a structured workflow result' },
+      { label: '[9/9] Constraints', defaultValue: 'Use declared tools only and stay within configured budgets' },
+    ]);
+    if (values.length === 0) return undefined;
+    const [objective = '', triggerInput = '', input = '', preparation = '', agentInput = '', externalAction = '', approvalInput = '', output = '', constraints = ''] = values;
+    if (objective.length < 10) throw new Error('The Workflow objective must contain at least 10 characters.');
+    const trigger = triggerInput.trim().toLowerCase();
+    if (!['manual', 'webhook', 'schedule'].includes(trigger)) throw new Error('Trigger must be manual, webhook, or schedule.');
+    const approval = approvalInput.trim().toLowerCase().replaceAll(' ', '-');
+    if (!['none', 'before-side-effects', 'before-completion'].includes(approval)) throw new Error('Approval must be none, before-side-effects, or before-completion.');
+    const agentTask = /^(none|n\/a)$/i.test(agentInput.trim()) ? '' : agentInput;
+    return { objective, trigger: trigger as AuthoringBrief['trigger'], input, preparation, agentTask, externalAction, approval: approval as AuthoringBrief['approval'], output, constraints };
+  };
+  const proposeWorkflowDraft = async (workflow: WorkflowDefinition): Promise<string | undefined> => {
     if (activeProjectId === undefined) throw new Error('Create or select a Project first.');
-    const workflow = selectedWorkflow();
-    if (workflow === undefined) throw new Error('Select a Workflow first.');
-    const [goal] = await promptValues([{ label: `Describe the change to ${workflow.name}` }]);
-    if (goal === undefined || goal.length < 10) return undefined;
+    const brief = await collectAuthoringBrief(workflow);
+    if (brief === undefined) return undefined;
     const proposal = await requestJson<import('../src/domain/types.js').AuthoringProposal>(`/api/projects/${encodeURIComponent(activeProjectId)}/authoring/proposals`, {
       method: 'POST',
       headers: projectHeaders(activeProjectId),
-      body: JSON.stringify({ workflowId: workflow.id, goal }),
+      body: JSON.stringify({ workflowId: workflow.id, goal: brief.objective, brief }),
     });
     state = { page: 'proposal-detail', cursor: 0, selectedProposalId: proposal.id };
-    return `AI proposal ${proposal.id} is ${proposal.status}; review its semantic diff before approval.`;
+    return `Drafted ${proposal.blueprint?.stages.length ?? 0} WorkUnits in proposal ${proposal.id}; review the blueprint and resource changes before approval.`;
+  };
+  const authorWithAi = async (): Promise<string | undefined> => {
+    const workflow = selectedWorkflow();
+    if (workflow === undefined) throw new Error('Select a Workflow first.');
+    return proposeWorkflowDraft(workflow);
+  };
+  const draftNewWorkflow = async (): Promise<string | undefined> => {
+    const created = await createWorkflowResource();
+    if (created === undefined || activeProjectId === undefined) return undefined;
+    snapshot = await terminalSnapshot(undefined, activeProjectId);
+    const workflow = snapshot.workflows?.find((candidate) => candidate.id === created.workflowId);
+    if (workflow === undefined) throw new Error(`Created Workflow ${created.workflowId}, but it was not available for drafting.`);
+    state = { page: 'workflow-detail', cursor: 0, selectedWorkflowId: workflow.id };
+    const notice = await proposeWorkflowDraft(workflow);
+    return notice ?? `Created Workflow ${created.name} (${created.workflowId}); guided drafting was cancelled.`;
   };
   const updateAuthoringProposal = async (action: 'validate' | 'approve' | 'apply' | 'reject'): Promise<string | undefined> => {
     if (activeProjectId === undefined || state.selectedProposalId === undefined) throw new Error('Select an authoring proposal first.');
@@ -502,7 +537,7 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
         state = { page: 'project', cursor: 0 };
         await refreshPage();
       } else {
-        await performAuthoring(createWorkflow);
+        await performAuthoring(draftNewWorkflow);
       }
       return;
     }
@@ -601,8 +636,8 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
         resolve();
       } else if (key === 'r') void refreshPage();
       else if (key === 'n' && state.page === 'project') void performAuthoring(createProject);
-      else if (key === 'n' && (state.page === 'workflow' || state.page === 'tree')) void performAuthoring(createWorkflow);
-      else if (key === 'w' && state.page === 'project') void performAuthoring(createWorkflow);
+      else if (key === 'n' && (state.page === 'workflow' || state.page === 'tree')) void performAuthoring(draftNewWorkflow);
+      else if (key === 'w' && state.page === 'project') void performAuthoring(draftNewWorkflow);
       else if (key === 's' && (state.page === 'project' || state.page === 'workflow' || state.page === 'tree')) void performAuthoring(switchProject);
       else if (key === 'a' && (state.page === 'workflow' || state.page === 'tree' || state.page === 'workflow-detail')) void performAuthoring(authorWithAi);
       else if (key === 'a' && state.page === 'proposal-detail') void performAuthoring(() => updateAuthoringProposal('approve'));
@@ -649,7 +684,23 @@ async function runRunControl(args: FactoryArgs): Promise<void> {
 
 function printAuthoringProposal(proposal: import('../src/domain/types.js').AuthoringProposal): void {
   console.log(`${proposal.id} · ${proposal.status} · ${proposal.changes.length} file change${proposal.changes.length === 1 ? '' : 's'}`);
-  console.log(`Goal: ${proposal.goal}`);
+  console.log(`Objective: ${proposal.goal}`);
+  if (proposal.brief !== undefined) {
+    console.log('Draft brief:');
+    console.log(`  trigger: ${proposal.brief.trigger}`);
+    console.log(`  input: ${proposal.brief.input}`);
+    console.log(`  preparation: ${proposal.brief.preparation}`);
+    console.log(`  agent task: ${proposal.brief.agentTask || 'none'}`);
+    console.log(`  external action: ${proposal.brief.externalAction || 'none'}`);
+    console.log(`  approval: ${proposal.brief.approval}`);
+    console.log(`  output: ${proposal.brief.output}`);
+    console.log(`  constraints: ${proposal.brief.constraints || 'none'}`);
+  }
+  if (proposal.blueprint !== undefined) {
+    console.log('Workflow blueprint:');
+    proposal.blueprint.stages.forEach((stage, index) => console.log(`  ${index === proposal.blueprint!.stages.length - 1 ? '└─' : '├─'} ${stage.label} · ${stage.type} · ${stage.executionKind}`));
+  }
+  console.log('Resource changes:');
   for (const line of proposal.semanticDiff) console.log(`  ${line}`);
   for (const issue of proposal.issues) console.log(`  ${issue.severity.toUpperCase()} ${issue.path}:${issue.line} ${issue.message}`);
   if (proposal.artifactId !== undefined) console.log(`Artifact: ${proposal.artifactId}`);
