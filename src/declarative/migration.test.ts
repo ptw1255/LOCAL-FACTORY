@@ -3,6 +3,7 @@ import { parse } from 'yaml';
 
 import { createSeedState, seedWorkflow } from '../domain/seed.js';
 import { applyCanvasResource, patchWorkUnitResource, patchWorkflowResource, planResourceMigration, renderCanvasResource, renderWorkUnitResource, workUnitResourceId } from './migration.js';
+import { compileResourceFiles } from './resources.js';
 
 describe('resource migration planner', () => {
   it('creates stable project, agent, workflow, unit, and Canvas files', () => {
@@ -35,6 +36,29 @@ describe('resource migration planner', () => {
     expect(second).toEqual(first);
     expect(first.sourceProjectId).toBe(project.id);
     expect(first.sourceWorkflowIds).toEqual([seedWorkflow.id]);
+  });
+
+  it('round-trips a migrated workflow through resource compilation without semantic drift', () => {
+    const workflow = structuredClone(seedWorkflow);
+    const project = createSeedState().projects[0]!;
+    const plan = planResourceMigration(project, [workflow]);
+    const compiled = compileResourceFiles(plan.files, { tenantId: project.tenantId, projectId: project.id, environment: 'local' });
+    const result = compiled.workflows.find((candidate) => candidate.id === workflow.id);
+    expect(result).toBeDefined();
+    const semantic = (value: typeof workflow) => ({
+      id: value.id,
+      version: value.version,
+      name: value.name,
+      description: value.description,
+      trigger: value.trigger,
+      inputSchema: value.inputSchema,
+      agents: value.agents,
+      // Trigger labels are runtime defaults in the declarative format; the
+      // authored trigger type/config and all semantic nodes must still match.
+      nodes: value.nodes.map(({ sourcePath: _sourcePath, sourceLine: _sourceLine, ...node }) => node.type === value.trigger.type ? { ...node, label: '<trigger>' } : node),
+      edges: value.edges,
+    });
+    expect(semantic(result!)).toEqual(semantic(workflow));
   });
 
   it('hydrates a workflow from its Canvas layout projection', () => {
