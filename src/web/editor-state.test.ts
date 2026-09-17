@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextExplorerIndex, nextObserveTab, observeRunHash, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics } from './App';
+import { clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextExplorerIndex, nextObserveTab, observeRunHash, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -85,5 +85,13 @@ describe('IDE editor tab state', () => {
     const otherProject = { id: 'run-other', projectId: 'project-b', startedAt: '2026-01-03T00:00:00.000Z' } as never;
     expect(mergeRecentRuns([existing, duplicate, otherProject], started, 'project-a').map((run) => run.id)).toEqual(['run-new', 'run-old']);
     expect(mergeRecentRuns([duplicate], started, 'project-a')[0]?.status).toBe('running');
+  });
+
+  it('allows only one concurrent run command to acquire the lock', () => {
+    const lock = { current: false };
+    expect(tryAcquireRunLock(lock)).toBe(true);
+    expect(tryAcquireRunLock(lock)).toBe(false);
+    lock.current = false;
+    expect(tryAcquireRunLock(lock)).toBe(true);
   });
 });

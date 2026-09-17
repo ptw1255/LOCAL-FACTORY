@@ -275,6 +275,13 @@ export function mergeRecentRuns(runs: RunRecord[], started: RunRecord | null, pr
     .slice(0, Math.max(1, limit));
 }
 
+/** Atomically gate command/button paths so one workflow run starts at a time. */
+export function tryAcquireRunLock(lock: { current: boolean }): boolean {
+  if (lock.current) return false;
+  lock.current = true;
+  return true;
+}
+
 export function selectWorkflowArtifact(artifacts: ArtifactRecord[], workflowId: string, environment: string, preferred?: ArtifactRecord | null): ArtifactRecord | undefined {
   const candidates = preferred === undefined || preferred === null
     ? artifacts
@@ -779,6 +786,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
   const [yamlSource, setYamlSource] = useState('');
   const [yamlDirty, setYamlDirty] = useState(false);
   const sourceSaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  const runInFlight = useRef(false);
   const [studioMode, setStudioMode] = useState<'files' | 'tree' | 'canvas'>(() => readStudioMode(projectId));
 
   async function hydrateCanvasProjection(candidate: WorkflowDefinition): Promise<WorkflowDefinition> {
@@ -1130,6 +1138,10 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
 
   async function executeRun(input?: unknown) {
     if (workflow === null) return;
+    if (!tryAcquireRunLock(runInFlight)) {
+      setNotice({ tone: 'warning', text: 'A workflow run is already being prepared or started.' });
+      return;
+    }
     setBusyAction('run');
     setNotice(null);
     try {
@@ -1161,6 +1173,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       setNotice({ tone: 'error', text: errorText(runError) });
     } finally {
       setBusyAction(null);
+      runInFlight.current = false;
     }
   }
 
