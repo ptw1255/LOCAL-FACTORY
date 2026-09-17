@@ -1613,7 +1613,8 @@ function OperationalTree({
   const visibleFiles = (files.length > 0 ? files : [{ path: 'project.yaml', sha256: '', projectId, tenantId: '', updatedAt: '' }])
     .filter((file) => !file.path.split('/').slice(0, -1).some((folder, index, folders) => collapsedFolders.has(folders.slice(0, index + 1).join('/'))));
   const folders = [...new Set(visibleFiles.flatMap((file) => file.path.split('/').slice(0, -1).map((_part, index, parts) => parts.slice(0, index + 1).join('/'))))];
-  const explorerItemCount = folders.length + visibleFiles.length;
+  const explorerFolders = [...new Set([...folders, ...directories])].sort();
+  const explorerItemCount = explorerFolders.length + visibleFiles.length;
   function moveExplorerFocus(event: ReactKeyboardEvent<HTMLButtonElement>, index: number): void {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
@@ -1790,12 +1791,14 @@ function OperationalTree({
         <label className="ide-view-selector"><span>View</span><select aria-label="Workspace view" onChange={(event) => onModeChange(event.target.value as 'files' | 'tree' | 'canvas')} value={mode}><option value="files">Files</option><option value="tree">Tree</option><option value="canvas">Canvas</option></select></label>
         <label className="ide-file-search"><span className="sr-only">Filter files</span><input onChange={(event) => setFileSearch(event.target.value)} placeholder="Filter files" type="search" value={fileSearch} /></label>
         <div className="ide-project"><Icon name="factory" size={15} /><strong>{workflow.projectId ?? 'project'}</strong></div>
-        {[...new Set([...folders, ...directories])].sort().map((folder, index) => <button aria-expanded={!collapsedFolders.has(folder)} className="ide-folder ide-file-tree-item" data-explorer-item="true" key={folder} onClick={() => setCollapsedFolders((current) => { const next = new Set(current); if (next.has(folder)) next.delete(folder); else next.add(folder); return next; })} onKeyDown={(event) => moveExplorerFocus(event, index)} role="treeitem" type="button"><Icon name={collapsedFolders.has(folder) ? 'chevron' : 'chevronDown'} size={12} /> {folder}</button>)}
-        {visibleFiles.map((file, index) => <button aria-current={selectedPath === file.path ? 'page' : undefined} className={`ide-file ide-file-tree-item ${selectedPath === file.path ? 'active' : ''}`} data-explorer-item="true" key={file.path} onClick={() => void selectFile(file)} onKeyDown={(event) => moveExplorerFocus(event, folders.length + index)} role="treeitem" type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={14} /> <span>{file.path}</span>{selectedPath === file.path && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>)}
-        {files.length === 0 ? workflow.agents.map((agent) => <div className="ide-file muted" key={agent.id}><Icon name="agent" size={14} /> agents/{agent.id}.agent.yaml</div>) : null}
-        <div className="ide-folder"><Icon name="chevron" size={12} /> runtime</div>
-        <div className="ide-file muted"><Icon name="runs" size={14} /> runs</div>
-        <div className="ide-file muted"><Icon name="operations" size={14} /> telemetry</div>
+        <div aria-label="Project files" className="ide-file-tree" role="tree">
+          {explorerFolders.map((folder, index) => <button aria-expanded={!collapsedFolders.has(folder)} aria-level={1} className="ide-folder ide-file-tree-item" data-explorer-item="true" key={folder} onClick={() => setCollapsedFolders((current) => { const next = new Set(current); if (next.has(folder)) next.delete(folder); else next.add(folder); return next; })} onKeyDown={(event) => moveExplorerFocus(event, index)} role="treeitem" type="button"><Icon name={collapsedFolders.has(folder) ? 'chevron' : 'chevronDown'} size={12} /> {folder}</button>)}
+          {visibleFiles.map((file, index) => <button aria-current={selectedPath === file.path ? 'page' : undefined} aria-level={1} className={`ide-file ide-file-tree-item ${selectedPath === file.path ? 'active' : ''}`} data-explorer-item="true" key={file.path} onClick={() => void selectFile(file)} onKeyDown={(event) => moveExplorerFocus(event, explorerFolders.length + index)} role="treeitem" type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={14} /> <span>{file.path}</span>{selectedPath === file.path && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>)}
+          {files.length === 0 ? workflow.agents.map((agent) => <div aria-level={1} className="ide-file muted" key={agent.id} role="treeitem"><Icon name="agent" size={14} /> agents/{agent.id}.agent.yaml</div>) : null}
+          <div aria-level={1} className="ide-folder" role="treeitem"><Icon name="chevron" size={12} /> runtime</div>
+          <div aria-level={1} className="ide-file muted" role="treeitem"><Icon name="runs" size={14} /> runs</div>
+          <div aria-level={1} className="ide-file muted" role="treeitem"><Icon name="operations" size={14} /> telemetry</div>
+        </div>
         <div className="ide-explorer-footer"><span className="system-dot" /> Git-backed definition</div>
       </aside>
       <div aria-label="Resize explorer" aria-orientation="vertical" aria-valuemax={360} aria-valuemin={160} aria-valuenow={explorerWidth} className="ide-resize-handle" onPointerDown={beginExplorerResize} role="separator" tabIndex={0} onKeyDown={(event) => {
