@@ -8,6 +8,7 @@ import { seedWorkflow } from '../domain/seed.js';
 import type { OperationEvidence, RunRecord } from '../domain/types.js';
 import { EventService } from '../observability/event-service.js';
 import { JsonStore } from '../storage/json-store.js';
+import { createQueuedRun } from '../runtime/executor.js';
 import { DeploymentReconciler, type DeploymentRuntimeAdapter } from './reconciler.js';
 
 describe('DeploymentReconciler', () => {
@@ -334,11 +335,16 @@ describe('DeploymentReconciler', () => {
     const events = new EventService(store);
     const reconciler = new DeploymentReconciler(store, 30_000, undefined, 3, events);
     const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'evidence', artifactId: artifact.id, trigger: 'manual' });
+    const run = createQueuedRun(seedWorkflow);
+    run.id = 'run-deployment-evidence';
+    run.status = 'running';
+    run.traceId = 'c'.repeat(32);
+    await store.mutate((state) => { state.runs.push(run); });
     const started = await reconciler.action(deployment.id, scope, 'start', { actor: 'operator', runId: 'run-deployment-evidence', idempotencyKey: 'deployment-start-1' });
     const evidence = await events.listEvidence({ deploymentId: deployment.id });
     expect(evidence).toEqual([expect.objectContaining({ deploymentId: deployment.id, runId: 'run-deployment-evidence', operation: 'deployment.start', status: 'succeeded', idempotencyKey: 'deployment-start-1', tenantId: scope.tenantId, projectId: scope.projectId })]);
     const telemetry = await events.list('run-deployment-evidence');
-    expect(telemetry).toEqual([expect.objectContaining({ type: 'deployment.transition', runId: 'run-deployment-evidence', signal: 'trace' })]);
+    expect(telemetry).toEqual([expect.objectContaining({ type: 'deployment.transition', runId: 'run-deployment-evidence', signal: 'trace', traceId: run.traceId })]);
     expect(started.history[0]).toEqual(expect.objectContaining({ runId: 'run-deployment-evidence', correlationId: expect.stringContaining(deployment.id) }));
   });
 });
