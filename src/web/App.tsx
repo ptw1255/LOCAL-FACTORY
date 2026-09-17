@@ -60,6 +60,7 @@ const BOTTOM_PANEL_STORAGE_PREFIX = 'factory.bottomPanel.';
 const STUDIO_FILE_STORAGE_PREFIX = 'factory.studioFile.';
 const STUDIO_TABS_STORAGE_PREFIX = 'factory.studioTabs.';
 const EXPLORER_WIDTH_STORAGE_PREFIX = 'factory.explorerWidth.';
+const STUDIO_DIRTY_STORAGE_PREFIX = 'factory.studioDirty.';
 
 const LazyEditor = lazy(async () => {
   const module = await import('@monaco-editor/react');
@@ -160,6 +161,10 @@ export function nextExplorerIndex(index: number, direction: -1 | 1, count: numbe
   if (direction === 1 && index >= count - 1) return 0;
   if (direction === -1 && index <= 0) return count - 1;
   return index + direction;
+}
+
+export function projectSwitchRequiresConfirmation(currentProjectId: string | null, nextProjectId: string, dirty: boolean): boolean {
+  return currentProjectId !== null && currentProjectId !== nextProjectId && dirty;
 }
 
 function readStudioLine(): number | undefined {
@@ -407,6 +412,10 @@ export function App() {
   }, [loadProjects]);
 
   function selectProject(nextProjectId: string) {
+    if (projectSwitchRequiresConfirmation(projectId, nextProjectId, projectId !== null && window.localStorage.getItem(`${STUDIO_DIRTY_STORAGE_PREFIX}${projectId}`) === 'true')) {
+      if (!window.confirm('The current Workspace has unsaved changes. Switch loops and discard them?')) return;
+      window.localStorage.removeItem(`${STUDIO_DIRTY_STORAGE_PREFIX}${projectId}`);
+    }
     window.localStorage.setItem(PROJECT_STORAGE_KEY, nextProjectId);
     sessionStorage.removeItem('selectedRunId');
     setProjectId(nextProjectId);
@@ -697,6 +706,17 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       setAgentError(null);
     }
   }, [workflow?.id, workflow?.version]);
+
+  useEffect(() => {
+    const key = `${STUDIO_DIRTY_STORAGE_PREFIX}${projectId}`;
+    if (dirty || yamlDirty) window.localStorage.setItem(key, 'true');
+    else window.localStorage.removeItem(key);
+    return () => {
+      // Keep the marker while navigating away so a project switch can warn;
+      // clean buffers are removed immediately.
+      if (!dirty && !yamlDirty) window.localStorage.removeItem(key);
+    };
+  }, [dirty, projectId, yamlDirty]);
 
   function updateAgentDefinitions(value: string) {
     setAgentDraft(value);
@@ -1556,6 +1576,8 @@ function OperationalTree({
       const created = await api.saveProjectFile(projectId, filePath, filePath.endsWith('.json') ? '{}\n' : 'apiVersion: factory.agentic/v1\n');
       await refreshFiles();
       setSelectedPath(created.path);
+      setOpenPaths((current) => current.includes(created.path) ? current : [...current, created.path]);
+      window.sessionStorage.setItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`, created.path);
       if (created.content !== undefined) onSourceLoaded(created.content);
     } catch (createError) { setError(errorText(createError)); }
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { nextExplorerIndex, removeOpenPath, renameOpenPath } from './App';
+import { nextExplorerIndex, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -19,5 +19,12 @@ describe('IDE editor tab state', () => {
     expect(nextExplorerIndex(0, -1, 3)).toBe(2);
     expect(nextExplorerIndex(2, 1, 3)).toBe(0);
     expect(nextExplorerIndex(1, 1, 3)).toBe(2);
+  });
+
+  it('only prompts when switching away from a dirty project', () => {
+    expect(projectSwitchRequiresConfirmation('project-a', 'project-b', true)).toBe(true);
+    expect(projectSwitchRequiresConfirmation('project-a', 'project-a', true)).toBe(false);
+    expect(projectSwitchRequiresConfirmation(null, 'project-b', true)).toBe(false);
+    expect(projectSwitchRequiresConfirmation('project-a', 'project-b', false)).toBe(false);
   });
 });
