@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed';
-import { canvasOnlyChangesPresentation, clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextBottomPanelTab, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceNodeForLine, sourceSyntaxDiagnostics, tryAcquireRunLock, workflowToCanvas } from './App';
+import { canvasOnlyChangesPresentation, workflowToCanvas } from './App';
+import { clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextBottomPanelTab, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceNodeForLine, sourceSyntaxDiagnostics, tryAcquireRunLock } from './ide-state';
 import type { CanvasNode } from './WorkflowNodeCard';
 
 describe('IDE editor tab state', () => {
