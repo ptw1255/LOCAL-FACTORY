@@ -17,7 +17,9 @@ import Editor from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 import {
   type ChangeEvent,
+  type CSSProperties,
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -62,6 +64,7 @@ const STUDIO_MODE_STORAGE_PREFIX = 'factory.studioMode.';
 const BOTTOM_PANEL_STORAGE_PREFIX = 'factory.bottomPanel.';
 const STUDIO_FILE_STORAGE_PREFIX = 'factory.studioFile.';
 const STUDIO_TABS_STORAGE_PREFIX = 'factory.studioTabs.';
+const EXPLORER_WIDTH_STORAGE_PREFIX = 'factory.explorerWidth.';
 
 const nodeTypes = { workflow: WorkflowNodeCard };
 const viewLabels: Record<Exclude<ViewId, 'runs'>, { label: string; icon: IconName }> = {
@@ -114,6 +117,11 @@ function readStudioTabs(projectId: string): string[] {
     // Recover with the active file when older or malformed tab state exists.
   }
   return [active];
+}
+
+function readExplorerWidth(projectId: string): number {
+  const parsed = Number(window.localStorage.getItem(`${EXPLORER_WIDTH_STORAGE_PREFIX}${projectId}`));
+  return Number.isFinite(parsed) ? Math.min(360, Math.max(160, Math.round(parsed))) : 190;
 }
 
 function readStudioLine(): number | undefined {
@@ -1338,6 +1346,7 @@ function OperationalTree({
   const [directories, setDirectories] = useState<string[]>([]);
   const [selectedPath, setSelectedPath] = useState(() => readStudioFile(projectId));
   const [openPaths, setOpenPaths] = useState<string[]>(() => readStudioTabs(projectId));
+  const [explorerWidth, setExplorerWidth] = useState(() => readExplorerWidth(projectId));
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickQuery, setQuickQuery] = useState('');
   const [fileSearch, setFileSearch] = useState('');
@@ -1361,6 +1370,7 @@ function OperationalTree({
   const pendingProblem = useRef<SourceDiagnostic | null>(null);
   const draggedTab = useRef<string | null>(null);
   const quickOpenInputRef = useRef<HTMLInputElement | null>(null);
+  const resizingExplorer = useRef(false);
 
   useEffect(() => {
     window.localStorage.setItem(`${BOTTOM_PANEL_STORAGE_PREFIX}${projectId}`, JSON.stringify({ open: bottomOpen, tab: bottomTab }));
@@ -1369,6 +1379,30 @@ function OperationalTree({
   useEffect(() => {
     window.localStorage.setItem(`${STUDIO_TABS_STORAGE_PREFIX}${projectId}`, JSON.stringify(openPaths));
   }, [openPaths, projectId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(`${EXPLORER_WIDTH_STORAGE_PREFIX}${projectId}`, String(explorerWidth));
+  }, [explorerWidth, projectId]);
+
+  useEffect(() => () => { resizingExplorer.current = false; }, []);
+
+  function beginExplorerResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    resizingExplorer.current = true;
+    const onMove = (moveEvent: PointerEvent): void => {
+      if (!resizingExplorer.current) return;
+      setExplorerWidth(Math.min(360, Math.max(160, Math.round(moveEvent.clientX))));
+    };
+    const onStop = (): void => {
+      resizingExplorer.current = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onStop);
+      window.removeEventListener('pointercancel', onStop);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onStop);
+    window.addEventListener('pointercancel', onStop);
+  }
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -1709,7 +1743,7 @@ function OperationalTree({
   }, [problems, selectedPath]);
 
   return (
-    <div className={`ide-layout ide-mode-${mode}`}>
+    <div className={`ide-layout ide-mode-${mode}`} style={{ '--explorer-width': `${explorerWidth}px` } as CSSProperties}>
       <aside className="ide-explorer">
         <div className="ide-explorer-title"><span className="eyebrow">Explorer</span><span className="ide-explorer-actions"><button aria-label="New file" className="icon-button" onClick={() => void createFile()} title="New file" type="button"><Icon name="plus" size={13} /></button><button aria-label="New folder" className="icon-button" onClick={() => void createFolder()} title="New folder" type="button"><Icon name="folder" size={13} /></button><button aria-label="Rename selected file" className="icon-button" disabled={!files.some((file) => file.path === selectedPath)} onClick={() => void renameFile()} title="Rename selected file" type="button"><Icon name="edit" size={13} /></button><button aria-label="Delete selected file" className="icon-button" disabled={!files.some((file) => file.path === selectedPath)} onClick={() => void deleteFile()} title="Delete selected file" type="button"><Icon name="trash" size={13} /></button></span></div>
         <label className="ide-view-selector"><span>View</span><select aria-label="Workspace view" onChange={(event) => onModeChange(event.target.value as 'files' | 'tree' | 'canvas')} value={mode}><option value="files">Files</option><option value="tree">Tree</option><option value="canvas">Canvas</option></select></label>
@@ -1723,6 +1757,12 @@ function OperationalTree({
         <div className="ide-file muted"><Icon name="operations" size={14} /> telemetry</div>
         <div className="ide-explorer-footer"><span className="system-dot" /> Git-backed definition</div>
       </aside>
+      <div aria-label="Resize explorer" aria-orientation="vertical" aria-valuemax={360} aria-valuemin={160} aria-valuenow={explorerWidth} className="ide-resize-handle" onPointerDown={beginExplorerResize} role="separator" tabIndex={0} onKeyDown={(event) => {
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+          event.preventDefault();
+          setExplorerWidth((current) => Math.min(360, Math.max(160, current + (event.key === 'ArrowRight' ? 16 : -16))));
+        }
+      }} />
       <section className="yaml-panel ide-editor">
         <div className="ide-tab-bar"><div className="ide-tabs" role="tablist" aria-label="Open files">{openPaths.map((filePath) => <span className={`ide-tab ${selectedPath === filePath ? 'active' : ''}`} draggable key={filePath} onDragEnd={() => { draggedTab.current = null; }} onDragOver={(event) => event.preventDefault()} onDragStart={() => { draggedTab.current = filePath; }} onDrop={() => { const source = draggedTab.current; draggedTab.current = null; if (source === null || source === filePath) return; setOpenPaths((current) => { const from = current.indexOf(source); const to = current.indexOf(filePath); if (from < 0 || to < 0) return current; const next = [...current]; next.splice(from, 1); next.splice(to, 0, source); return next; }); }}><button aria-selected={selectedPath === filePath} onClick={() => { const file = files.find((candidate) => candidate.path === filePath); if (file !== undefined) void selectFile(file); }} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); moveTab(filePath, event.key === 'ArrowLeft' ? -1 : 1); } }} role="tab" type="button"><Icon name={filePath.includes('agent') ? 'agent' : 'code'} size={13} /> {filePath}{selectedPath === filePath && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>{openPaths.length > 1 ? <button aria-label={`Close ${filePath}`} className="ide-tab-close" onClick={() => closeTab(filePath)} type="button">×</button> : null}</span>)}</div><span className="ide-branch">factory.agentic/v1</span></div>
         <div className="ide-editor-heading"><div><span className="eyebrow">Declarative source</span><h2>Project definition</h2><p>Author the loop in YAML. Apply compiles it into the runtime model.</p></div><div className="ide-editor-actions"><span className={dirty ? 'ide-dirty' : 'ide-clean'}>{dirty ? 'Unsaved changes' : 'Synced'}</span><button className="button ghost" onClick={() => void formatSource()} type="button"><Icon name="code" size={14} /> Format</button><button className="button primary" disabled={!dirty || busy} onClick={() => void applyYaml()} type="button"><Icon name="save" size={14} /> {busy ? 'Applying…' : 'Apply YAML'}</button><button className="icon-button" onClick={onCanvas} title="Open canvas compatibility view" type="button"><Icon name="studio" size={15} /></button></div></div>

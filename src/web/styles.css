@@ -268,9 +268,13 @@ h1, h2, h3, p { margin-top: 0; }
 .view-toggle { align-items: center; background: #101a2a; border: 1px solid var(--border); border-radius: 7px; display: inline-flex; padding: 2px; }
 .view-toggle button { align-items: center; background: transparent; border: 0; border-radius: 5px; color: var(--subtle); display: inline-flex; font-size: 10px; font-weight: 700; gap: 5px; padding: 6px 9px; }
 .view-toggle button.active { background: #253651; color: var(--text); }
-.ide-layout { background: #090f19; display: grid; gap: 0; grid-template-columns: 190px minmax(420px, 1fr) minmax(330px, .85fr); height: calc(100vh - 67px); overflow: hidden; }
-.ide-layout.ide-mode-files { grid-template-columns: 190px minmax(0, 1fr); }
+.ide-layout { --explorer-width: 190px; background: #090f19; display: grid; gap: 0; grid-template-columns: var(--explorer-width) 5px minmax(420px, 1fr) minmax(330px, .85fr); height: calc(100vh - 67px); overflow: hidden; }
+.ide-layout.ide-mode-files { grid-template-columns: var(--explorer-width) 5px minmax(0, 1fr); }
 .ide-layout.ide-mode-files .ide-tree-panel { display: none; }
+.ide-resize-handle { background: transparent; cursor: col-resize; position: relative; z-index: 2; }
+.ide-resize-handle::after { background: transparent; content: ''; inset: 0 1px; position: absolute; transition: background .15s ease; }
+.ide-resize-handle:hover::after, .ide-resize-handle:focus-visible::after { background: var(--accent); }
+.ide-resize-handle:focus-visible { outline: 0; }
 .ide-explorer { background: #0b121e; border-right: 1px solid var(--border); display: flex; flex-direction: column; min-width: 0; padding: 17px 10px; }
 .ide-explorer-title { align-items: center; color: var(--subtle); display: flex; font-size: 9px; justify-content: space-between; letter-spacing: .1em; padding: 0 7px 17px; text-transform: uppercase; }
 .ide-view-selector { display: grid; gap: 5px; margin: -7px 0 14px; }
@@ -793,7 +797,7 @@ kbd { background: #1a2638; border: 1px solid #35445c; border-radius: 4px; box-sh
 
 @media (max-width: 1180px) {
   .studio-workspace { grid-template-columns: 220px minmax(380px, 1fr) 245px; }
-  .ide-layout { grid-template-columns: 170px minmax(360px, 1fr) minmax(300px, .9fr); }
+  .ide-layout { grid-template-columns: var(--explorer-width) 5px minmax(360px, 1fr) minmax(300px, .9fr); }
   .yaml-source { max-height: 420px; min-height: 260px; }
   .agent-facts { grid-template-columns: 1fr; }
   .connection-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -816,6 +820,7 @@ kbd { background: #1a2638; border: 1px solid #35445c; border-radius: 4px; box-sh
   .breadcrumb, .studio-toolbar .version-label { display: none; }
   .studio-workspace { grid-template-columns: 200px minmax(500px, 1fr); height: calc(100vh - 125px); overflow-x: auto; }
   .ide-layout { grid-template-columns: 1fr; height: calc(100vh - 125px); overflow: auto; }
+  .ide-resize-handle { display: none; }
   .ide-explorer { min-height: 180px; }
   .ide-editor { min-height: 580px; }
   .ide-tree-panel { min-height: 650px; }
