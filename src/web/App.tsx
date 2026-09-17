@@ -1882,6 +1882,25 @@ function RunsView() {
   const [retentionHours, setRetentionHours] = useState(48);
   const [evidenceRetentionHours, setEvidenceRetentionHours] = useState<number | null>(null);
   const [phoenixUiUrl, setPhoenixUiUrl] = useState<string | null>(null);
+  const observeTabs = ['runs', 'logs', 'traces', 'metrics'] as const;
+
+  function handleObserveTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, tab: ObserveTab): void {
+    const index = observeTabs.indexOf(tab);
+    const nextIndex = event.key === 'ArrowRight' || event.key === 'ArrowDown'
+      ? (index + 1) % observeTabs.length
+      : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+        ? (index - 1 + observeTabs.length) % observeTabs.length
+        : event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? observeTabs.length - 1
+            : -1;
+    if (nextIndex < 0) return;
+    event.preventDefault();
+    const nextTab = observeTabs[nextIndex]!;
+    setObserveTab(nextTab);
+    window.requestAnimationFrame(() => document.getElementById(`observe-${nextTab}-tab`)?.focus());
+  }
 
   const loadRuns = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -2154,8 +2173,8 @@ function RunsView() {
                 {approvals.length === 0 ? null : <section className="approval-summary"><div className="timeline-heading"><div><span className="eyebrow">Authorization</span><h3>Approval records</h3></div><span className="count-pill">{approvals.length}</span></div>{approvals.map((approval) => <div className="approval-record" key={approval.id}><strong>{approval.operation} · {approval.nodeId}</strong><StatusBadge status={approval.decision} /><span>Requested {formatDate(approval.requestedAt)} · expires {formatDate(approval.expiresAt)}</span><code>Binding {approval.bindingHash}</code>{approval.reason === undefined ? null : <small>{approval.reason}</small>}</div>)}</section>}
                 {toolCheckpoints.length === 0 ? null : <section className="approval-summary tool-recovery-summary"><div className="timeline-heading"><div><span className="eyebrow">Operator recovery</span><h3>Incomplete tool checkpoints</h3></div><span className="count-pill">{toolCheckpoints.length}</span></div><p className="run-recovery-note">The runtime refused to replay these side effects. Verify the external outcome before resolving a checkpoint.</p>{toolCheckpoints.map((checkpoint) => <div className="approval-record" key={`${checkpoint.unitId}:${checkpoint.callId}`}><strong>{checkpoint.callId}</strong><span>{checkpoint.unitId} · started {formatDate(checkpoint.occurredAt)}</span><div className="form-actions"><button className="button primary" disabled={actionLoading} onClick={() => void recoverToolCheckpoint(checkpoint, 'succeeded')} type="button"><Icon name="check" size={13} /> Mark succeeded</button><button className="button secondary" disabled={actionLoading} onClick={() => void recoverToolCheckpoint(checkpoint, 'failed')} type="button"><Icon name="close" size={13} /> Mark failed</button></div></div>)}</section>}
                 <nav aria-label="Observe detail views" className="observe-tabs" role="tablist">
-                  {(['runs', 'logs', 'traces', 'metrics'] as const).map((tab) => (
-                    <button aria-controls="observe-events-panel" aria-selected={observeTab === tab} className={observeTab === tab ? 'active' : ''} id={`observe-${tab}-tab`} key={tab} onClick={() => setObserveTab(tab)} role="tab" type="button" tabIndex={observeTab === tab ? 0 : -1}>
+                  {observeTabs.map((tab) => (
+                    <button aria-controls="observe-events-panel" aria-selected={observeTab === tab} className={observeTab === tab ? 'active' : ''} id={`observe-${tab}-tab`} key={tab} onClick={() => setObserveTab(tab)} onKeyDown={(event) => handleObserveTabKeyDown(event, tab)} role="tab" type="button" tabIndex={observeTab === tab ? 0 : -1}>
                       {tab[0]!.toUpperCase() + tab.slice(1)}
                     </button>
                   ))}
