@@ -2,6 +2,7 @@ export type WorkflowStatus = 'draft' | 'deployed';
 export type RunStatus =
   | 'queued'
   | 'running'
+  | 'paused'
   | 'waiting'
   | 'succeeded'
   | 'failed'

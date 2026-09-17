@@ -1829,7 +1829,7 @@ function RunsView() {
     window.location.hash = `/studio?${query.toString()}`;
   }
 
-  async function runAction(action: 'approve' | 'deny' | 'expire' | 'supersede' | 'cancel' | 'retry') {
+  async function runAction(action: 'approve' | 'deny' | 'expire' | 'supersede' | 'cancel' | 'pause' | 'resume' | 'retry') {
     if (selectedRun === null) return;
     setActionLoading(true);
     setActionError(null);
@@ -1845,6 +1845,10 @@ function RunsView() {
                 ? await api.supersedeRun(selectedRun.id)
               : action === 'cancel'
                 ? await api.cancelRun(selectedRun.id)
+                : action === 'pause'
+                  ? await api.pauseRun(selectedRun.id)
+                  : action === 'resume'
+                    ? await api.resumeRun(selectedRun.id)
                 : await api.retryRun(selectedRun.id, `${selectedRun.id}:observe-retry`);
       setSelectedRun(updated);
       if (action === 'retry') setSelectedRunId(updated.id);
@@ -1897,6 +1901,7 @@ function RunsView() {
               <select aria-label="Filter by status" onChange={(event) => setStatusFilter(event.target.value)} value={statusFilter}>
                 <option value="all">All statuses</option>
                 <option value="running">Running</option>
+                <option value="paused">Paused</option>
                 <option value="waiting">Waiting</option>
                 <option value="succeeded">Succeeded</option>
                 <option value="failed">Failed</option>
@@ -1942,9 +1947,19 @@ function RunsView() {
                         {actionLoading ? 'Updating…' : 'Fresh approval'}
                       </button></>
                     ) : null}
-                    {['queued', 'running', 'waiting'].includes(selectedRun.status) ? (
+                    {['queued', 'running', 'waiting', 'paused'].includes(selectedRun.status) ? (
                       <button className="button secondary" disabled={actionLoading} onClick={() => void runAction('cancel')} type="button">
                         <Icon name="close" /> {actionLoading ? 'Updating…' : 'Cancel'}
+                      </button>
+                    ) : null}
+                    {['queued', 'running'].includes(selectedRun.status) ? (
+                      <button className="button ghost" disabled={actionLoading} onClick={() => void runAction('pause')} type="button">
+                        {actionLoading ? 'Updating…' : 'Pause'}
+                      </button>
+                    ) : null}
+                    {selectedRun.status === 'paused' ? (
+                      <button className="button primary" disabled={actionLoading} onClick={() => void runAction('resume')} type="button">
+                        <Icon name="play" /> {actionLoading ? 'Resuming…' : 'Resume'}
                       </button>
                     ) : null}
                     {['failed', 'timed_out', 'cancelled'].includes(selectedRun.status) ? (

@@ -1260,6 +1260,34 @@ export async function createApp(
     },
   );
 
+  app.post<{ Params: { id: string } }>(
+    '/api/runs/:id/pause',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      try {
+        const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
+        if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
+        return await runExecutor.pause(request.params.id);
+      } catch (error) {
+        return reply.status(409).send({ message: errorMessage(error) });
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/runs/:id/resume',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      try {
+        const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
+        if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
+        return await runExecutor.resume(request.params.id);
+      } catch (error) {
+        return reply.status(409).send({ message: errorMessage(error) });
+      }
+    },
+  );
+
   app.get<{ Querystring: { runId?: string } }>('/api/events', async (request) => {
     const scope = scopeFromRequest(request);
     return { items: (await events.list(request.query.runId)).filter((event) => inScope(event, scope)) };

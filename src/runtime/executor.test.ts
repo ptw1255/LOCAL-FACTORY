@@ -876,6 +876,32 @@ describe('LocalWorkflowExecutor', () => {
     expect(recorded.some((event) => event.type === 'run.failed')).toBe(false);
   });
 
+  it('pauses at a safe WorkUnit boundary and resumes from the persisted checkpoint', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.nodes.find((node) => node.id === 'agent');
+    if (agent === undefined) throw new Error('Seed agent node is missing.');
+    agent.type = 'wait';
+    agent.label = 'Pausable wait';
+    agent.config = { durationMs: 250 };
+    agent.unit = defaultWorkUnit('wait');
+
+    const run = await executor.start(workflow);
+    await waitFor(async () => (await events.list(run.id)).some((event) => event.type === 'node.started' && event.nodeId === 'agent'));
+    const paused = await executor.pause(run.id);
+    expect(paused.status).toBe('paused');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.status)).toBe('paused');
+    expect((await events.list(run.id)).some((event) => event.type === 'run.succeeded')).toBe(false);
+
+    const resumed = await executor.resume(run.id);
+    expect(resumed.status).toBe('queued');
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded');
+    const recorded = await events.list(run.id);
+    expect(recorded.some((event) => event.type === 'run.paused')).toBe(true);
+    expect(recorded.some((event) => event.type === 'run.resumed')).toBe(true);
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.completedNodeIds).toHaveLength(workflow.nodes.length);
+  });
+
   it('records a WorkUnit timeout as a distinct terminal run state', async () => {
     const workflow = structuredClone(seedWorkflow);
     const prepare = workflow.nodes.find((node) => node.id === 'prepare');

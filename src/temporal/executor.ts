@@ -136,7 +136,7 @@ export class TemporalWorkflowExecutor {
   }
 
   public async recover(): Promise<number> {
-    const runs = await this.options.store.read((state) => state.runs.filter((run) => run.executionEngine === 'temporal' && ['queued', 'running'].includes(run.status)));
+    const runs = await this.options.store.read((state) => state.runs.filter((run) => run.executionEngine === 'temporal' && ['queued', 'running', 'paused'].includes(run.status)));
     for (const run of runs) {
       if (run.temporalWorkflowId === undefined) {
         await this.markFailed(run.id, 'Temporal run is missing its workflow identity.');
@@ -163,6 +163,22 @@ export class TemporalWorkflowExecutor {
       target.status = 'running';
       if (!target.approvedNodeIds.includes(node.id)) target.approvedNodeIds.push(node.id);
     }, 'approval.received', 'Human approval received.');
+  }
+
+  /** Request a cooperative pause; the Temporal workflow keeps its checkpoint and waits. */
+  public async pause(runId: string): Promise<RunRecord> {
+    const run = await this.requireRun(runId);
+    if (!['queued', 'running'].includes(run.status)) throw new Error('Only queued or running runs can be paused.');
+    await this.handleFor(run).signal('pause');
+    return this.updateRun(runId, (target) => { target.status = 'paused'; }, 'run.paused', 'Temporal workflow paused at a safe WorkUnit boundary.');
+  }
+
+  /** Resume a paused Temporal workflow from its durable checkpoint. */
+  public async resume(runId: string): Promise<RunRecord> {
+    const run = await this.requireRun(runId);
+    if (run.status !== 'paused') throw new Error('Only paused runs can be resumed.');
+    await this.handleFor(run).signal('resume');
+    return this.updateRun(runId, (target) => { target.status = 'running'; }, 'run.resumed', 'Temporal workflow resumed from its persisted checkpoint.');
   }
 
   public async cancel(runId: string): Promise<RunRecord> {
