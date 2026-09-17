@@ -546,8 +546,11 @@ PHOENIX_UI_URL=http://localhost:6006 \
 ```
 
 Then open <http://localhost:6006>. To export all three signals to another OTLP/HTTP
-backend, set `OTEL_EXPORTER_OTLP_ENDPOINT` as well. The app accepts
-`OBSERVABILITY_RETENTION_HOURS` (default `48`), but deployments should keep it at
+backend, set `OTEL_EXPORTER_OTLP_ENDPOINT` as well. The app accepts the standard
+comma-separated `OTEL_EXPORTER_OTLP_HEADERS` (`key=value`) for collector
+authentication; header values are used only when constructing the exporter and
+are never returned by the health API. The app accepts `OBSERVABILITY_RETENTION_HOURS`
+(default `48`), but deployments should keep it at
 48 hours when the product's short-retention policy is required. An external OTLP
 backend must also be configured with its own 48-hour TTL; the factory cannot delete
 records from arbitrary third-party storage.
