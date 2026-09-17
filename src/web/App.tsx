@@ -197,6 +197,12 @@ function readObserveRunId(): string | null {
   return runId === undefined || runId === '' ? null : runId;
 }
 
+export function observeRunHash(runId: string | null): string {
+  return runId === null || runId.trim() === ''
+    ? '#/observe'
+    : `#/observe?${new URLSearchParams({ runId: runId.trim() }).toString()}`;
+}
+
 function readStudioMode(projectId: string): 'files' | 'tree' | 'canvas' {
   const value = window.localStorage.getItem(`${STUDIO_MODE_STORAGE_PREFIX}${projectId}`);
   return value === 'tree' || value === 'canvas' ? value : 'files';
@@ -2142,6 +2148,8 @@ function RunsView() {
   }, [loadRuns, runs]);
 
   useEffect(() => {
+    const nextHash = observeRunHash(selectedRunId);
+    if (window.location.hash !== nextHash) window.history.replaceState(null, '', nextHash);
     if (selectedRunId === null) {
       setSelectedRun(null);
       setEvents([]);
