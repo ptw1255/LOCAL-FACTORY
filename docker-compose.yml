@@ -6,6 +6,8 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3100
+      # Compose is the local-development surface; production can opt back in.
+      FACTORY_AUTH_MODE: ${FACTORY_AUTH_MODE:-local}
       DATABASE_URL: postgresql://factory:factory@postgres:5432/factory
       WORKSPACE_ROOT: /app/.data/workspaces
       VAULT_ADDR: http://vault:8200
