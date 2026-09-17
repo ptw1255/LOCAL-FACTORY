@@ -314,6 +314,10 @@ h1, h2, h3, p { margin-top: 0; }
 .ide-run-output ul { display: grid; gap: 5px; list-style: none; margin: 0; max-height: 130px; overflow: auto; padding: 0; }
 .ide-run-output li { align-items: center; color: var(--subtle); display: grid; font-size: 10px; gap: 7px; grid-template-columns: auto 1fr auto; }
 .ide-run-output li time { color: #65758d; font-size: 9px; }
+.ide-run-history { border-bottom: 1px solid var(--border); max-height: 150px !important; padding-bottom: 6px !important; }
+.ide-run-history li > span { display: grid; gap: 2px; min-width: 0; }
+.ide-run-history li > span strong { color: var(--text); font-size: 10px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ide-run-history li > span small { color: #65758d; font-size: 9px; }
 .observe-tabs { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 4px; margin: 18px 0; }
 .observe-tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--subtle); cursor: pointer; font: inherit; font-size: 12px; padding: 8px 12px; }
 .observe-tabs button:hover, .observe-tabs button.active { border-bottom-color: var(--accent); color: var(--text); }
