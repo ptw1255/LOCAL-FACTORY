@@ -230,7 +230,11 @@ export class DeploymentReconciler {
     await this.events?.emit(runId, 'deployment.transition', `${operation} ${status}.`, {
       tenantId: scope.tenantId,
       projectId: scope.projectId,
-      traceId: correlationId.replaceAll('-', '').padEnd(32, '0').slice(0, 32),
+      // Run-backed deployment transitions inherit the run trace so deployment
+      // evidence joins the same parent/child tree as the workflow signals.
+      // Reconciler-only transitions have no run and retain a deterministic
+      // deployment trace identity.
+      ...(transition.runId === undefined ? { traceId: correlationId.replaceAll('-', '').padEnd(32, '0').slice(0, 32) } : {}),
       signal: 'trace',
       spanKind: 'tool',
       severityText: status === 'succeeded' ? 'INFO' : 'ERROR',
