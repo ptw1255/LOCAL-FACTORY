@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
 import { WorkUnitTimeoutError } from '../runtime/work-unit-dispatcher.js';
-import { configureTemporalGitHubRepository, configureTemporalModelProviders, configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, configureTemporalToolExecutors, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
+import { configureTemporalGitHubRepository, configureTemporalModelProviders, configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, configureTemporalToolExecutors, executeAgentIterationActivity, executeAgentToolActivity, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 
 const execFileAsync = (file: string, args: string[], options: { cwd?: string } = {}) => new Promise<void>((resolve, reject) => {
@@ -226,6 +226,48 @@ describe('Temporal node activities', () => {
     expect(lifecycle.find((record) => record.nodeType === 'agent.tool' && record.status === 'started')).toMatchObject({ inputHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
     expect(lifecycle.find((record) => record.nodeType === 'agent.tool' && record.status === 'succeeded')).toMatchObject({ outputHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
     expect(JSON.stringify(lifecycle)).not.toContain('patch');
+  });
+
+  it('uses a separate one-shot tool activity with a stable call identity', async () => {
+    const agent = structuredClone(seedWorkflow.agents[0]!);
+    agent.tools = ['review.request'];
+    const lifecycle: Array<{ nodeId: string; nodeType: string; status: string; idempotencyKey: string }> = [];
+    configureTemporalToolExecutors(new Map([
+      ['review.request', async ({ arguments: args }) => ({ accepted: true, target: (args as { target?: unknown }).target })],
+    ]));
+    configureTemporalObservabilitySink({ record: (record) => { lifecycle.push({ nodeId: record.nodeId, nodeType: record.nodeType, status: record.status, idempotencyKey: record.idempotencyKey }); } });
+    try {
+      await expect(executeAgentToolActivity({
+        runId: 'run-agent-tool-activity', nodeId: 'agent', agent, traceId: 'trace-agent-tool', iteration: 2,
+        call: { callId: 'call-42', name: 'review.request', arguments: '{"target":"patch"}' },
+      })).resolves.toMatchObject({ result: { accepted: true }, outputHash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    } finally {
+      configureTemporalObservabilitySink(undefined);
+      configureTemporalToolExecutors();
+    }
+    expect(lifecycle).toEqual([
+      { nodeId: 'agent:tool:call-42', nodeType: 'agent.tool', status: 'started', idempotencyKey: 'run-agent-tool-activity:agent-tool:agent:call-42' },
+      { nodeId: 'agent:tool:call-42', nodeType: 'agent.tool', status: 'succeeded', idempotencyKey: 'run-agent-tool-activity:agent-tool:agent:call-42' },
+    ]);
+  });
+
+  it('records a provider iteration as a durable, retryable activity result', async () => {
+    const agent = structuredClone(seedWorkflow.agents[0]!);
+    agent.model = { provider: 'iteration-provider', model: 'iteration-v1', capabilities: ['text'] };
+    const provider = {
+      provider: 'iteration-provider', capabilities: ['text'] as const,
+      chat: vi.fn(async () => ({ content: 'iteration result', model: 'iteration-v1' })),
+    };
+    const lifecycle: Array<{ nodeType: string; status: string }> = [];
+    configureTemporalModelProviders({ clients: new Map([['iteration-provider', provider]]) });
+    configureTemporalObservabilitySink({ record: (record) => { lifecycle.push({ nodeType: record.nodeType, status: record.status }); } });
+    try {
+      await expect(executeAgentIterationActivity({ runId: 'run-agent-iteration', nodeId: 'agent', agent, goal: 'iterate', traceId: 'trace-agent-iteration', iteration: 1, maxIterations: 2 })).resolves.toMatchObject({ invocations: [{ provider: 'iteration-provider', result: { content: 'iteration result' } }], lifecycle: { nodeType: 'agent.iteration', status: 'succeeded' } });
+    } finally {
+      configureTemporalObservabilitySink(undefined);
+      configureTemporalModelProviders();
+    }
+    expect(lifecycle).toEqual([{ nodeType: 'agent.iteration', status: 'started' }, { nodeType: 'agent.iteration', status: 'succeeded' }]);
   });
 
   it('completes an approval activity after the workflow signal is received', async () => {
