@@ -410,6 +410,23 @@ export interface ApprovalRecord {
 export type DeploymentDesiredState = 'running' | 'stopped';
 export type DeploymentObservedState = 'unknown' | 'starting' | 'live' | 'stopping' | 'degraded' | 'failed' | 'stopped';
 export type DeploymentAction = 'deploy' | 'start' | 'stop' | 'restart' | 'rollback';
+export type DeploymentApprovalDecision = 'pending' | 'approved' | 'denied' | 'expired';
+
+export interface DeploymentApprovalRecord {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  deploymentId: string;
+  artifactId: string;
+  runId: string;
+  bindingHash: string;
+  decision: DeploymentApprovalDecision;
+  requestedAt: string;
+  expiresAt: string;
+  actor?: string;
+  reason?: string;
+  decidedAt?: string;
+}
 
 export interface DeploymentTransition {
   id: string;
@@ -518,6 +535,7 @@ export interface PlatformState {
   evidence: OperationEvidence[];
   approvals: ApprovalRecord[];
   deployments: DeploymentRecord[];
+  deploymentApprovals: DeploymentApprovalRecord[];
   replayReports: ReplayReportRecord[];
   evaluationDatasets: EvaluationDatasetRecord[];
 }

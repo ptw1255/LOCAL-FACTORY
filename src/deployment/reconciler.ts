@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
-import type { ArtifactRecord, DeploymentAction, DeploymentRecord, DeploymentTransition, PlatformState } from '../domain/types.js';
+import type { ArtifactRecord, DeploymentAction, DeploymentApprovalDecision, DeploymentApprovalRecord, DeploymentRecord, DeploymentTransition, PlatformState } from '../domain/types.js';
 import type { EventService } from '../observability/event-service.js';
 import type { PlatformStore } from '../storage/store.js';
 
@@ -75,7 +75,55 @@ export class DeploymentReconciler {
     });
   }
 
-  public async action(id: string, scope: DeploymentScope, action: DeploymentAction, options: { artifactId?: string; actor?: string; reason?: string; expectedUpdatedAt?: string; idempotencyKey?: string; runId?: string } = {}): Promise<DeploymentRecord> {
+  public async requestApproval(id: string, scope: DeploymentScope, input: { artifactId: string; runId: string; actor?: string; expiresInMs?: number }): Promise<DeploymentApprovalRecord> {
+    return this.store.mutate((state) => {
+      const deployment = state.deployments.find((candidate) => candidate.id === id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
+      if (deployment === undefined) throw new Error('Deployment not found.');
+      if (!isProtectedEnvironment(deployment.environment)) throw new Error('Deployment approval is only required for protected environments.');
+      const artifact = this.findArtifact(state.artifacts, input.artifactId, scope);
+      if (artifact === undefined || !artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)) throw new Error('Deployment artifact is not available for this workflow.');
+      this.requireSuccessfulPromotionEvidence(state, deployment, scope, input.runId);
+      const existing = state.deploymentApprovals.find((approval) => approval.deploymentId === id && approval.artifactId === input.artifactId && approval.runId === input.runId && approval.decision === 'pending');
+      if (existing !== undefined) return existing;
+      const requestedAt = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + Math.max(60_000, Math.min(input.expiresInMs ?? 30 * 60_000, 24 * 60 * 60_000))).toISOString();
+      const approval: DeploymentApprovalRecord = {
+        id: `deployment-approval-${randomUUID()}`,
+        tenantId: scope.tenantId,
+        projectId: scope.projectId,
+        deploymentId: id,
+        artifactId: input.artifactId,
+        runId: input.runId,
+        bindingHash: deploymentApprovalBindingHash(id, input.artifactId, input.runId),
+        decision: 'pending',
+        requestedAt,
+        expiresAt,
+        ...(input.actor?.trim() === undefined ? {} : { actor: input.actor.trim() }),
+      };
+      state.deploymentApprovals.unshift(approval);
+      return approval;
+    });
+  }
+
+  public async decideApproval(id: string, scope: DeploymentScope, approvalId: string, decision: Exclude<DeploymentApprovalDecision, 'pending' | 'expired'>, options: { actor?: string; reason?: string } = {}): Promise<DeploymentApprovalRecord> {
+    return this.store.mutate((state) => {
+      const approval = state.deploymentApprovals.find((candidate) => candidate.id === approvalId && candidate.deploymentId === id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
+      if (approval === undefined) throw new Error('Deployment approval not found.');
+      if (approval.decision !== 'pending') throw new Error('Deployment approval is no longer pending.');
+      if (Date.parse(approval.expiresAt) <= Date.now()) {
+        approval.decision = 'expired';
+        approval.decidedAt = new Date().toISOString();
+        throw new Error('Deployment approval expired.');
+      }
+      approval.decision = decision;
+      approval.actor = options.actor?.trim() || 'local-operator';
+      approval.reason = options.reason?.trim();
+      approval.decidedAt = new Date().toISOString();
+      return approval;
+    });
+  }
+
+  public async action(id: string, scope: DeploymentScope, action: DeploymentAction, options: { artifactId?: string; actor?: string; reason?: string; expectedUpdatedAt?: string; idempotencyKey?: string; runId?: string; approvalId?: string } = {}): Promise<DeploymentRecord> {
     let transitionError: unknown;
     let applied = false;
     const result = await this.store.mutate(async (state) => {
@@ -101,7 +149,7 @@ export class DeploymentReconciler {
           if (artifact === undefined || !artifact.workflows.some((workflow) => workflow.id === deployment.workflowId)) throw new Error('Deployment artifact is not available for this workflow.');
           if (action === 'rollback' && (!deployment.healthyArtifactIds.includes(targetArtifactId) || targetArtifactId === deployment.artifactId)) throw new Error('Rollback requires a prior healthy artifact for this deployment.');
           if (action === 'deploy' && isProtectedEnvironment(deployment.environment)) {
-            this.requirePromotionEvidence(state, deployment, scope, options.runId);
+            this.requirePromotionEvidence(state, deployment, scope, options.runId, targetArtifactId, options.approvalId);
           }
           deployment.artifactId = targetArtifactId;
         }
@@ -296,6 +344,21 @@ export class DeploymentReconciler {
     deployment: DeploymentRecord,
     scope: DeploymentScope,
     runId: string | undefined,
+    artifactId: string,
+    approvalId: string | undefined,
+  ): void {
+    this.requireSuccessfulPromotionEvidence(state, deployment, scope, runId);
+    const approval = approvalId === undefined ? undefined : state.deploymentApprovals.find((candidate) => candidate.id === approvalId && candidate.deploymentId === deployment.id && candidate.tenantId === scope.tenantId && candidate.projectId === scope.projectId);
+    if (approval === undefined || approval.decision !== 'approved' || approval.artifactId !== artifactId || approval.runId !== runId || approval.bindingHash !== deploymentApprovalBindingHash(deployment.id, artifactId, runId ?? '')) {
+      throw new Error('Protected deployment requires an approved deployment approval bound to the selected artifact and run.');
+    }
+  }
+
+  private requireSuccessfulPromotionEvidence(
+    state: PlatformState,
+    deployment: DeploymentRecord,
+    scope: DeploymentScope,
+    runId: string | undefined,
   ): void {
     if (runId === undefined || runId.trim() === '') {
       throw new Error('Protected deployment environments require a successful coding-workflow run.');
@@ -311,4 +374,8 @@ export class DeploymentReconciler {
       throw new Error('Protected deployment requires a succeeded reviewable patch and passing required checks.');
     }
   }
+}
+
+function deploymentApprovalBindingHash(deploymentId: string, artifactId: string, runId: string): string {
+  return `sha256:${createHash('sha256').update(JSON.stringify({ deploymentId, artifactId, runId })).digest('hex')}`;
 }
