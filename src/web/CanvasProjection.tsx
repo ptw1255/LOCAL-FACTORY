@@ -19,14 +19,36 @@ export interface CanvasProjectionProps {
   onEdgesChange: (changes: EdgeChange<Edge>[]) => void;
   onNodesChange: (changes: NodeChange<CanvasNode>[]) => void;
   onSelectionChange: (selection: OnSelectionChangeParams) => void;
+  onNodeDoubleClick?: (node: CanvasNode) => void;
 }
 
 const nodeTypes = { workflow: WorkflowNodeCard };
 
 /** Compatibility canvas kept behind a lazy boundary so file-first authoring stays light. */
-export function CanvasProjection({ nodes, edges, onConnect, onEdgesChange, onNodesChange, onSelectionChange }: CanvasProjectionProps) {
+export function CanvasProjection({ nodes, edges, onConnect, onEdgesChange, onNodesChange, onSelectionChange, onNodeDoubleClick }: CanvasProjectionProps) {
+  const renderedNodes = nodes.map((node) => ({
+    ...node,
+    data: {
+      ...node.data,
+      ...(onNodeDoubleClick === undefined ? {} : { onOpenSource: () => onNodeDoubleClick(node) }),
+    },
+  }));
   return (
-    <section className="flow-canvas" aria-label="Workflow canvas">
+    <section
+      aria-label="Workflow canvas"
+      className="flow-canvas"
+      onDoubleClick={(event) => {
+        // React Flow's node callback is not emitted by every interactive child
+        // (notably the custom node card). Resolve the stable DOM node id as a
+        // fallback so double-click source navigation remains reliable.
+        const element = event.target instanceof HTMLElement
+          ? event.target.closest<HTMLElement>('.react-flow__node')
+          : null;
+        const nodeId = element?.getAttribute('data-id');
+        const node = nodeId === null || nodeId === undefined ? undefined : nodes.find((candidate) => candidate.id === nodeId);
+        if (node !== undefined) onNodeDoubleClick?.(node);
+      }}
+    >
       <div className="canvas-meta">
         <span>{nodes.length} nodes</span>
         <span>{edges.length} connections</span>
@@ -38,10 +60,11 @@ export function CanvasProjection({ nodes, edges, onConnect, onEdgesChange, onNod
         fitView
         fitViewOptions={{ padding: 0.2 }}
         nodeTypes={nodeTypes}
-        nodes={nodes}
+        nodes={renderedNodes}
         onConnect={onConnect}
         onEdgesChange={onEdgesChange}
         onNodesChange={onNodesChange}
+        onNodeDoubleClick={(_event, node) => onNodeDoubleClick?.(node)}
         onSelectionChange={onSelectionChange}
         proOptions={{ hideAttribution: true }}
       >

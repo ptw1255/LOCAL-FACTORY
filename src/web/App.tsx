@@ -1018,6 +1018,18 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     setSelectedEdgeId(selection.edges[0]?.id ?? null);
   }
 
+  function openCanvasNodeSource(node: CanvasNode): void {
+    // Newly-added nodes may not have a compiler-provided source location
+    // until the next compile; the workflow module is still the correct source
+    // target for that node.
+    const path = node.data.sourcePath ?? `workflows/${workflow?.id ?? 'workflow'}.workflow.yaml`;
+    window.sessionStorage.setItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`, path);
+    const query = new URLSearchParams({ file: path });
+    if (node.data.sourceLine !== undefined) query.set('line', String(node.data.sourceLine));
+    window.history.replaceState(null, '', `#/studio?${query.toString()}`);
+    setStudioMode('files');
+  }
+
   async function selectWorkflow(id: string) {
     if (workflow?.id === id) return;
     setLoading(true);
@@ -1212,6 +1224,11 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
       const currentCanvas = await api.projectFile(projectId, canvasPath).catch(() => undefined);
       await api.saveProjectFile(projectId, canvasPath, renderCanvasResource(saved, projected.nodes, projected.edges), currentCanvas?.sha256);
       setWorkflow(saved);
+      if (!presentationOnly) {
+        const refreshedCanvas = workflowToCanvas(saved, catalog);
+        setNodes(refreshedCanvas.nodes);
+        setEdges(refreshedCanvas.edges);
+      }
       setYamlSource((await api.declarativeYaml(projectId)).trim());
       setYamlDirty(false);
       setWorkflows((current) =>
@@ -1515,7 +1532,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
           </details>
         </aside>
         <LazyChunkBoundary><Suspense fallback={<div className="state-panel" role="status"><strong>Loading Canvas</strong><span>Preparing the visual projection.</span></div>}>
-          <LazyCanvasProjection nodes={nodes} edges={edges} onConnect={onConnect} onEdgesChange={onEdgesChange} onNodesChange={onNodesChange} onSelectionChange={onSelectionChange} />
+          <LazyCanvasProjection nodes={nodes} edges={edges} onConnect={onConnect} onEdgesChange={onEdgesChange} onNodeDoubleClick={openCanvasNodeSource} onNodesChange={onNodesChange} onSelectionChange={onSelectionChange} />
         </Suspense></LazyChunkBoundary>
         <aside className="inspector">
           <div className="panel-title">
@@ -1550,6 +1567,7 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
                 <span>Node ID</span>
                 <input disabled value={selectedNode.id} />
               </label>
+              {selectedNode.data.sourcePath === undefined ? null : <button className="button ghost wide" onClick={() => openCanvasNodeSource(selectedNode)} type="button"><Icon name="code" size={14} /> Open source</button>}
               <label className="form-field">
                 <span>Configuration</span>
                 <textarea
@@ -1753,6 +1771,8 @@ function OperationalTree({
   const resizingBottomPanel = useRef(false);
   const syntaxCheckTimer = useRef<number | undefined>(undefined);
   const syntaxCheckRevision = useRef(0);
+  const initialFilePath = useRef(readStudioFile(projectId));
+  const initialFileLoaded = useRef(false);
 
   useEffect(() => () => {
     if (syntaxCheckTimer.current !== undefined) window.clearTimeout(syntaxCheckTimer.current);
@@ -1884,6 +1904,18 @@ function OperationalTree({
       }
     }).catch(() => setFiles([]));
   }, [fileSearch, projectId]);
+
+  // Source links can mount Workspace with a persisted file path before the
+  // explorer request completes. Hydrate that file exactly once so a deep link
+  // opens the corresponding module instead of leaving the aggregate preview
+  // in the editor.
+  useEffect(() => {
+    if (initialFileLoaded.current) return;
+    const file = files.find((candidate) => candidate.path === initialFilePath.current);
+    if (file === undefined) return;
+    initialFileLoaded.current = true;
+    void selectFile(file);
+  }, [files]);
 
   useEffect(() => {
     let cancelled = false;

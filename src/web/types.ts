@@ -77,6 +77,8 @@ export interface WorkflowNode {
   sourcePath?: string;
   sourceLine?: number;
   unit?: WorkUnitDefinition;
+  /** Runtime-only action; omitted when Canvas nodes are serialized. */
+  onOpenSource?: () => void;
 }
 
 export interface WorkUnitDefinition {

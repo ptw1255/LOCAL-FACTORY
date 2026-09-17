@@ -22,7 +22,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps<CanvasNode>) {
     .join(' · ');
 
   return (
-    <article className={`workflow-node category-${data.category.toLowerCase()} ${selected ? 'selected' : ''}`}>
+    <article className={`workflow-node category-${data.category.toLowerCase()} ${selected ? 'selected' : ''}`} onDoubleClick={() => { if (typeof data.onOpenSource === 'function') data.onOpenSource(); }}>
       <Handle className="node-handle" position={Position.Left} type="target" />
       <div className="workflow-node-topline">
         <span className="node-icon">
@@ -38,4 +38,3 @@ export function WorkflowNodeCard({ data, selected }: NodeProps<CanvasNode>) {
     </article>
   );
 }
-
