@@ -787,6 +787,40 @@ describe('LocalWorkflowExecutor', () => {
     expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.error).toContain('incomplete checkpoint');
   });
 
+  it('records manual tool recovery and leaves confirmed runs paused for explicit resume', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agentNode = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agentNode === undefined) throw new Error('Agent node is missing.');
+    const run = createQueuedRun(workflow);
+    run.status = 'failed';
+    run.error = 'Agent tool has an incomplete checkpoint.';
+    await store.mutate((state) => { state.runs.push(run); });
+    await events.recordEvidence({
+      runId: run.id,
+      unitId: agentNode.id,
+      operation: 'agent.tool',
+      idempotencyKey: 'manual-call:started',
+      status: 'started',
+      input: { name: 'repo.check', callId: 'manual-call' },
+    });
+
+    const recovered = await executor.recoverToolCheckpoint(run.id, {
+      unitId: agentNode.id,
+      callId: 'manual-call',
+      resolution: 'succeeded',
+      outputHash: 'a'.repeat(64),
+      reason: 'Verified the check completed before the worker restarted.',
+      actor: 'test-operator',
+    });
+    expect(recovered.status).toBe('paused');
+    expect(recovered.error).toBeUndefined();
+    const evidence = await events.listEvidence(run.id);
+    expect(evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ idempotencyKey: 'manual-call:recovered', status: 'succeeded', actor: 'test-operator', source: 'operator-recovery' }),
+    ]));
+    expect((await events.list(run.id)).some((event) => event.type === 'agent.tool.recovery' && event.attributes?.['tool.recovery.resolution'] === 'succeeded')).toBe(true);
+  });
+
   it('fails closed when an agent requests an undeclared tool', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];

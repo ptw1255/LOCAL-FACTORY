@@ -1322,6 +1322,55 @@ export async function createApp(
     },
   );
 
+  app.get<{ Params: { id: string } }>('/api/runs/:id/tool-checkpoints', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    const run = await store.read((state) => state.runs.find((candidate) => candidate.id === request.params.id && inScope(candidate, scope)));
+    if (run === undefined) return reply.status(404).send({ message: 'Run not found.' });
+    const items = await store.read((state) => state.evidence
+      .filter((evidence) => evidence.runId === run.id && evidence.operation === 'agent.tool' && evidence.status === 'started' && evidence.idempotencyKey?.endsWith(':started'))
+      .filter((started) => state.evidence.every((candidate) => !(
+        candidate.runId === run.id
+        && candidate.unitId === started.unitId
+        && candidate.operation === 'agent.tool'
+        && candidate.idempotencyKey === `${started.idempotencyKey?.slice(0, -':started'.length)}:succeeded`
+        && candidate.status === 'succeeded'
+      )))
+      .map((started) => ({
+        evidenceId: started.id,
+        unitId: started.unitId,
+        callId: started.idempotencyKey?.slice(0, -':started'.length) ?? '',
+        status: 'incomplete' as const,
+        occurredAt: started.occurredAt,
+        correlationId: started.correlationId,
+      })));
+    return { items };
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/runs/:id/tool-recovery', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    const belongs = await store.read((state) => state.runs.some((run) => run.id === request.params.id && inScope(run, scope)));
+    if (!belongs) return reply.status(404).send({ message: 'Run not found.' });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    if (typeof body.unitId !== 'string' || typeof body.callId !== 'string' || (body.resolution !== 'succeeded' && body.resolution !== 'failed') || typeof body.reason !== 'string') {
+      return reply.status(422).send({ message: 'unitId, callId, resolution, and reason are required.' });
+    }
+    if (!('recoverToolCheckpoint' in runExecutor)) {
+      return reply.status(409).send({ message: 'Tool checkpoint recovery is only supported by the local execution plane.' });
+    }
+    try {
+      return await runExecutor.recoverToolCheckpoint(request.params.id, {
+        unitId: body.unitId,
+        callId: body.callId,
+        resolution: body.resolution,
+        reason: body.reason,
+        ...(typeof body.actor === 'string' ? { actor: body.actor } : {}),
+        ...(typeof body.outputHash === 'string' ? { outputHash: body.outputHash } : {}),
+      });
+    } catch (error) {
+      return reply.status(409).send({ message: errorMessage(error) });
+    }
+  });
+
   app.get<{ Querystring: { runId?: string } }>('/api/events', async (request) => {
     const scope = scopeFromRequest(request);
     return { items: (await events.list(request.query.runId)).filter((event) => inScope(event, scope)) };

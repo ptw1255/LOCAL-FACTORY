@@ -119,6 +119,17 @@ export interface AgentToolExecutionContext {
   signal: AbortSignal;
 }
 
+export type AgentToolRecoveryResolution = 'succeeded' | 'failed';
+
+export interface AgentToolRecoveryRequest {
+  unitId: string;
+  callId: string;
+  resolution: AgentToolRecoveryResolution;
+  reason: string;
+  actor?: string;
+  outputHash?: string;
+}
+
 export type AgentToolExecutor = (context: AgentToolExecutionContext) => Promise<unknown> | unknown;
 
 function sleep(durationMs: number, signal: AbortSignal): Promise<void> {
@@ -253,6 +264,84 @@ export class LocalWorkflowExecutor {
     await this.events.emit(runId, 'run.resumed', 'Workflow run resumed from its persisted checkpoint.');
     void this.execute(runId);
     return run;
+  }
+
+  /**
+   * Resolve an incomplete tool checkpoint without replaying the side effect.
+   * A confirmed success leaves the run paused so an operator must explicitly
+   * resume it; a confirmed failure keeps the run terminal for a normal retry.
+   */
+  public async recoverToolCheckpoint(runId: string, request: AgentToolRecoveryRequest): Promise<RunRecord> {
+    const reason = request.reason.trim();
+    if (reason === '') throw new Error('A recovery reason is required.');
+    if (request.resolution === 'succeeded' && !/^[a-f0-9]{64}$/i.test(request.outputHash ?? '')) {
+      throw new Error('A sha256 outputHash is required when confirming tool success.');
+    }
+    const context = await this.store.read((state) => {
+      const run = state.runs.find((candidate) => candidate.id === runId);
+      if (run === undefined) return undefined;
+      const started = state.evidence.find((evidence) =>
+        evidence.runId === runId
+        && evidence.unitId === request.unitId
+        && evidence.operation === 'agent.tool'
+        && evidence.idempotencyKey === `${request.callId}:started`
+        && evidence.status === 'started',
+      );
+      const succeeded = state.evidence.find((evidence) =>
+        evidence.runId === runId
+        && evidence.unitId === request.unitId
+        && evidence.operation === 'agent.tool'
+        && evidence.idempotencyKey === `${request.callId}:succeeded`
+        && evidence.status === 'succeeded',
+      );
+      return { run, started, succeeded };
+    });
+    if (context === undefined) throw new Error('Run not found.');
+    if (!['failed', 'paused'].includes(context.run.status)) throw new Error('Tool recovery is only available for failed or paused runs.');
+    if (context.started === undefined) throw new Error('Incomplete tool checkpoint was not found.');
+    if (context.succeeded !== undefined) throw new Error('Tool checkpoint is already resolved as succeeded.');
+
+    const metadata = {
+      'tool.recovery': 'manual',
+      'tool.call_id': request.callId,
+      ...(request.outputHash === undefined ? {} : { 'tool.output_hash': request.outputHash.toLowerCase() }),
+    };
+    await this.events.recordEvidence({
+      runId,
+      unitId: request.unitId,
+      operation: 'agent.tool',
+      idempotencyKey: `${request.callId}:recovered`,
+      actor: request.actor?.trim() || 'local-operator',
+      source: 'operator-recovery',
+      status: request.resolution,
+      error: request.resolution === 'failed' ? reason : undefined,
+      metadata,
+    });
+    await this.events.emit(runId, 'agent.tool.recovery', `Operator resolved incomplete agent tool ${request.callId} as ${request.resolution}.`, {
+      nodeId: request.unitId,
+      signal: 'log',
+      spanKind: 'tool',
+      severityText: request.resolution === 'failed' ? 'WARN' : 'INFO',
+      attributes: {
+        'openinference.span.kind': 'TOOL',
+        'tool.call_id': request.callId,
+        'tool.recovery': 'manual',
+        'tool.recovery.resolution': request.resolution,
+      },
+      data: { reason },
+    });
+    if (request.resolution === 'succeeded') {
+      return await this.store.mutate((state) => {
+        const run = state.runs.find((candidate) => candidate.id === runId);
+        if (run === undefined) throw new Error('Run not found.');
+        run.status = 'paused';
+        delete run.error;
+        delete run.completedAt;
+        delete run.durationMs;
+        return run;
+      });
+    }
+    return context.run;
   }
 
   public async approve(runId: string, options: { actor?: string; reason?: string } = {}): Promise<RunRecord> {
