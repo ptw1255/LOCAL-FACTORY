@@ -2110,8 +2110,8 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
     onNavigate('observe');
   }
 
-  const loadDeployments = useCallback(async () => {
-    setLoading(true);
+  const loadDeployments = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setError(null);
     try {
       const [deploymentResponse, envelopeResponse, artifactResponse] = await Promise.all([api.deployments(), api.deploymentEnvelopes(), api.artifacts(projectId)]);
@@ -2127,6 +2127,11 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   }, [projectId]);
 
   useEffect(() => void loadDeployments(), [loadDeployments]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void loadDeployments(true), 10_000);
+    return () => window.clearInterval(timer);
+  }, [loadDeployments]);
 
   const refreshDeploymentState = useCallback(async () => {
     const current = await api.deployments();
