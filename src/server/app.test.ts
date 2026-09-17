@@ -699,7 +699,7 @@ describe('platform API', () => {
       payload: {},
     });
     const runId = start.json<{ id: string }>().id;
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForTerminal(store, runId);
 
     const telemetry = await app.inject({
       method: 'GET',
