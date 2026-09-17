@@ -3,6 +3,7 @@ import {
   defineSignal,
   proxyActivities,
   setHandler,
+  upsertSearchAttributes,
 } from '@temporalio/workflow';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
@@ -38,6 +39,17 @@ const { executeAgentToolActivity } = proxyActivities<typeof activities>({
 export const approveSignal = defineSignal<[string]>('approve');
 export const pauseSignal = defineSignal('pause');
 export const resumeSignal = defineSignal('resume');
+
+export function temporalStatusSearchAttributes(status: 'running' | 'waiting' | 'paused' | 'succeeded' | 'failed'): { Status: [string] } {
+  return { Status: [status] };
+}
+
+function setTemporalStatus(status: 'running' | 'waiting' | 'paused' | 'succeeded' | 'failed'): void {
+  // Keep the server-side Status search attribute aligned with durable workflow
+  // transitions. The initial value is supplied by the client; these upserts
+  // cover transitions that happen inside the workflow history.
+  upsertSearchAttributes(temporalStatusSearchAttributes(status));
+}
 
 export interface TemporalWorkflowInput {
   runId: string;
@@ -198,14 +210,18 @@ export async function executeWorkflow(
   const activated = new Set([trigger.id]);
   const approved = new Set<string>();
   let paused = false;
+  setTemporalStatus('running');
   setHandler(approveSignal, (nodeId) => {
     approved.add(nodeId);
+    setTemporalStatus('running');
   });
   setHandler(pauseSignal, () => {
     paused = true;
+    setTemporalStatus('paused');
   });
   setHandler(resumeSignal, () => {
     paused = false;
+    setTemporalStatus('running');
   });
 
   while (completed.size < activated.size) {
@@ -222,12 +238,15 @@ export async function executeWorkflow(
     });
 
     if (node === undefined) {
+      setTemporalStatus('failed');
       throw new Error('No executable node is available for the active graph.');
     }
     if (requiresTemporalApproval(node, input.definition)) {
+      setTemporalStatus('waiting');
       await condition(() => approved.has(node.id) || paused);
       await condition(() => !paused);
       if (!approved.has(node.id)) continue;
+      setTemporalStatus('running');
     }
 
     const activityConfig = { ...node.config };
@@ -282,7 +301,11 @@ export async function executeWorkflow(
         });
       }
     } catch (error) {
-      await executeCompensations(input, [...completed].map((id) => input.definition.nodes.find((candidate) => candidate.id === id)).filter((candidate): candidate is WorkflowDefinition['nodes'][number] => candidate !== undefined), outputs, approved);
+      try {
+        await executeCompensations(input, [...completed].map((id) => input.definition.nodes.find((candidate) => candidate.id === id)).filter((candidate): candidate is WorkflowDefinition['nodes'][number] => candidate !== undefined), outputs, approved);
+      } finally {
+        setTemporalStatus('failed');
+      }
       throw error;
     }
     completed.add(node.id);
@@ -300,6 +323,7 @@ export async function executeWorkflow(
     }
   }
 
+  setTemporalStatus('succeeded');
   return { completedNodeIds: [...completed], unitOutputs: Object.fromEntries(outputs), lifecycle };
 }
 
@@ -321,7 +345,9 @@ async function executeCompensations(
     sequence += 1;
     try {
       if (plan.config.requiresApproval === true) {
+        setTemporalStatus('waiting');
         await condition(() => approved.has(plan.nodeId));
+        setTemporalStatus('running');
       }
       const compensationUnit = { ...defaultWorkUnit(plan.nodeType), idempotencyKey: plan.idempotencyKey };
       const executeActivity = isTemporalSideEffectingUnit(compensationUnit) ? executeNodeSideEffectActivity : executeNodeActivity;

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
 import type { AgentDefinition } from '../domain/types.js';
-import { isTemporalSideEffectingUnit, planCompensations, requiresTemporalApproval } from './workflows.js';
+import { isTemporalSideEffectingUnit, planCompensations, requiresTemporalApproval, temporalStatusSearchAttributes } from './workflows.js';
 
 const toolAgent: AgentDefinition = {
   id: 'tool-agent', version: 1, name: 'Tool agent', purpose: 'Test', instructions: 'Test', skills: [], tools: ['repo.check'],
@@ -57,5 +57,10 @@ describe('Temporal compensation planning', () => {
     toolAgent.approval = { beforeSideEffects: false, beforeTools: [] };
     expect(requiresTemporalApproval(node, workflow)).toBe(false);
     toolAgent.approval = { beforeSideEffects: true, beforeTools: [] };
+  });
+
+  it('uses the stable Status search-attribute shape for lifecycle transitions', () => {
+    expect(temporalStatusSearchAttributes('waiting')).toEqual({ Status: ['waiting'] });
+    expect(temporalStatusSearchAttributes('succeeded')).toEqual({ Status: ['succeeded'] });
   });
 });
