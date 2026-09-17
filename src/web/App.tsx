@@ -1580,6 +1580,8 @@ function RunsView() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [workflowFilter, setWorkflowFilter] = useState('all');
+  const [environmentFilter, setEnvironmentFilter] = useState('all');
+  const [artifactFilter, setArtifactFilter] = useState('all');
   const [timeFilterHours, setTimeFilterHours] = useState(48);
   const [observeTab, setObserveTab] = useState<ObserveTab>('runs');
   const [retentionHours, setRetentionHours] = useState(48);
@@ -1645,9 +1647,14 @@ function RunsView() {
   const filteredRuns = runs.filter((run) => {
     const matchesQuery = `${run.workflowName} ${run.id}`.toLowerCase().includes(query.toLowerCase());
     const matchesWorkflow = workflowFilter === 'all' || run.workflowId === workflowFilter;
+    const matchesEnvironment = environmentFilter === 'all' || run.environment === environmentFilter;
+    const matchesArtifact = artifactFilter === 'all' || run.artifactId === artifactFilter;
     const matchesTime = timeFilterHours <= 0 || new Date(run.startedAt).getTime() >= Date.now() - timeFilterHours * 60 * 60 * 1000;
-    return matchesQuery && matchesWorkflow && matchesTime && (statusFilter === 'all' || run.status === statusFilter);
+    return matchesQuery && matchesWorkflow && matchesEnvironment && matchesArtifact && matchesTime && (statusFilter === 'all' || run.status === statusFilter);
   });
+
+  const environments = [...new Set(runs.map((run) => run.environment).filter((value): value is string => value !== undefined && value !== ''))].sort();
+  const artifacts = [...new Set(runs.map((run) => run.artifactId).filter((value): value is string => value !== undefined && value !== ''))].sort();
 
   const activeRuns = runs.filter((run) => ['queued', 'running', 'waiting'].includes(run.status)).length;
   const successfulRuns = runs.filter((run) => run.status === 'succeeded').length;
@@ -1712,6 +1719,14 @@ function RunsView() {
                 <option value="all">All workflows</option>
                 {[...new Map(runs.map((run) => [run.workflowId, run.workflowName])).entries()].map(([id, name]) => <option key={id} value={id}>{name}</option>)}
               </select>
+              <select aria-label="Filter by environment" onChange={(event) => setEnvironmentFilter(event.target.value)} value={environmentFilter}>
+                <option value="all">All environments</option>
+                {environments.map((environment) => <option key={environment} value={environment}>{environment}</option>)}
+              </select>
+              <select aria-label="Filter by compiled artifact" onChange={(event) => setArtifactFilter(event.target.value)} value={artifactFilter}>
+                <option value="all">All artifacts</option>
+                {artifacts.map((artifact) => <option key={artifact} value={artifact}>{artifact.slice(0, 18)}</option>)}
+              </select>
               <select aria-label="Filter by time window" onChange={(event) => setTimeFilterHours(Number(event.target.value))} value={timeFilterHours}>
                 <option value={24}>Last 24 hours</option>
                 <option value={48}>Last 48 hours</option>
@@ -1738,7 +1753,7 @@ function RunsView() {
                   type="button"
                 >
                   <span className={`run-state-dot status-${run.status}`} />
-                  <span className="run-main"><strong>{run.workflowName}</strong><small>{run.id}</small></span>
+                  <span className="run-main"><strong>{run.workflowName}</strong><small>{run.id}{run.environment === undefined ? '' : ` · ${run.environment}`}{run.artifactId === undefined ? '' : ` · ${run.artifactId.slice(0, 18)}`}</small></span>
                   <span className="run-side"><StatusBadge status={run.status} /><small>{formatDate(run.startedAt)}</small></span>
                 </button>
               ))}
