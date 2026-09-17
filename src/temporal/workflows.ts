@@ -41,8 +41,11 @@ export const pauseSignal = defineSignal('pause');
 export const resumeSignal = defineSignal('resume');
 export const statusSignal = defineSignal<['cancelled' | 'failed']>('status');
 
-export function temporalStatusSearchAttributes(status: 'running' | 'waiting' | 'paused' | 'succeeded' | 'failed' | 'cancelled'): { Status: [string] } {
-  return { Status: [status] };
+export function temporalStatusSearchAttributes(status: 'running' | 'waiting' | 'paused' | 'succeeded' | 'failed' | 'cancelled'): { CustomKeywordField: [string] } {
+  // The local auto-setup image registers the standard Custom*Field set. Keep
+  // status queryable without requiring a second provisioning service; richer
+  // release/tenant metadata remains in workflow memo and run evidence.
+  return { CustomKeywordField: [status] };
 }
 
 function setTemporalStatus(status: 'running' | 'waiting' | 'paused' | 'succeeded' | 'failed' | 'cancelled'): void {

@@ -112,14 +112,11 @@ export class TemporalWorkflowExecutor {
         taskQueue,
         args: [{ runId: run.id, definition: run.workflowDefinition, releaseBundleHash: run.releaseBundleHash, pinnedAgentVersions: run.pinnedAgentVersions, ...(run.input === undefined ? {} : { input: run.input }) }],
         searchAttributes: {
-          FactoryId: ['agentic-workflow-factory'],
           WorkflowId: [workflow.id],
-          WorkflowVersion: [String(workflow.version)],
-          Environment: [run.environment ?? workflow.status],
-          Status: ['running'],
-          CorrelationId: [run.traceId],
-          ReleaseBundle: [run.releaseBundleHash ?? releaseBundleHash(workflow)],
-          AgentVersions: [JSON.stringify(run.pinnedAgentVersions ?? {})],
+          // Keep the start request compatible with Temporal's local
+          // auto-setup search-attribute set. Rich release, environment, and
+          // agent provenance is carried in memo and persisted run evidence.
+          CustomKeywordField: ['running'],
         },
         memo: { artifactId: run.artifactId ?? '', workflowVersion: workflow.version, environment: run.environment ?? 'local', deploymentId: run.deploymentId ?? '', releaseBundleHash: run.releaseBundleHash ?? releaseBundleHash(workflow), pinnedAgentVersions: run.pinnedAgentVersions ?? {} },
       });
