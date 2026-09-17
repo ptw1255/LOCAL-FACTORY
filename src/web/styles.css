@@ -548,6 +548,9 @@ h1, h2, h3, p { margin-top: 0; }
   width: 210px;
 }
 .workflow-node:hover { border-color: #536784; }
+.workflow-node.unresolved { border-color: #b7791f; box-shadow: 0 0 0 1px rgba(245, 158, 11, .18), 0 8px 22px rgba(0, 0, 0, .3); }
+.workflow-node.unresolved .node-type { color: #f2b95f; }
+.node-diagnostic { color: #f2b95f; display: block; font-size: 8px; font-weight: 700; margin-top: 6px; }
 .workflow-node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(64, 211, 162, .13), 0 8px 24px rgba(0, 0, 0, .4); }
 .workflow-node-topline { align-items: center; display: flex; margin-bottom: 10px; }
 .node-icon { height: 26px; width: 26px; }

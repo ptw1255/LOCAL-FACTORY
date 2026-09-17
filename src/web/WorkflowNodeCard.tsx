@@ -22,7 +22,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps<CanvasNode>) {
     .join(' · ');
 
   return (
-    <article className={`workflow-node category-${data.category.toLowerCase()} ${selected ? 'selected' : ''}`} onDoubleClick={() => { if (typeof data.onOpenSource === 'function') data.onOpenSource(); }}>
+    <article aria-label={data.unresolved === true ? `${data.label} (unresolved node type)` : data.label} className={`workflow-node category-${data.category.toLowerCase()} ${data.unresolved === true ? 'unresolved' : ''} ${selected ? 'selected' : ''}`} onDoubleClick={() => { if (typeof data.onOpenSource === 'function') data.onOpenSource(); }}>
       <Handle className="node-handle" position={Position.Left} type="target" />
       <div className="workflow-node-topline">
         <span className="node-icon">
@@ -33,6 +33,7 @@ export function WorkflowNodeCard({ data, selected }: NodeProps<CanvasNode>) {
       </div>
       <strong>{data.label}</strong>
       <span className="node-type">{data.nodeType}</span>
+      {data.unresolved === true ? <span className="node-diagnostic" role="status">Unresolved node type · check catalog</span> : null}
       <p>{summary || data.description}</p>
       <Handle className="node-handle" position={Position.Right} type="source" />
     </article>

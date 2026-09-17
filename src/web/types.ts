@@ -424,6 +424,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   category: string;
   description: string;
   config: Record<string, unknown>;
+  /** True when the compiled node type is absent from the current catalog. */
+  unresolved?: boolean;
   /** Source location retained when a compiled node is projected into Canvas. */
   sourcePath?: string;
   sourceLine?: number;
