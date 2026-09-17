@@ -236,6 +236,26 @@ describe('TemporalWorkflowExecutor', () => {
     expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.approvedNodeIds))).toEqual(['prepare']);
   });
 
+  it('routes approval signals to a pending compensation boundary', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-compensation-approval-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-compensation-approval');
+    const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-temporal-compensation-approval';
+    const prepare = workflow.nodes.find((candidate) => candidate.id === 'prepare');
+    if (prepare?.unit === undefined) throw new Error('Prepare unit is missing.');
+    prepare.unit.compensation = { nodeType: 'code', config: { operation: 'identity', value: 'undo', requiresApproval: true }, idempotencyKey: 'prepare:compensate:v1' };
+    const run = await executor.start(workflow);
+
+    await executor.approve(run.id);
+
+    expect(handle.signal).toHaveBeenCalledWith('approve', 'prepare:compensate');
+    expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.approvedNodeIds))).toEqual(['prepare:compensate']);
+  });
+
   it('records a worker failure and supports an idempotent retry after Temporal execution loss', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-chaos-'));
     const store = new JsonStore(path.join(directory, 'state.json'));

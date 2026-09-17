@@ -10,6 +10,11 @@ export const workUnitSchema = z.object({
   timeoutMs: z.number().int().positive(),
   retryAttempts: z.number().int().min(1).max(10),
   idempotencyKey: z.string().min(1).optional(),
+  compensation: z.object({
+    nodeType: z.string().min(1),
+    config: configSchema,
+    idempotencyKey: z.string().min(1),
+  }).optional(),
 });
 
 export const agentDefinitionSchema = z.object({

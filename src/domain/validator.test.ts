@@ -66,4 +66,16 @@ describe('validateWorkflow', () => {
     expect(result.valid).toBe(false);
     expect(result.issues.some((issue) => issue.code === 'graph.cycle')).toBe(true);
   });
+
+  it('rejects compensation metadata for an unknown unit type', () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.nodes.find((node) => node.type === 'agentLoop');
+    if (agent === undefined || agent.unit === undefined) throw new Error('Seed workflow is missing its agent unit.');
+    agent.unit.compensation = { nodeType: 'unknownCompensation', config: {}, idempotencyKey: 'agent:compensate:v1' };
+
+    const result = validateWorkflow(workflow);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: 'unit.compensation.unknown', nodeId: agent.id }));
+  });
 });

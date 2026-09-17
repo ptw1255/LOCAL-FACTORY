@@ -156,12 +156,16 @@ export class TemporalWorkflowExecutor {
     const run = await this.requireRun(runId);
     const handle = this.handleFor(run);
     const node = run.workflowDefinition.nodes.find((candidate) => (candidate.type === 'approval' || candidate.config.requiresApproval === true) && !run.completedNodeIds.includes(candidate.id));
-    if (node === undefined) throw new Error('No approval-gated node is waiting.');
-    if (run.approvedNodeIds.includes(node.id)) return run;
-    await handle.signal('approve', node.id);
+    const compensation = node === undefined
+      ? run.workflowDefinition.nodes.find((candidate) => candidate.unit?.compensation?.config.requiresApproval === true && !run.approvedNodeIds.includes(`${candidate.id}:compensate`))
+      : undefined;
+    const approvalId = node?.id ?? (compensation === undefined ? undefined : `${compensation.id}:compensate`);
+    if (approvalId === undefined) throw new Error('No approval-gated node is waiting.');
+    if (run.approvedNodeIds.includes(approvalId)) return run;
+    await handle.signal('approve', approvalId);
     return this.updateRun(runId, (target) => {
       target.status = 'running';
-      if (!target.approvedNodeIds.includes(node.id)) target.approvedNodeIds.push(node.id);
+      if (!target.approvedNodeIds.includes(approvalId)) target.approvedNodeIds.push(approvalId);
     }, 'approval.received', 'Human approval received.');
   }
 

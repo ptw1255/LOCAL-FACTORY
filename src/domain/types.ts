@@ -94,6 +94,12 @@ export interface WorkUnitDefinition {
   timeoutMs: number;
   retryAttempts: number;
   idempotencyKey?: string;
+  /** Optional deterministic unit invoked when a later Temporal step fails. */
+  compensation?: {
+    nodeType: string;
+    config: Record<string, unknown>;
+    idempotencyKey: string;
+  };
 }
 
 /** Runtime envelope exchanged between the dispatcher and a WorkUnit adapter. */

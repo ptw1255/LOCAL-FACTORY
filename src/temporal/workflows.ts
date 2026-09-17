@@ -5,6 +5,7 @@ import {
   setHandler,
 } from '@temporalio/workflow';
 
+import { defaultWorkUnit } from '../domain/catalog.js';
 import type { WorkflowDefinition } from '../domain/types.js';
 import type * as activities from './activities.js';
 import type { TemporalActivityLifecycle } from './observability.js';
@@ -32,6 +33,23 @@ export interface TemporalWorkflowResult {
   completedNodeIds: string[];
   unitOutputs: Record<string, unknown>;
   lifecycle: TemporalActivityLifecycle[];
+}
+
+export interface TemporalCompensationPlan {
+  sourceNodeId: string;
+  nodeId: string;
+  nodeType: string;
+  config: Record<string, unknown>;
+  idempotencyKey: string;
+}
+
+/** Build the deterministic reverse-order compensation plan for a failed run. */
+export function planCompensations(definition: WorkflowDefinition, completedNodeIds: string[]): TemporalCompensationPlan[] {
+  const nodes = new Map(definition.nodes.map((node) => [node.id, node]));
+  return [...completedNodeIds].reverse().flatMap((sourceNodeId) => {
+    const compensation = nodes.get(sourceNodeId)?.unit?.compensation;
+    return compensation === undefined ? [] : [{ sourceNodeId, nodeId: `${sourceNodeId}:compensate`, nodeType: compensation.nodeType, config: compensation.config, idempotencyKey: compensation.idempotencyKey }];
+  });
 }
 
 /** Approval boundary shared by explicit human gates and side-effect WorkUnits. */
@@ -110,27 +128,33 @@ export async function executeWorkflow(
       .filter((edge) => edge.target === node.id)
       .map((edge) => lifecycleByNode.get(edge.source)?.spanId)
       .find((spanId): spanId is string => spanId !== undefined);
-    const activityResult = await executeNodeActivity({
-      runId: input.runId,
-      workflowId: input.definition.id,
-      workflowVersion: input.definition.version,
-      ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
-      ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
-      ...(input.definition.tenantId === undefined ? {} : { tenantId: input.definition.tenantId }),
-      ...(input.definition.projectId === undefined ? {} : { projectId: input.definition.projectId }),
-      nodeId: node.id,
-      nodeType: node.type,
-      label: node.label,
-      config: activityConfig,
-      traceId: input.runId,
-      ...(parentSpanId === undefined ? {} : { parentSpanId }),
-      sequence: completed.size + 1,
-      inputs: input.definition.edges
-        .filter((edge) => edge.target === node.id && outputs.has(edge.source))
-        .map((edge) => outputs.get(edge.source))
-        .concat(completed.size === 0 && node.type === input.definition.trigger.type && input.input !== undefined ? [input.input] : []),
-      unit: node.unit,
-    });
+    let activityResult: Awaited<ReturnType<typeof executeNodeActivity>>;
+    try {
+      activityResult = await executeNodeActivity({
+        runId: input.runId,
+        workflowId: input.definition.id,
+        workflowVersion: input.definition.version,
+        ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+        ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
+        ...(input.definition.tenantId === undefined ? {} : { tenantId: input.definition.tenantId }),
+        ...(input.definition.projectId === undefined ? {} : { projectId: input.definition.projectId }),
+        nodeId: node.id,
+        nodeType: node.type,
+        label: node.label,
+        config: activityConfig,
+        traceId: input.runId,
+        ...(parentSpanId === undefined ? {} : { parentSpanId }),
+        sequence: completed.size + 1,
+        inputs: input.definition.edges
+          .filter((edge) => edge.target === node.id && outputs.has(edge.source))
+          .map((edge) => outputs.get(edge.source))
+          .concat(completed.size === 0 && node.type === input.definition.trigger.type && input.input !== undefined ? [input.input] : []),
+        unit: node.unit,
+      });
+    } catch (error) {
+      await executeCompensations(input, [...completed].map((id) => input.definition.nodes.find((candidate) => candidate.id === id)).filter((candidate): candidate is WorkflowDefinition['nodes'][number] => candidate !== undefined), outputs, approved);
+      throw error;
+    }
     completed.add(node.id);
     outputs.set(node.id, activityResult.result);
     lifecycleByNode.set(node.id, activityResult.lifecycle);
@@ -147,4 +171,48 @@ export async function executeWorkflow(
   }
 
   return { completedNodeIds: [...completed], unitOutputs: Object.fromEntries(outputs), lifecycle };
+}
+
+/** Execute declared compensations in reverse completion order. Temporal history
+ * makes each activity invocation durable and replay-safe; a failed compensation
+ * is surfaced with the original failure rather than being silently ignored. */
+async function executeCompensations(
+  input: TemporalWorkflowInput,
+  completedNodes: WorkflowDefinition['nodes'],
+  outputs: Map<string, unknown>,
+  approved: Set<string>,
+): Promise<void> {
+  const failures: string[] = [];
+  let sequence = input.definition.nodes.length + completedNodes.length;
+  const nodesById = new Map(completedNodes.map((node) => [node.id, node]));
+  for (const plan of planCompensations(input.definition, completedNodes.map((node) => node.id))) {
+    const node = nodesById.get(plan.sourceNodeId);
+    if (node === undefined) continue;
+    sequence += 1;
+    try {
+      if (plan.config.requiresApproval === true) {
+        await condition(() => approved.has(plan.nodeId));
+      }
+      await executeNodeActivity({
+        runId: input.runId,
+        workflowId: input.definition.id,
+        workflowVersion: input.definition.version,
+        ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+        ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
+        ...(input.definition.tenantId === undefined ? {} : { tenantId: input.definition.tenantId }),
+        ...(input.definition.projectId === undefined ? {} : { projectId: input.definition.projectId }),
+        nodeId: plan.nodeId,
+        nodeType: plan.nodeType,
+        label: `Compensate ${node.label}`,
+        config: plan.config,
+        traceId: input.runId,
+        sequence,
+        inputs: outputs.has(node.id) ? [outputs.get(node.id)] : [],
+        unit: { ...defaultWorkUnit(plan.nodeType), idempotencyKey: plan.idempotencyKey },
+      });
+    } catch (error) {
+      failures.push(`${plan.nodeId}: ${error instanceof Error ? error.message : 'unknown failure'}`);
+    }
+  }
+  if (failures.length > 0) throw new Error(`Workflow compensation failed: ${failures.join('; ')}`);
 }
