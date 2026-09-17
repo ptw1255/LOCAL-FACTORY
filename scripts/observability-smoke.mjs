@@ -12,6 +12,7 @@ if (docker.status !== 0) {
   process.exit(0);
 }
 
+const diagnosticServices = ['app', 'postgres', 'vault', 'phoenix', 'otel-collector'];
 const compose = (...args) => execFileSync('docker', ['compose', '--profile', 'observability', ...args], {
   stdio: 'inherit',
   env: {
@@ -20,6 +21,20 @@ const compose = (...args) => execFileSync('docker', ['compose', '--profile', 'ob
     PHOENIX_UI_URL: process.env.PHOENIX_UI_URL ?? 'http://localhost:6006',
   },
 });
+
+function dumpDiagnostics() {
+  console.error('\nObservability Docker smoke diagnostics (bounded to the smoke services):');
+  try {
+    compose('ps');
+  } catch (error) {
+    console.error(`Could not list Compose services: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    compose('logs', '--no-color', '--tail', '120', ...diagnosticServices);
+  } catch (error) {
+    console.error(`Could not read Compose logs: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 async function waitFor(url, predicate, timeoutMs = 90_000) {
   const deadline = Date.now() + timeoutMs;
@@ -74,6 +89,14 @@ try {
     return collectorResponse.ok;
   });
   console.log('Observability Docker smoke passed (app health, 48-hour retention, Collector, Phoenix).');
+} catch (error) {
+  console.error(`Observability Docker smoke failed: ${error instanceof Error ? error.message : String(error)}`);
+  dumpDiagnostics();
+  throw error;
 } finally {
-  compose('down', '--remove-orphans');
+  try {
+    compose('down', '--remove-orphans');
+  } catch (cleanupError) {
+    console.error(`Observability smoke cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+  }
 }

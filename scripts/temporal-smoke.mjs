@@ -12,10 +12,25 @@ if (spawnSync('docker', ['info'], { stdio: 'ignore' }).status !== 0) {
 }
 
 const scopeHeaders = { 'content-type': 'application/json', 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+const diagnosticServices = ['app', 'postgres', 'vault', 'temporal', 'temporal-worker'];
 const compose = (...args) => execFileSync('docker', ['compose', '--profile', 'temporal', ...args], {
   stdio: 'inherit',
   env: { ...process.env, EXECUTION_ENGINE: 'temporal', TEMPORAL_ADDRESS: 'temporal:7233' },
 });
+
+function dumpDiagnostics() {
+  console.error('\nTemporal Docker smoke diagnostics (bounded to the smoke services):');
+  try {
+    compose('ps');
+  } catch (error) {
+    console.error(`Could not list Compose services: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    compose('logs', '--no-color', '--tail', '120', ...diagnosticServices);
+  } catch (error) {
+    console.error(`Could not read Compose logs: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 async function waitFor(url, predicate, timeoutMs = 120_000) {
   const deadline = Date.now() + timeoutMs;
@@ -78,6 +93,8 @@ try {
   console.log('Temporal Docker smoke passed (worker restart, terminal run, lifecycle evidence, no duplicate completions).');
 } catch (error) {
   smokeFailed = true;
+  console.error(`Temporal Docker smoke failed: ${error instanceof Error ? error.message : String(error)}`);
+  dumpDiagnostics();
   throw error;
 } finally {
   if (originalWorkflow !== undefined) {
@@ -95,5 +112,10 @@ try {
       if (!smokeFailed) throw restoreError;
     }
   }
-  compose('down', '--remove-orphans');
+  try {
+    compose('down', '--remove-orphans');
+  } catch (cleanupError) {
+    console.error(`Temporal smoke cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    if (!smokeFailed) throw cleanupError;
+  }
 }
