@@ -405,6 +405,10 @@ h1, h2, h3, p { margin-top: 0; }
 .tree-rail { border-left: 1px solid #31445f; height: calc(100% + 2px); left: -12px; position: absolute; top: -5px; }
 .tree-rail.last { height: 17px; }
 .tree-node { background: #101a2a; border: 1px solid var(--border); border-radius: 8px; flex: 1; padding: 10px 12px; }
+.tree-node-row { align-items: stretch; display: flex; flex: 1; gap: 6px; min-width: 0; }
+.tree-node-row .tree-node { min-width: 0; }
+.tree-canvas-link { align-self: center; flex: 0 0 auto; opacity: 0; transition: opacity 120ms ease; }
+.tree-node-row:hover .tree-canvas-link, .tree-node-row:focus-within .tree-canvas-link { opacity: 1; }
 .tree-node > div:first-child { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
 .tree-kind-label { color: var(--blue); font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
 .tree-agent { align-items: center; color: #b7a6ff; display: flex; font-size: 9px; gap: 5px; margin-top: 7px; }

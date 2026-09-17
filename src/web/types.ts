@@ -374,5 +374,8 @@ export interface WorkflowNodeData extends Record<string, unknown> {
   category: string;
   description: string;
   config: Record<string, unknown>;
+  /** Source location retained when a compiled node is projected into Canvas. */
+  sourcePath?: string;
+  sourceLine?: number;
   unit?: WorkUnitDefinition;
 }
