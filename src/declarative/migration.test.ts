@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
 import { createSeedState, seedWorkflow } from '../domain/seed.js';
-import { applyCanvasResource, planResourceMigration, renderCanvasResource } from './migration.js';
+import { applyCanvasResource, patchWorkUnitResource, patchWorkflowResource, planResourceMigration, renderCanvasResource, renderWorkUnitResource, workUnitResourceId } from './migration.js';
 
 describe('resource migration planner', () => {
   it('creates stable project, agent, workflow, unit, and Canvas files', () => {
@@ -48,5 +48,37 @@ describe('resource migration planner', () => {
     expect(hydrated.edges[0]?.condition).toBe('approved');
     expect(hydrated.nodes[0]).not.toBe(workflow.nodes[0]);
     expect(applyCanvasResource(workflow, renderCanvasResource({ ...workflow, id: 'other' }))).toBe(workflow);
+  });
+
+  it('patches semantic Canvas edits into workflow YAML while retaining unrelated comments', () => {
+    const workflow = structuredClone(seedWorkflow);
+    const project = createSeedState().projects[0]!;
+    const original = planResourceMigration(project, [workflow]).files.find((item) => item.path === `workflows/${workflow.id}.workflow.yaml`)?.source;
+    expect(original).toBeDefined();
+    const source = `# keep this file header\n${original ?? ''}\n# keep this footer\n`;
+    const next = structuredClone(workflow);
+    next.version += 1;
+    next.nodes = next.nodes.filter((node) => node.id !== 'notify');
+    next.edges = next.edges.filter((edge) => edge.source !== 'notify' && edge.target !== 'notify');
+    next.nodes.find((node) => node.id === 'agent')!.label = 'Review request';
+    const patched = patchWorkflowResource(source, next);
+    expect(patched).toContain('# keep this file header');
+    expect(patched).toContain('# keep this footer');
+    expect(patched).toContain('name: Review request');
+    expect(patched).not.toContain('id: notify');
+    expect(patched).toContain(`unit: WorkUnit/${workUnitResourceId(workflow.id, 'agent')}`);
+    expect(patched).toContain(`id: ${next.edges[0]?.id}`);
+  });
+
+  it('patches WorkUnit modules without dropping authored comments', () => {
+    const unit = structuredClone(seedWorkflow.nodes.find((node) => node.unit !== undefined)?.unit)!;
+    const source = `# unit policy\n${renderWorkUnitResource('unit-review', unit)}# end\n`;
+    const patched = patchWorkUnitResource(source, { ...unit, retryAttempts: unit.retryAttempts + 1 });
+    expect(patched).toContain('# unit policy');
+    expect(patched).toContain('# end');
+    expect(patched).toContain(`retryAttempts: ${unit.retryAttempts + 1}`);
+    const withoutOptional = patchWorkUnitResource(patched, { ...unit, idempotencyKey: undefined, compensation: undefined });
+    expect(withoutOptional).not.toContain('idempotencyKey:');
+    expect(withoutOptional).not.toContain('compensation:');
   });
 });

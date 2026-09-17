@@ -1158,17 +1158,59 @@ function StudioView({ onNavigate, projectId }: { onNavigate: (view: ViewId) => v
     try {
       const projected = canvasToWorkflow(workflow, nodes, edges);
       const presentationOnly = canvasOnlyChangesPresentation(workflow, nodes, edges);
-      // Position-only Canvas edits belong to the layout resource. Avoiding the
-      // workflow API here keeps runtime/source records unchanged for a visual
-      // move while preserving the existing semantic save path for node/edge
-      // edits.
-      const saved = presentationOnly ? workflow : await api.saveWorkflow(projected);
+      let saved: WorkflowDefinition;
+      let compiledArtifact: ArtifactRecord | undefined;
+      if (presentationOnly) {
+        // Position-only Canvas edits belong to the layout resource. Avoiding
+        // the workflow API here keeps runtime/source records unchanged for a
+        // visual move while preserving the existing source path for semantic
+        // edits.
+        saved = workflow;
+      } else {
+        // Semantic Canvas edits are source edits. Patch the typed workflow
+        // module first, then compile the file workspace into an immutable
+        // artifact. The aggregate API remains a compatibility fallback for
+        // projects that have not been migrated to resource files yet.
+        const workflowPath = `workflows/${workflow.id}.workflow.yaml`;
+        const currentWorkflowFile = await api.projectFile(projectId, workflowPath).catch(() => undefined);
+        if (currentWorkflowFile?.content === undefined) {
+          saved = await api.saveWorkflow(projected);
+        } else {
+          const nextVersion = workflow.version + 1;
+          const sourceWorkflow: WorkflowDefinition = { ...projected, version: nextVersion };
+          const { patchWorkUnitResource, patchWorkflowResource, renderWorkUnitResource, workUnitResourceId } = await import('../declarative/migration');
+          await api.saveProjectFile(projectId, workflowPath, patchWorkflowResource(currentWorkflowFile.content, sourceWorkflow), currentWorkflowFile.sha256);
+          for (const node of sourceWorkflow.nodes) {
+            if (node.unit === undefined) continue;
+            const priorUnit = workflow.nodes.find((candidate) => candidate.id === node.id)?.unit;
+            const unitChanged = JSON.stringify(priorUnit) !== JSON.stringify(node.unit);
+            const unit = unitChanged
+              ? { ...node.unit, version: Math.max(node.unit.version, (priorUnit?.version ?? node.unit.version) + 1) }
+              : node.unit;
+            const unitId = workUnitResourceId(sourceWorkflow.id, node.id);
+            const unitPath = `units/${unitId}.unit.yaml`;
+            const currentUnitFile = await api.projectFile(projectId, unitPath).catch(() => undefined);
+            const unitSource = currentUnitFile?.content === undefined
+              ? renderWorkUnitResource(unitId, unit)
+              : patchWorkUnitResource(currentUnitFile.content, unit);
+            await api.saveProjectFile(projectId, unitPath, unitSource, currentUnitFile?.sha256);
+          }
+          compiledArtifact = await api.compileProject(projectId, runEnvironment);
+          saved = compiledArtifact.workflows.find((candidate) => candidate.id === workflow.id) ?? (() => {
+            throw new Error(`Compiled workflow ${workflow.id} was not returned by the resource compiler.`);
+          })();
+        }
+      }
+      if (compiledArtifact !== undefined) {
+        latestCompiledArtifact.current = compiledArtifact;
+        setArtifacts((current) => [compiledArtifact!, ...current.filter((candidate) => candidate.id !== compiledArtifact!.id)]);
+      }
       // Keep the migration/YAML serializer out of the initial IDE bundle; the
       // compatibility canvas path is loaded only when a canvas save occurs.
       const { renderCanvasResource } = await import('../declarative/migration');
       const canvasPath = `canvas/${saved.id}.canvas.yaml`;
       const currentCanvas = await api.projectFile(projectId, canvasPath).catch(() => undefined);
-      await api.saveProjectFile(projectId, canvasPath, renderCanvasResource(projected), currentCanvas?.sha256);
+      await api.saveProjectFile(projectId, canvasPath, renderCanvasResource(saved, projected.nodes, projected.edges), currentCanvas?.sha256);
       setWorkflow(saved);
       setYamlSource((await api.declarativeYaml(projectId)).trim());
       setYamlDirty(false);

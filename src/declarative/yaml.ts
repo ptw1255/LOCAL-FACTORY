@@ -19,6 +19,14 @@ export interface DeclarativeProjectDocument {
     trigger?: string;
     inputSchema?: Record<string, unknown>;
     steps: Array<Record<string, unknown>>;
+    edges?: Array<{
+      id?: string;
+      source: string;
+      target: string;
+      sourceHandle?: string;
+      targetHandle?: string;
+      condition?: string;
+    }>;
   }>;
 }
 
@@ -55,6 +63,14 @@ const declarativeDocumentSchema = z.object({
     trigger: z.string().optional(),
     inputSchema: z.record(z.string(), z.unknown()).optional(),
     steps: z.array(z.record(z.string(), z.unknown())),
+    edges: z.array(z.object({
+      id: z.string().min(1).optional(),
+      source: z.string().min(1),
+      target: z.string().min(1),
+      sourceHandle: z.string().min(1).optional(),
+      targetHandle: z.string().min(1).optional(),
+      condition: z.string().optional(),
+    }).passthrough()).optional(),
   }).passthrough()).default([]),
 });
 
@@ -190,6 +206,17 @@ export function parseProjectYaml(source: string, scope: { tenantId: string; proj
       unit: defaultWorkUnit(trigger),
     };
     const nodes = [triggerNode, ...definition.steps.map((step, index) => stepNode(step, index + 1, agents))];
+    const sequentialEdges = nodes.slice(0, -1).map((node, index) => ({ id: `edge-${node.id}-${nodes[index + 1]?.id ?? 'end'}`, source: node.id, target: nodes[index + 1]?.id ?? node.id }));
+    const edges = definition.edges === undefined
+      ? sequentialEdges
+      : definition.edges.map((edge, edgeIndex) => ({
+        id: edge.id ?? `edge-${edge.source}-${edge.target}-${edgeIndex + 1}`,
+        source: edge.source,
+        target: edge.target,
+        ...(edge.sourceHandle === undefined ? {} : { sourceHandle: edge.sourceHandle }),
+        ...(edge.targetHandle === undefined ? {} : { targetHandle: edge.targetHandle }),
+        ...(edge.condition === undefined ? {} : { condition: edge.condition }),
+      }));
     const workflow: WorkflowDefinition = {
       tenantId: scope.tenantId,
       projectId,
@@ -202,7 +229,7 @@ export function parseProjectYaml(source: string, scope: { tenantId: string; proj
       ...(definition.inputSchema === undefined ? {} : { inputSchema: definition.inputSchema }),
       agents: structuredClone(agents),
       nodes,
-      edges: nodes.slice(0, -1).map((node, index) => ({ id: `edge-${node.id}-${nodes[index + 1]?.id ?? 'end'}`, source: node.id, target: nodes[index + 1]?.id ?? node.id })),
+      edges,
       createdAt: now,
       updatedAt: now,
     };
@@ -233,6 +260,14 @@ export function stringifyProjectYaml(project: ProjectRecord, workflows: Workflow
         type: node.type,
         config: node.config,
         unit: node.unit,
+      })),
+      edges: workflow.edges.map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        ...(edge.sourceHandle === undefined ? {} : { sourceHandle: edge.sourceHandle }),
+        ...(edge.targetHandle === undefined ? {} : { targetHandle: edge.targetHandle }),
+        ...(edge.condition === undefined ? {} : { condition: edge.condition }),
       })),
     })),
   });
