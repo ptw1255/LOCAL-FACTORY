@@ -1740,7 +1740,7 @@ function RunsView() {
     window.location.hash = `/studio?${query.toString()}`;
   }
 
-  async function runAction(action: 'approve' | 'deny' | 'expire' | 'supersede' | 'cancel') {
+  async function runAction(action: 'approve' | 'deny' | 'expire' | 'supersede' | 'cancel' | 'retry') {
     if (selectedRun === null) return;
     setActionLoading(true);
     setActionError(null);
@@ -1754,8 +1754,11 @@ function RunsView() {
               ? await api.expireRun(selectedRun.id)
               : action === 'supersede'
                 ? await api.supersedeRun(selectedRun.id)
-              : await api.cancelRun(selectedRun.id);
+              : action === 'cancel'
+                ? await api.cancelRun(selectedRun.id)
+                : await api.retryRun(selectedRun.id);
       setSelectedRun(updated);
+      if (action === 'retry') setSelectedRunId(updated.id);
       await loadRuns(true);
     } catch (actionFailure) {
       setActionError(errorText(actionFailure));
@@ -1853,6 +1856,11 @@ function RunsView() {
                     {['queued', 'running', 'waiting'].includes(selectedRun.status) ? (
                       <button className="button secondary" disabled={actionLoading} onClick={() => void runAction('cancel')} type="button">
                         <Icon name="close" /> {actionLoading ? 'Updating…' : 'Cancel'}
+                      </button>
+                    ) : null}
+                    {['failed', 'timed_out', 'cancelled'].includes(selectedRun.status) ? (
+                      <button className="button primary" disabled={actionLoading} onClick={() => { if (window.confirm('Retry this run with the same pinned workflow context?')) void runAction('retry'); }} type="button">
+                        <Icon name="refresh" /> {actionLoading ? 'Retrying…' : 'Retry run'}
                       </button>
                     ) : null}
                   </div>
