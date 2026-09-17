@@ -31,6 +31,26 @@ test.describe('IDE workspace', () => {
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
   });
+
+  test('opens Run preflight for workflows with required input and restores focus', async ({ page, request }) => {
+    const workflowResponse = await request.get('/api/workflows/workflow-agent-intake');
+    expect(workflowResponse.ok()).toBeTruthy();
+    const workflow = await workflowResponse.json() as Record<string, unknown>;
+    workflow.inputSchema = { type: 'object', required: ['request'], properties: { request: { type: 'string' } } };
+    const saved = await request.put('/api/workflows/workflow-agent-intake', { data: workflow });
+    expect(saved.ok()).toBeTruthy();
+
+    await page.reload();
+    const runButton = page.getByRole('button', { name: 'Run', exact: true });
+    await runButton.click();
+    const dialog = page.getByRole('dialog', { name: 'Workflow run input' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAttribute('aria-modal', 'true');
+    await expect(dialog.getByRole('button', { name: 'Close run input' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(runButton).toBeFocused();
+  });
 });
 
 test.describe('Observe and Deployments', () => {
