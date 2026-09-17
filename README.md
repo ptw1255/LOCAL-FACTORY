@@ -574,10 +574,11 @@ separate because it requires a Docker daemon and remains optional for local setu
 without Docker Desktop.
 
 The credential-free IDE browser smoke suite runs with `npm run test:browser`. It
-builds the production web app, starts an isolated JSON-backed server, and checks the
-Workspace modes, command palette, bottom output panel, Observe tabs, and Deployments
-empty state. CI installs Chromium and runs this gate without Docker, PostgreSQL,
-Vault, model credentials, or external services.
+builds the production web app, starts a fresh isolated JSON-backed server, and checks
+the Workspace modes, command palette, bottom output panel, Observe tabs, and the
+Deployments operational card, filters, links, and expansion affordances. CI installs
+Chromium and runs this gate without Docker, PostgreSQL, Vault, model credentials, or
+external services.
 
 The default suite keeps the PostgreSQL restart probe opt-in so contributors do not
 need a database daemon. To exercise the supported local persistence boundary, start
