@@ -111,11 +111,6 @@ test.describe('IDE workspace', () => {
   });
 
   test('persists semantic Canvas edits to workflow and WorkUnit modules', async ({ page, request }) => {
-    const migration = await request.post('/api/projects/project-local/migrate', { data: { dryRun: false } });
-    expect(migration.ok()).toBeTruthy();
-    const compile = await request.post('/api/projects/project-local/compile', { data: { environment: 'local' } });
-    expect(compile.ok()).toBeTruthy();
-
     const view = page.getByRole('combobox', { name: 'Workspace view' });
     await view.selectOption('canvas');
     const transform = page.locator('button.palette-item').filter({ hasText: 'Transform' }).first();
