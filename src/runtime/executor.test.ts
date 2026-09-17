@@ -1114,4 +1114,24 @@ describe('LocalWorkflowExecutor', () => {
     expect(evidence.find((entry) => entry.unitId === 'review' && entry.status === 'succeeded')?.metadata).toEqual(expect.objectContaining({ 'pull_request.number': 42, 'pull_request.status': 'approved', 'pull_request.approvals': 1, 'pull_request.required_approvals': 1 }));
     expect(github.waitForPullRequestStatus).toHaveBeenCalledWith(expect.objectContaining({ number: 42, requiredApprovals: 1 }));
   });
+
+  it('requires approval before executing a pull request merge side effect', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-merge-approval';
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'merge', type: 'repositoryMerge', label: 'Merge PR', position: { x: 180, y: 0 }, config: { number: 42, method: 'squash', requiresApproval: true }, unit: defaultWorkUnit('repositoryMerge') },
+      { id: 'output', type: 'output', label: 'Complete', position: { x: 360, y: 0 }, config: { value: 'merged' }, unit: defaultWorkUnit('output') },
+    ];
+    workflow.edges = [{ id: 'trigger-merge', source: 'trigger', target: 'merge' }, { id: 'merge-output', source: 'merge', target: 'output' }];
+    const github = { mergePullRequest: vi.fn().mockResolvedValue({ number: 42, merged: true, message: 'merged', sha: 'abc123' }) } as unknown as GitHubRepositoryClient;
+    const mergeExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, github);
+    const run = await mergeExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.status)) === 'waiting');
+    expect(github.mergePullRequest).not.toHaveBeenCalled();
+    await mergeExecutor.approve(run.id, { actor: 'reviewer' });
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.status)) === 'succeeded');
+    expect(github.mergePullRequest).toHaveBeenCalledWith(expect.objectContaining({ number: 42, method: 'squash' }));
+  });
 });
