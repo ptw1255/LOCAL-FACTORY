@@ -221,6 +221,15 @@ export async function executeNodeActivity(
 }
 
 /**
+ * Temporal activity alias for connector/consumer nodes. The workflow binds
+ * this name to a one-attempt retry policy so the side-effect boundary is
+ * enforced by Temporal as well as by the shared WorkUnit dispatcher.
+ */
+export async function executeNodeSideEffectActivity(input: NodeActivityInput): Promise<NodeActivityResult> {
+  return executeNodeActivity(input);
+}
+
+/**
  * Agent activities intentionally have no automatic Temporal retry. A tool call
  * can have an external side effect; if the worker disappears after that side
  * effect, replaying the whole agent node would be unsafe. Operators can retry
