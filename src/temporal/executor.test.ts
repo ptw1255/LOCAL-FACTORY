@@ -235,4 +235,29 @@ describe('TemporalWorkflowExecutor', () => {
     expect(handle.signal).toHaveBeenCalledWith('approve', 'prepare');
     expect((await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.approvedNodeIds))).toEqual(['prepare']);
   });
+
+  it('records a worker failure and supports an idempotent retry after Temporal execution loss', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-chaos-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const failedHandle = new FakeHandle('factory-chaos-failed');
+    const retryHandle = new FakeHandle('factory-chaos-retry');
+    retryHandle.resultDeferred.resolve({ completedNodeIds: ['trigger'], unitOutputs: {}, lifecycle: [] });
+    const start = vi.fn()
+      .mockResolvedValueOnce(failedHandle)
+      .mockResolvedValueOnce(retryHandle);
+    const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn(() => failedHandle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-temporal-chaos';
+    const run = await executor.start(workflow, { input: { attempt: 1 } });
+    failedHandle.resultDeferred.reject(new Error('worker process exited unexpectedly'));
+    await waitFor(store, run.id, 'failed');
+    expect((await events.list(run.id)).some((event) => event.type === 'run.failed' && event.message.includes('worker process exited'))).toBe(true);
+    const retry = await executor.retry(run.id, { idempotencyKey: 'chaos-retry-1' });
+    const repeated = await executor.retry(run.id, { idempotencyKey: 'chaos-retry-1' });
+    expect(retry).toEqual(expect.objectContaining({ replayOfRunId: run.id, input: { attempt: 1 }, retryIdempotencyKey: 'chaos-retry-1' }));
+    expect(repeated.id).toBe(retry.id);
+    expect(start).toHaveBeenCalledTimes(2);
+  });
 });
