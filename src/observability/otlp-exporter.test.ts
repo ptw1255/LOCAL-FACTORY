@@ -88,4 +88,24 @@ describe('OtlpHttpExporter', () => {
     expect(exporter.health()).toMatchObject({ status: 'degraded', failureCount: 1, lastSuccessAt: expect.any(String) });
     vi.restoreAllMocks();
   });
+
+  it('surfaces non-404 trace-pruning failures without rejecting retention', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 });
+    vi.stubGlobal('fetch', fetchMock);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const exporter = new OtlpHttpExporter('http://phoenix:6006', {}, { deleteTraces: true, signals: ['trace'] });
+
+    await expect(exporter.prune(['a'.repeat(32)])).resolves.toBeUndefined();
+    expect(exporter.health()).toMatchObject({ status: 'degraded', failureCount: 1, lastErrorAt: expect.any(String) });
+    expect(warning).toHaveBeenCalled();
+  });
+
+  it('treats a missing Phoenix trace as an idempotent prune success', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+    vi.stubGlobal('fetch', fetchMock);
+    const exporter = new OtlpHttpExporter('http://phoenix:6006', {}, { deleteTraces: true, signals: ['trace'] });
+
+    await expect(exporter.prune(['b'.repeat(32)])).resolves.toBeUndefined();
+    expect(exporter.health()).toMatchObject({ status: 'healthy', failureCount: 0 });
+  });
 });
