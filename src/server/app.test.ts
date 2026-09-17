@@ -445,6 +445,32 @@ describe('platform API', () => {
     expect(loaded.json<{ content: string }>().content).toBe('filesystem source');
   });
 
+  it('rolls back generated files when a mounted workspace migration fails partway through', async () => {
+    await app.close();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-api-migration-rollback-'));
+    const projectWorkspace = new ProjectWorkspace(root);
+    app = await createApp({ store, projectWorkspace, serveStatic: false });
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const headers = { 'x-tenant-id': scope.tenantId, 'x-project-id': scope.projectId };
+    // The sorted migration plan writes several resources before workflows; a
+    // conflicting directory at the workflow path forces a deterministic write
+    // failure after those resources have been created.
+    await projectWorkspace.createDirectory(scope, 'workflows/workflow-agent-intake.workflow.yaml');
+
+    const migrated = await app.inject({ method: 'POST', url: '/api/projects/project-local/migrate', headers, payload: { dryRun: false } });
+    expect(migrated.statusCode).toBe(422);
+    expect(migrated.json<{ message: string; backup: unknown[] }>().message).toMatch(/Migration failed/);
+    expect(migrated.json<{ backup: unknown[] }>().backup).toEqual([]);
+
+    const listing = await app.inject({ method: 'GET', url: '/api/projects/project-local/files', headers });
+    expect(listing.json<{ items: Array<{ path: string }>; directories: Array<{ path: string }> }>().items).toEqual([]);
+    expect(listing.json<{ directories: Array<{ path: string }> }>().directories).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'workflows' }),
+      expect.objectContaining({ path: 'workflows/workflow-agent-intake.workflow.yaml' }),
+    ]));
+    expect(await store.read((state) => state.workflows.some((workflow) => workflow.id === 'workflow-agent-intake'))).toBe(true);
+  });
+
   it('exposes deployments through the lean envelope projection', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/deployments?format=envelope', headers: { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' } });
     expect(response.statusCode).toBe(200);
