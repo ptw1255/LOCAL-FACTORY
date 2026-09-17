@@ -251,6 +251,23 @@ export function retainSelection<T extends { id: string }>(items: T[], selectedId
   return selectedId !== null && items.some((item) => item.id === selectedId) ? selectedId : items[0]?.id ?? null;
 }
 
+export type ObserveTab = 'runs' | 'logs' | 'traces' | 'metrics';
+
+export function nextObserveTab(tab: ObserveTab, key: string): ObserveTab | null {
+  const tabs: ObserveTab[] = ['runs', 'logs', 'traces', 'metrics'];
+  const index = tabs.indexOf(tab);
+  const nextIndex = key === 'ArrowRight' || key === 'ArrowDown'
+    ? (index + 1) % tabs.length
+    : key === 'ArrowLeft' || key === 'ArrowUp'
+      ? (index - 1 + tabs.length) % tabs.length
+      : key === 'Home'
+        ? 0
+        : key === 'End'
+          ? tabs.length - 1
+          : -1;
+  return nextIndex < 0 ? null : tabs[nextIndex]!;
+}
+
 export function projectSwitchRequiresConfirmation(currentProjectId: string | null, nextProjectId: string, dirty: boolean): boolean {
   return currentProjectId !== null && currentProjectId !== nextProjectId && dirty;
 }
@@ -2015,7 +2032,6 @@ function OperationalTree({
 }
 
 function RunsView() {
-  type ObserveTab = 'runs' | 'logs' | 'traces' | 'metrics';
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(
     () => sessionStorage.getItem('selectedRunId'),
@@ -2044,19 +2060,9 @@ function RunsView() {
   const projectId = window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? 'project-local';
 
   function handleObserveTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, tab: ObserveTab): void {
-    const index = observeTabs.indexOf(tab);
-    const nextIndex = event.key === 'ArrowRight' || event.key === 'ArrowDown'
-      ? (index + 1) % observeTabs.length
-      : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
-        ? (index - 1 + observeTabs.length) % observeTabs.length
-        : event.key === 'Home'
-          ? 0
-          : event.key === 'End'
-            ? observeTabs.length - 1
-            : -1;
-    if (nextIndex < 0) return;
+    const nextTab = nextObserveTab(tab, event.key);
+    if (nextTab === null) return;
     event.preventDefault();
-    const nextTab = observeTabs[nextIndex]!;
     setObserveTab(nextTab);
     window.requestAnimationFrame(() => document.getElementById(`observe-${nextTab}-tab`)?.focus());
   }
