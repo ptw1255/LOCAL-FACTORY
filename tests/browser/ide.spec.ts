@@ -265,7 +265,7 @@ test.describe('Observe and Deployments', () => {
     }).toBe('stopped:stopped');
 
     await card.getByRole('button', { name: 'Observe' }).click();
-    await expect(page).toHaveURL(/#\/observe\?workflowId=workflow-agent-intake&environment=local/);
+    await expect(page).toHaveURL(/#\/observe\?(?:runId=[^&]+&)?workflowId=workflow-agent-intake&environment=local/);
     await expect(page.getByRole('heading', { name: 'Observe' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Deployments', exact: true }).click();
