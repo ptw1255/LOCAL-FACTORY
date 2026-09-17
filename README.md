@@ -1,6 +1,6 @@
 # Agentic Workflow Factory
 
-Agentic Workflow Factory is a visual, API-first runtime for composing deterministic
+Agentic Workflow Factory is a terminal-first, API-first runtime for composing deterministic
 code, bounded agents, human approvals, connectors, evaluators, and consumers into
 durable workflows. Each node is a versioned work unit with an explicit contract;
 each agent is a policy-bound box with declared purpose, skills, tools, budgets,
@@ -16,8 +16,8 @@ remain at the repository root and under [`FACTORY/`](FACTORY/).
 
 ## Status
 
-The repository is an actively developed MVP. The current release includes the visual
-Studio, versioned workflows and agent boxes, a local durable executor, an optional
+The repository is an actively developed MVP. The current release includes a
+terminal control plane, file-backed Projects, versioned workflows and agent boxes, a local durable executor, an optional
 Temporal execution adapter, PostgreSQL persistence, Vault-backed local secrets, standardized
 OpenTelemetry/OpenInference-style telemetry, bounded proposals, and factory metrics.
 The model-provider and repository-execution adapters are explicit, testable seams:
@@ -56,10 +56,12 @@ factory down                   # stop services (volumes are preserved)
 factory observe --follow        # live runs, approvals, and deployments
 factory tui                     # interactive monitor (q/a/d/r controls)
 factory dashboard               # quick-launch terminal portals
-factory workspace               # terminal file-backed authoring
-factory workflow                # terminal Workflow graph/source authoring
-factory workspace new "My workspace"
+factory project                 # inspect the active file-backed Project
+factory workflow                # inspect Workflow and WorkUnit graphs
+factory project new "My project"
 factory workflow new "My workflow" --project <project-id>
+factory author propose <workflow-id> "Add an approval before publish" --project <project-id>
+factory author import proposal.json --project <project-id>
 factory edit workflows/review.workflow.yaml  # edit a local resource with $EDITOR
 factory approve <run-id>        # approve a waiting run
 factory deny <run-id> "reason"  # deny a waiting run
@@ -77,33 +79,56 @@ snapshot and exits. Use `FACTORY_BASE_URL` for a different API URL and
 `factory --all` to include the optional Temporal, observability, and Ollama profiles.
 Add `--no-web` when the deployment should expose only the API/control plane for
 terminal-native operation.
-Declarative authoring commands remain available (`factory validate`, `factory plan`,
-`factory workflow`, and `factory run`). `factory tree` remains a compatibility alias.
-Inside Workspace, select a resource and press Enter (or `e`) to open the built-in
-terminal source editor. Type to edit, press `Ctrl+S` to save with an optimistic
-hash check and compile, or press Escape to discard the draft and return. Invalid
-edits never produce an executable artifact. The standalone `factory edit` command
-continues to use `$VISUAL`/`$EDITOR`. Inside Workflow, the graph is a projection of the selected
-`workflows/*.workflow.yaml` envelope, so semantic edits are made in that source
-file while `canvas/*.canvas.yaml` remains layout-only. A legacy runtime-only workflow
-is labeled explicitly and materialized into resource files when selected.
+The authoring model is `Project → Workflow → WorkUnit`. A Project is the durable,
+tenant-scoped file boundary. A Workflow is a graph whose nodes reference versioned
+WorkUnit envelopes. The terminal renders that model directly: Enter opens a Workflow,
+then a WorkUnit's purpose, execution kind, schema, timeout, retry, idempotency, source,
+and agent binding. YAML remains the source of truth, but it is an advanced view opened
+with `o`, not the primary authoring experience.
 
-Workspace authoring controls are `n` to create a workspace, `s` to cycle between
-workspaces, `w` to create a starter workflow, and `v` to validate and compile.
-Workflow uses `n` to create another workflow, `e` or Enter to edit its source,
-`v` to validate and compile, and `p` to compile and run the selected workflow.
-The terminal graph shows the selected workflow's nodes, execution kinds, and
-outgoing edges; it is an operational projection rather than a second source of
-truth. Escape is global navigation: it cancels an authoring prompt, returns from the
-source editor to its parent, returns from a run to Runs, and returns every top-level
-surface to the FACTORY LOCAL home screen.
+AI authoring follows a controlled lifecycle:
+
+```text
+intent → file proposal → compiler validation → human approval → optimistic apply → artifact
+```
+
+Press `a` on a Workflow to propose a goal-driven revision. Review its semantic file
+diff under Proposals, then use `a` to approve and `y` to apply. `v` revalidates and
+`d` rejects without changing files. Every lifecycle action records a correlated log
+event and durable operation evidence. Apply checks the original file hashes, writes
+the proposal as one optimistic batch, and compiles an immutable artifact; stale or
+invalid proposals fail closed.
+
+External authoring agents can submit exact resource files through
+`POST /api/projects/:projectId/authoring/proposals` or `factory author import`. This is
+the integration point for Codex or another chat agent: it can construct Project,
+Workflow, Agent, WorkUnit, Canvas, Policy, Connection, Environment, and Schema files,
+but cannot mutate the Project until the proposal validates and a user approves it.
+The imported JSON shape is:
+
+```json
+{
+  "goal": "Add a bounded review agent and require approval before publishing",
+  "changes": [
+    { "path": "workflows/review.workflow.yaml", "content": "apiVersion: factory.agentic/v1\n..." },
+    { "path": "units/review.unit.yaml", "content": "apiVersion: factory.agentic/v1\n..." }
+  ]
+}
+```
+
+Project controls are `n` to create a Project, `s` to switch Projects, `w` to create a
+starter Workflow, and `v` to validate and compile. Workflow controls are `a` to author
+with AI, Enter to inspect WorkUnits, `v` to compile, and `p` to run. Escape is global
+navigation: it cancels a prompt, leaves advanced source editing, walks from WorkUnit to
+Workflow to home, and returns from a run to Runs.
 
 The non-interactive equivalent is:
 
 ```bash
-factory workspace new "Code review factory"
+factory project new "Code review factory"
 factory workflow new "Review a pull request" --project <project-id-from-the-first-command>
 factory workflow --project <project-id>
+factory author propose review-a-pull-request "Add a bounded coding agent and human approval" --project <project-id>
 ```
 
 ### Control-plane authentication
@@ -473,11 +498,11 @@ The control plane polls persisted deployments every 30 seconds and reconciles de
 versus observed state even when no browser is open. Override the interval for local
 testing with `DEPLOYMENT_RECONCILE_INTERVAL_MS`; the value must be a positive number.
 
-Compose sets `WORKSPACE_ROOT=/app/.data/workspaces`. Authored project files and empty
+Compose sets `WORKSPACE_ROOT=/app/.data/workspaces`. Authored Project files and empty
 directories are stored in that durable workspace volume rather than in PostgreSQL
 control-plane state; compiled artifacts, runs, deployments, evidence, and telemetry
-remain in their dedicated stores. Workspace paths are tenant/project scoped and
-symlinks are rejected so a mounted workspace cannot escape its project boundary.
+remain in their dedicated stores. Project paths are tenant/project scoped and
+symlinks are rejected so a mounted source directory cannot escape its Project boundary.
 
 Compose also starts a local Vault development server on port `8200`. Connection API
 keys are written to Vault and represented in PostgreSQL only by an opaque reference.
@@ -664,10 +689,10 @@ uncompressed image budget with `npm run check:image`; that check is intentionall
 separate because it requires a Docker daemon and remains optional for local setups
 without Docker Desktop.
 
-The credential-free IDE browser smoke suite runs with `npm run test:browser`. It
+The credential-free optional-browser smoke suite runs with `npm run test:browser`. It
 builds the production web app, starts a fresh isolated JSON-backed server, and checks
-the Workspace modes, command palette, bottom output panel, Observe tabs, and the
-Deployments operational card, filters, links, and expansion affordances. CI installs
+the compatibility authoring views, Observe tabs, and the Deployments operational card,
+filters, links, and expansion affordances. CI installs
 Chromium and runs this gate without Docker, PostgreSQL, Vault, model credentials, or
 external services.
 
@@ -699,22 +724,24 @@ propose changes, while policy and human approval control promotion.
 
 ## Product surfaces
 
-- **Studio:** IDE-style declarative workspace with a project explorer, editable YAML
-  source, compile/apply diagnostics, operational workflow graph, agent-box inspection, and an
-  optional React Flow canvas for compatibility editing.
+- **Projects:** terminal-native, file-backed source boundaries with AI proposal review,
+  compiler diagnostics, and an advanced raw-source escape hatch.
+- **Workflows:** operational graphs of versioned WorkUnit envelopes, with drill-down
+  into execution contracts and a direct compile/run path.
 - **Runs:** inspect status, cost, human touchpoints, node events, agent iterations,
   failures, and approval waits.
 - **Connections:** manage non-secret connector metadata, environment bindings, scopes,
   health, and use.
-- **Agent proposals:** turn an outcome into a reviewable, bounded workflow proposal.
-  The included planner is deterministic so the repository runs without external AI
-  credentials; its service boundary can be replaced with a model-backed planner.
+- **Authoring proposals:** turn an intent or external-agent file bundle into a
+  validated, approved, optimistically applied Project change and immutable artifact.
+  The included goal planner is deterministic so local development needs no model key;
+  the exact-file API is the seam for model-backed authoring.
 - **Factory:** view throughput, success, cost, automation, human burden, and
   stage-level performance.
 
-The file-first Workspace keeps Monaco and the React Flow Canvas behind lazy browser
-boundaries. Opening source files does not load the Canvas projection until it is
-selected, and the bundle budget is enforced in CI with `npm run check:bundle`.
+The optional browser client remains available for compatibility and observability,
+but it is not required for Project authoring or workflow operation. The browser bundle
+budget remains enforced in CI with `npm run check:bundle`.
 
 The navigation, editor/artifact/deployment/run state machines, projection
 boundaries, and Run preflight contract are documented in

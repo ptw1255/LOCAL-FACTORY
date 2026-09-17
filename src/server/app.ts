@@ -17,11 +17,13 @@ import {
   cloneWorkflowSchema,
   declarativeImportSchema,
   createConnectionSchema,
+  createAuthoringProposalSchema,
+  authoringDecisionSchema,
   createProposalSchema,
   createTenantSchema,
   workflowDefinitionSchema,
 } from '../domain/schema.js';
-import type { ArtifactRecord, DeletedProjectFileRecord, EvaluationDatasetCase, EvaluationDatasetEvaluation, ProjectFileRecord, ReplayReportRecord, SourceDiagnostic, WorkflowDefinition } from '../domain/types.js';
+import type { ArtifactRecord, AuthoringFileChange, AuthoringProposal, DeletedProjectFileRecord, EvaluationDatasetCase, EvaluationDatasetEvaluation, ProjectFileRecord, ReplayReportRecord, SourceDiagnostic, WorkflowDefinition } from '../domain/types.js';
 import { validateWorkflow } from '../domain/validator.js';
 import { validateWorkflowInput } from '../domain/input-schema.js';
 import { defaultFactoryManifest } from '../factory/manifest.js';
@@ -29,6 +31,7 @@ import { calculateFactoryMetrics } from '../factory/metrics.js';
 import { EventService } from '../observability/event-service.js';
 import { compileResourceFiles } from '../declarative/resources.js';
 import { planResourceMigration } from '../declarative/migration.js';
+import { authoringSemanticDiff, createAuthoringChanges, planWorkflowAuthoringChanges, validateAuthoringChanges } from '../agents/authoring.js';
 import { computeArtifactId, diffArtifacts } from '../declarative/artifact.js';
 import { parseProjectYaml, stringifyProjectYaml } from '../declarative/yaml.js';
 import { CompositeTelemetryExporter, OtlpHttpExporter } from '../observability/otlp-exporter.js';
@@ -239,6 +242,58 @@ export async function createApp(
       if (legacy.length > 0) return projectWorkspace.list(scope);
     }
     return listing;
+  };
+  const compileProject = async (scope: { tenantId: string; projectId: string }, environment = 'local'): Promise<ArtifactRecord> => {
+    const files = (await workspaceListing(scope)).files;
+    const compiled = compileResourceFiles(files.map((file) => ({ path: file.path, source: file.content })), { ...scope, environment });
+    const sources = files.map((file) => ({ path: file.path, sha256: file.sha256 }));
+    const compilerVersion = '0.1.0';
+    const artifact: ArtifactRecord = { ...scope, id: computeArtifactId({ environment, compilerVersion, sources, workflows: compiled.workflows }), environment, compilerVersion, sources, workflows: compiled.workflows, createdAt: new Date().toISOString() };
+    await store.appendArtifact?.(artifact);
+    await store.mutate((state) => {
+      if (!state.artifacts.some((candidate) => candidate.id === artifact.id && candidate.projectId === artifact.projectId && candidate.tenantId === artifact.tenantId)) state.artifacts.push(artifact);
+      const current = new Map(state.workflows.filter((workflow) => workflow.projectId === scope.projectId && workflow.tenantId === scope.tenantId).map((workflow) => [workflow.id, workflow]));
+      state.workflows = state.workflows.filter((workflow) => !(workflow.projectId === scope.projectId && workflow.tenantId === scope.tenantId));
+      const compiledAt = new Date().toISOString();
+      for (const workflow of compiled.workflows) {
+        const prior = current.get(workflow.id);
+        const synced = { ...workflow, ...(prior?.createdAt === undefined ? {} : { createdAt: prior.createdAt }), updatedAt: compiledAt };
+        state.workflows.push(synced);
+        if (!state.workflowVersions.some((candidate) => candidate.id === synced.id && candidate.version === synced.version && candidate.projectId === synced.projectId && candidate.tenantId === synced.tenantId)) state.workflowVersions.push(structuredClone(synced));
+      }
+    });
+    return artifact;
+  };
+  const applyAuthoringChanges = async (scope: { tenantId: string; projectId: string }, changes: readonly AuthoringFileChange[]): Promise<ProjectFileRecord[]> => {
+    const writes = changes.map((change) => ({
+      path: change.path,
+      content: change.content,
+      expectedSha256: change.operation === 'create' ? null : change.baseSha256,
+    }));
+    if (projectWorkspace !== undefined) {
+      const saved = await projectWorkspace.saveMany(scope, writes);
+      if (saved.status === 'conflict' || saved.files === undefined) throw new Error('Project files changed after this proposal was created. Create a fresh proposal.');
+      for (const file of saved.files) await emitWorkspaceFileEvent(scope, changes.find((change) => change.path === file.path)?.operation === 'create' ? 'created' : 'updated', file.path, file.sha256);
+      return saved.files;
+    }
+    const saved = await store.mutate((state) => {
+      const current = new Map(state.files.filter((file) => file.tenantId === scope.tenantId && file.projectId === scope.projectId).map((file) => [file.path, file]));
+      for (const change of changes) {
+        const existing = current.get(change.path);
+        if (change.operation === 'create' ? existing !== undefined : existing?.sha256 !== change.baseSha256) return undefined;
+      }
+      const now = new Date().toISOString();
+      const records = changes.map((change): ProjectFileRecord => ({ ...scope, path: change.path, content: change.content, sha256: createHash('sha256').update(change.content).digest('hex'), updatedAt: now }));
+      for (const record of records) {
+        const index = state.files.findIndex((file) => file.tenantId === scope.tenantId && file.projectId === scope.projectId && file.path === record.path);
+        if (index < 0) state.files.push(record);
+        else state.files[index] = record;
+      }
+      return records;
+    });
+    if (saved === undefined) throw new Error('Project files changed after this proposal was created. Create a fresh proposal.');
+    for (const file of saved) await emitWorkspaceFileEvent(scope, changes.find((change) => change.path === file.path)?.operation === 'create' ? 'created' : 'updated', file.path, file.sha256);
+    return saved;
   };
   const configuredAuthMode = options.authMode ?? process.env.FACTORY_AUTH_MODE;
   const authMode: AuthMode = configuredAuthMode === 'required' || (configuredAuthMode === undefined && process.env.NODE_ENV === 'production') ? 'required' : 'local';
@@ -771,42 +826,8 @@ export async function createApp(
       const scope = scopeFromRequest(request);
       const body = request.body as { environment?: unknown };
       const environment = typeof body?.environment === 'string' && body.environment.trim() !== '' ? body.environment : 'local';
-      const files = (await workspaceListing({ tenantId: scope.tenantId, projectId: request.params.projectId })).files;
       try {
-        const compiled = compileResourceFiles(files.map((file) => ({ path: file.path, source: file.content })), { tenantId: scope.tenantId, projectId: request.params.projectId, environment });
-        const sources = files.map((file) => ({ path: file.path, sha256: file.sha256 }));
-        const compilerVersion = '0.1.0';
-        const artifact: ArtifactRecord = { tenantId: scope.tenantId, projectId: request.params.projectId, id: computeArtifactId({ environment, compilerVersion, sources, workflows: compiled.workflows }), environment, compilerVersion, sources, workflows: compiled.workflows, createdAt: new Date().toISOString() };
-        await store.appendArtifact?.(artifact);
-        await store.mutate((state) => {
-          if (!state.artifacts.some((candidate) => candidate.id === artifact.id && candidate.projectId === artifact.projectId && candidate.tenantId === artifact.tenantId)) state.artifacts.push(artifact);
-          // Resource files are the authoring boundary. Keep the mutable
-          // compatibility index aligned with the last successful compile so
-          // subsequent API runs and reloads do not fall back to stale
-          // aggregate WorkflowDefinition records. The immutable artifact
-          // remains the execution pin; this index is only the latest source
-          // projection for legacy consumers.
-          const current = new Map(
-            state.workflows
-              .filter((workflow) => workflow.projectId === request.params.projectId && workflow.tenantId === scope.tenantId)
-              .map((workflow) => [workflow.id, workflow]),
-          );
-          state.workflows = state.workflows.filter((workflow) => !(workflow.projectId === request.params.projectId && workflow.tenantId === scope.tenantId));
-          const compiledAt = new Date().toISOString();
-          for (const workflow of compiled.workflows) {
-            const prior = current.get(workflow.id);
-            const synced = {
-              ...workflow,
-              ...(prior?.createdAt === undefined ? {} : { createdAt: prior.createdAt }),
-              updatedAt: compiledAt,
-            };
-            state.workflows.push(synced);
-            if (!state.workflowVersions.some((candidate) => candidate.id === synced.id && candidate.version === synced.version && candidate.projectId === synced.projectId && candidate.tenantId === synced.tenantId)) {
-              state.workflowVersions.push(structuredClone(synced));
-            }
-          }
-        });
-        return artifact;
+        return await compileProject({ tenantId: scope.tenantId, projectId: request.params.projectId }, environment);
       } catch (error) {
         return reply.status(422).send({ message: errorMessage(error), diagnostics: errorDiagnostics(error) });
       }
@@ -1568,6 +1589,172 @@ export async function createApp(
       }
     },
   );
+
+  const recordAuthoringLifecycle = async (proposal: AuthoringProposal, operation: string, actor = 'factory-ai-author'): Promise<void> => {
+    const runId = `authoring:${proposal.id}`;
+    await events.emit(runId, `authoring.${operation}`, `Authoring proposal ${operation}.`, {
+      tenantId: proposal.tenantId,
+      projectId: proposal.projectId,
+      signal: 'log',
+      severityText: proposal.issues.some((issue) => issue.severity === 'error') ? 'ERROR' : 'INFO',
+      attributes: {
+        'authoring.proposal.id': proposal.id,
+        'authoring.proposal.status': proposal.status,
+        'authoring.change.count': proposal.changes.length,
+        'authoring.actor': actor,
+      },
+    });
+    await events.recordEvidence({
+      tenantId: proposal.tenantId,
+      projectId: proposal.projectId,
+      runId,
+      unitId: 'ai-authoring',
+      operation: `authoring.${operation}`,
+      actor,
+      source: 'factory-authoring-api',
+      correlationId: proposal.id,
+      attempt: 1,
+      status: 'succeeded',
+      input: { goal: proposal.goal },
+      output: { semanticDiff: proposal.semanticDiff },
+      metadata: { 'authoring.status': proposal.status, 'authoring.change_count': proposal.changes.length },
+    });
+  };
+
+  app.post<{ Params: { projectId: string }; Body: unknown }>('/api/projects/:projectId/authoring/proposals', async (request, reply) => {
+    const parsed = createAuthoringProposalSchema.safeParse(request.body);
+    if (!parsed.success) return reply.status(422).send({ message: 'AI authoring request is invalid.', issues: parsed.error.issues });
+    const scope = { tenantId: scopeFromRequest(request).tenantId, projectId: request.params.projectId };
+    const project = await store.read((state) => state.projects.find((candidate) => candidate.tenantId === scope.tenantId && candidate.id === scope.projectId));
+    if (project === undefined) return reply.status(404).send({ message: 'Project not found.' });
+    const files = (await workspaceListing(scope)).files;
+    let changes: AuthoringFileChange[];
+    if (parsed.data.changes !== undefined) {
+      for (const change of parsed.data.changes) {
+        const pathError = projectFilePathError(change.path, change.content);
+        if (pathError !== undefined) return reply.status(422).send({ message: pathError });
+      }
+      changes = createAuthoringChanges(files, parsed.data.changes);
+    } else {
+      const workflow = await store.read((state) => state.workflows.find((candidate) => candidate.id === parsed.data.workflowId && inScope(candidate, scope)));
+      if (workflow === undefined) return reply.status(404).send({ message: 'Workflow not found.' });
+      changes = planWorkflowAuthoringChanges(project, proposals.plan(workflow, parsed.data.goal).workflow, files);
+    }
+    if (changes.length === 0) return reply.status(422).send({ message: 'The authoring request does not change any Project files.' });
+    const validation = validateAuthoringChanges(files, changes, scope);
+    const now = new Date().toISOString();
+    const proposal: AuthoringProposal = {
+      ...scope,
+      id: `authoring-${randomUUID()}`,
+      goal: parsed.data.goal,
+      ...(parsed.data.workflowId === undefined ? {} : { workflowId: parsed.data.workflowId }),
+      status: validation.valid ? 'validated' : 'draft',
+      changes,
+      semanticDiff: authoringSemanticDiff(changes),
+      issues: validation.issues,
+      createdAt: now,
+      ...(validation.valid ? { validatedAt: now } : {}),
+    };
+    await store.mutate((state) => { state.authoringProposals.unshift(proposal); });
+    await recordAuthoringLifecycle(proposal, 'proposed');
+    return reply.status(201).send(proposal);
+  });
+
+  app.get<{ Params: { projectId: string } }>('/api/projects/:projectId/authoring/proposals', async (request) => {
+    const scope = { tenantId: scopeFromRequest(request).tenantId, projectId: request.params.projectId };
+    return { items: await store.read((state) => state.authoringProposals.filter((proposal) => inScope(proposal, scope))) };
+  });
+
+  app.get<{ Params: { projectId: string; proposalId: string } }>('/api/projects/:projectId/authoring/proposals/:proposalId', async (request, reply) => {
+    const scope = { tenantId: scopeFromRequest(request).tenantId, projectId: request.params.projectId };
+    const proposal = await store.read((state) => state.authoringProposals.find((candidate) => candidate.id === request.params.proposalId && inScope(candidate, scope)));
+    return proposal ?? reply.status(404).send({ message: 'Authoring proposal not found.' });
+  });
+
+  app.post<{ Params: { projectId: string; proposalId: string } }>('/api/projects/:projectId/authoring/proposals/:proposalId/validate', async (request, reply) => {
+    const scope = { tenantId: scopeFromRequest(request).tenantId, projectId: request.params.projectId };
+    const current = await store.read((state) => state.authoringProposals.find((candidate) => candidate.id === request.params.proposalId && inScope(candidate, scope)));
+    if (current === undefined) return reply.status(404).send({ message: 'Authoring proposal not found.' });
+    if (['applied', 'rejected'].includes(current.status)) return reply.status(409).send({ message: `A ${current.status} proposal cannot be revalidated.` });
+    const validation = validateAuthoringChanges((await workspaceListing(scope)).files, current.changes, scope);
+    const updated = await store.mutate((state) => {
+      const proposal = state.authoringProposals.find((candidate) => candidate.id === current.id)!;
+      proposal.status = validation.valid ? 'validated' : 'draft';
+      proposal.issues = validation.issues;
+      delete proposal.approvedAt;
+      delete proposal.approvedBy;
+      if (validation.valid) proposal.validatedAt = new Date().toISOString();
+      else delete proposal.validatedAt;
+      return proposal;
+    });
+    await recordAuthoringLifecycle(updated, 'validated');
+    return updated;
+  });
+
+  app.post<{ Params: { projectId: string; proposalId: string }; Body: unknown }>('/api/projects/:projectId/authoring/proposals/:proposalId/approve', async (request, reply) => {
+    const parsed = authoringDecisionSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.status(422).send({ message: 'Approval is invalid.', issues: parsed.error.issues });
+    const scope = { tenantId: scopeFromRequest(request).tenantId, projectId: request.params.projectId };
+    const updated = await store.mutate((state) => {
+      const proposal = state.authoringProposals.find((candidate) => candidate.id === request.params.proposalId && inScope(candidate, scope));
+      if (proposal === undefined) return undefined;
+      if (proposal.status !== 'validated') return null;
+      proposal.status = 'approved';
+      proposal.approvedAt = new Date().toISOString();
+      proposal.approvedBy = parsed.data.actor;
+      return proposal;
+    });
+    if (updated === undefined) return reply.status(404).send({ message: 'Authoring proposal not found.' });
+    if (updated === null) return reply.status(409).send({ message: 'Only a validated proposal can be approved.' });
+    await recordAuthoringLifecycle(updated, 'approved', parsed.data.actor);
+    return updated;
+  });
+
+  app.post<{ Params: { projectId: string; proposalId: string }; Body: unknown }>('/api/projects/:projectId/authoring/proposals/:proposalId/reject', async (request, reply) => {
+    const parsed = authoringDecisionSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.status(422).send({ message: 'Rejection is invalid.', issues: parsed.error.issues });
+    const scope = { tenantId: scopeFromRequest(request).tenantId, projectId: request.params.projectId };
+    const updated = await store.mutate((state) => {
+      const proposal = state.authoringProposals.find((candidate) => candidate.id === request.params.proposalId && inScope(candidate, scope));
+      if (proposal === undefined) return undefined;
+      if (proposal.status === 'applied') return null;
+      proposal.status = 'rejected';
+      proposal.rejectedAt = new Date().toISOString();
+      proposal.rejectedBy = parsed.data.actor;
+      return proposal;
+    });
+    if (updated === undefined) return reply.status(404).send({ message: 'Authoring proposal not found.' });
+    if (updated === null) return reply.status(409).send({ message: 'An applied proposal cannot be rejected.' });
+    await recordAuthoringLifecycle(updated, 'rejected', parsed.data.actor);
+    return updated;
+  });
+
+  app.post<{ Params: { projectId: string; proposalId: string }; Body: unknown }>('/api/projects/:projectId/authoring/proposals/:proposalId/apply', async (request, reply) => {
+    const parsed = authoringDecisionSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.status(422).send({ message: 'Apply request is invalid.', issues: parsed.error.issues });
+    const scope = { tenantId: scopeFromRequest(request).tenantId, projectId: request.params.projectId };
+    const proposal = await store.read((state) => state.authoringProposals.find((candidate) => candidate.id === request.params.proposalId && inScope(candidate, scope)));
+    if (proposal === undefined) return reply.status(404).send({ message: 'Authoring proposal not found.' });
+    if (proposal.status !== 'approved') return reply.status(409).send({ message: 'A proposal must be validated and approved before it can be applied.' });
+    const validation = validateAuthoringChanges((await workspaceListing(scope)).files, proposal.changes, scope);
+    if (!validation.valid) return reply.status(409).send({ message: 'Project changed or the proposal is no longer valid.', issues: validation.issues });
+    try {
+      await applyAuthoringChanges(scope, proposal.changes);
+      const artifact = await compileProject(scope, 'local');
+      const updated = await store.mutate((state) => {
+        const target = state.authoringProposals.find((candidate) => candidate.id === proposal.id)!;
+        target.status = 'applied';
+        target.appliedAt = new Date().toISOString();
+        target.appliedBy = parsed.data.actor;
+        target.artifactId = artifact.id;
+        return target;
+      });
+      await recordAuthoringLifecycle(updated, 'applied', parsed.data.actor);
+      return updated;
+    } catch (error) {
+      return reply.status(409).send({ message: errorMessage(error) });
+    }
+  });
 
   app.post<{ Body: unknown }>('/api/agent/proposals', async (request, reply) => {
     const parsed = createProposalSchema.safeParse(request.body);

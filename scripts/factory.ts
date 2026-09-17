@@ -6,7 +6,6 @@ import { createInterface } from 'node:readline/promises';
 
 import { parseProjectYaml } from '../src/declarative/yaml.js';
 import { compileResourceFiles, parseResourceFile } from '../src/declarative/resources.js';
-import { planResourceMigration } from '../src/declarative/migration.js';
 import { EventService } from '../src/observability/event-service.js';
 import { LocalWorkflowExecutor } from '../src/runtime/executor.js';
 import { JsonStore } from '../src/storage/json-store.js';
@@ -125,7 +124,7 @@ async function editRemoteProjectFile(projectId: string, filePath: string): Promi
   }
 }
 
-async function compileRemoteWorkspace(projectId: string): Promise<{ id: string }> {
+async function compileRemoteProject(projectId: string): Promise<{ id: string }> {
   return requestJson<{ id: string }>(`/api/projects/${encodeURIComponent(projectId)}/compile`, {
     method: 'POST',
     headers: projectHeaders(projectId),
@@ -137,11 +136,11 @@ async function resolveRemoteProject(projectId?: string): Promise<import('../src/
   const projects = await requestJson<{ items: import('../src/domain/types.js').ProjectRecord[] }>('/api/projects');
   const requested = projectId ?? process.env.FACTORY_PROJECT_ID?.trim();
   const project = projects.items.find((candidate) => candidate.id === requested) ?? (requested === undefined || requested === '' ? projects.items[0] : undefined);
-  if (project === undefined) throw new Error(requested === undefined || requested === '' ? 'Create a workspace first.' : `Workspace ${requested} was not found.`);
+  if (project === undefined) throw new Error(requested === undefined || requested === '' ? 'Create a Project first.' : `Project ${requested} was not found.`);
   return project;
 }
 
-async function createRemoteWorkspace(name: string, description = 'Local FACTORY workspace'): Promise<{ project: import('../src/domain/types.js').ProjectRecord; artifactId: string }> {
+async function createRemoteProject(name: string, description = 'Local FACTORY project'): Promise<{ project: import('../src/domain/types.js').ProjectRecord; artifactId: string }> {
   const project = await requestJson<import('../src/domain/types.js').ProjectRecord>('/api/projects', {
     method: 'POST',
     body: JSON.stringify({ name, description }),
@@ -151,7 +150,7 @@ async function createRemoteWorkspace(name: string, description = 'Local FACTORY 
     headers: projectHeaders(project.id),
     body: JSON.stringify({ path: 'factory.yaml', content: renderWorkspaceProjectFile(project.id, project.name, project.description) }),
   });
-  const artifact = await compileRemoteWorkspace(project.id);
+  const artifact = await compileRemoteProject(project.id);
   return { project, artifactId: artifact.id };
 }
 
@@ -166,7 +165,7 @@ async function createRemoteWorkflow(projectId: string, name: string, requestedId
   let projectFile: import('../src/domain/types.js').ProjectFileRecord;
   if (listedProjectFile === undefined) {
     const project = projects.items.find((candidate) => candidate.id === projectId);
-    if (project === undefined) throw new Error(`Workspace ${projectId} was not found.`);
+    if (project === undefined) throw new Error(`Project ${projectId} was not found.`);
     projectFile = await requestJson<import('../src/domain/types.js').ProjectFileRecord>(`/api/projects/${encodeURIComponent(projectId)}/files`, {
       method: 'PUT',
       headers,
@@ -189,42 +188,8 @@ async function createRemoteWorkflow(projectId: string, name: string, requestedId
       { path: canvasPath, content: renderStarterCanvasFile(workflowId, name), expectedSha256: null },
     ] }),
   });
-  const artifact = await compileRemoteWorkspace(projectId);
+  const artifact = await compileRemoteProject(projectId);
   return { workflowId, artifactId: artifact.id };
-}
-
-async function materializeRemoteWorkflow(
-  project: import('../src/domain/types.js').ProjectRecord,
-  workflow: import('../src/domain/types.js').WorkflowDefinition,
-  currentFiles: readonly import('../src/domain/types.js').ProjectFileRecord[],
-): Promise<{ artifactId: string; workflowPath: string }> {
-  const headers = projectHeaders(project.id);
-  const plan = planResourceMigration(project, [workflow]);
-  const currentByPath = new Map(currentFiles.map((file) => [file.path, file]));
-  const generatedResources = plan.files.filter((file) => file.path !== 'factory.yaml');
-  const listedFactoryFile = currentByPath.get('factory.yaml') ?? currentByPath.get('factory.yml');
-  const factoryFile = listedFactoryFile === undefined
-    ? undefined
-    : await requestJson<import('../src/domain/types.js').ProjectFileRecord>(`/api/projects/${encodeURIComponent(project.id)}/files?path=${encodeURIComponent(listedFactoryFile.path)}`, { headers });
-  const plannedFactory = plan.files.find((file) => file.path === 'factory.yaml');
-  if (plannedFactory === undefined) throw new Error('Workflow migration did not produce factory.yaml.');
-  const factoryPath = factoryFile?.path ?? 'factory.yaml';
-  const factorySource = factoryFile === undefined
-    ? plannedFactory.source
-    : addProjectResourcePaths(factoryFile.content, generatedResources.map((file) => file.path));
-  const writes: Array<{ path: string; content: string; expectedSha256: string | null }> = generatedResources
-    .filter((file) => !currentByPath.has(file.path))
-    .map((file) => ({ path: file.path, content: file.source, expectedSha256: null }));
-  if (factoryFile === undefined || factorySource !== factoryFile.content) writes.push({ path: factoryPath, content: factorySource, expectedSha256: factoryFile?.sha256 ?? null });
-  if (writes.length > 0) {
-    await requestJson(`/api/projects/${encodeURIComponent(project.id)}/files/batch`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({ files: writes }),
-    });
-  }
-  const artifact = await compileRemoteWorkspace(project.id);
-  return { artifactId: artifact.id, workflowPath: workflowResourcePath(workflow.id) };
 }
 
 async function editLocalFile(filePath: string): Promise<void> {
@@ -273,7 +238,7 @@ async function terminalSnapshot(runId?: string, requestedProjectId?: string): Pr
   const projects = await requestJson<{ items: import('../src/domain/types.js').ProjectRecord[] }>('/api/projects');
   const preferredId = requestedProjectId ?? process.env.FACTORY_PROJECT_ID?.trim();
   const project = projects.items.find((candidate) => candidate.id === preferredId) ?? (preferredId === undefined || preferredId === '' ? projects.items[0] : undefined);
-  if (project === undefined && preferredId !== undefined && preferredId !== '') throw new Error(`Workspace ${preferredId} was not found.`);
+  if (project === undefined && preferredId !== undefined && preferredId !== '') throw new Error(`Project ${preferredId} was not found.`);
   const projectId = project?.id;
   const scoped = { headers: projectHeaders(projectId) };
   const filesPromise = projectId === undefined
@@ -287,7 +252,7 @@ async function terminalSnapshot(runId?: string, requestedProjectId?: string): Pr
       requestJson<{ items: import('../src/domain/types.js').DeploymentRecord[] }>('/api/deployments', scoped),
       requestJson<{ items: import('../src/domain/types.js').WorkflowDefinition[] }>('/api/workflows', scoped),
       requestJson<{ items: import('../src/domain/types.js').ConnectionRecord[] }>('/api/connections', scoped),
-      requestJson<{ items: import('../src/domain/types.js').AgentProposal[] }>('/api/agent/proposals', scoped),
+      projectId === undefined ? Promise.resolve({ items: [] as import('../src/domain/types.js').AuthoringProposal[] }) : requestJson<{ items: import('../src/domain/types.js').AuthoringProposal[] }>(`/api/projects/${encodeURIComponent(projectId)}/authoring/proposals`, scoped),
       requestJson<import('../src/domain/types.js').FactoryMetrics>('/api/factory/metrics', scoped),
       filesPromise,
     ]);
@@ -299,7 +264,7 @@ async function terminalSnapshot(runId?: string, requestedProjectId?: string): Pr
     requestJson<{ items: import('../src/domain/types.js').DeploymentRecord[] }>('/api/deployments', scoped),
     requestJson<{ items: import('../src/domain/types.js').WorkflowDefinition[] }>('/api/workflows', scoped),
     requestJson<{ items: import('../src/domain/types.js').ConnectionRecord[] }>('/api/connections', scoped),
-    requestJson<{ items: import('../src/domain/types.js').AgentProposal[] }>('/api/agent/proposals', scoped),
+    projectId === undefined ? Promise.resolve({ items: [] as import('../src/domain/types.js').AuthoringProposal[] }) : requestJson<{ items: import('../src/domain/types.js').AuthoringProposal[] }>(`/api/projects/${encodeURIComponent(projectId)}/authoring/proposals`, scoped),
     requestJson<import('../src/domain/types.js').FactoryMetrics>('/api/factory/metrics', scoped),
     filesPromise,
   ]);
@@ -364,14 +329,14 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     try {
       snapshot = await terminalSnapshot(state.page === 'run-detail' ? state.selectedRunId : undefined, activeProjectId);
       activeProjectId = snapshot.projectId;
-      state = { ...state, error: undefined, cursor: Math.min(state.cursor, Math.max(0, portalItemCount(snapshot, state.page) - 1)) };
+      state = { ...state, error: undefined, cursor: Math.min(state.cursor, Math.max(0, portalItemCount(snapshot, state.page, state.selectedWorkflowId) - 1)) };
     } catch (error) {
       state = { ...state, error: error instanceof Error ? error.message : String(error) };
     }
     render();
   };
-  const openSourceEditor = async (file: import('../src/domain/types.js').ProjectFileRecord, returnPage: 'workspace' | 'workflow' | 'tree'): Promise<void> => {
-    if (activeProjectId === undefined) throw new Error('Create or select a workspace first.');
+  const openSourceEditor = async (file: import('../src/domain/types.js').ProjectFileRecord, returnPage: 'project' | 'workflow' | 'tree'): Promise<void> => {
+    if (activeProjectId === undefined) throw new Error('Create or select a Project first.');
     const source = await requestJson<import('../src/domain/types.js').ProjectFileRecord>(`/api/projects/${encodeURIComponent(activeProjectId)}/files?path=${encodeURIComponent(file.path)}`, {
       headers: projectHeaders(activeProjectId),
     });
@@ -423,24 +388,24 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
       }
     }
   };
-  const compileWorkspace = async (): Promise<{ id: string }> => {
-    if (activeProjectId === undefined) throw new Error('Create or select a workspace first.');
-    return compileRemoteWorkspace(activeProjectId);
+  const compileProject = async (): Promise<{ id: string }> => {
+    if (activeProjectId === undefined) throw new Error('Create or select a Project first.');
+    return compileRemoteProject(activeProjectId);
   };
-  const createWorkspace = async (): Promise<string | undefined> => {
+  const createProject = async (): Promise<string | undefined> => {
     const [name, description] = await promptValues([
-      { label: 'Workspace name' },
-      { label: 'Description', defaultValue: 'Local FACTORY workspace' },
+      { label: 'Project name' },
+      { label: 'Description', defaultValue: 'Local FACTORY Project' },
     ]);
     if (name === undefined || name === '') return undefined;
-    const created = await createRemoteWorkspace(name, description);
+    const created = await createRemoteProject(name, description);
     const project = created.project;
     activeProjectId = project.id;
-    state = { page: 'workspace', cursor: 0 };
-    return `Created workspace ${project.name} and compiled ${created.artifactId}.`;
+    state = { page: 'project', cursor: 0 };
+    return `Created Project ${project.name} and compiled ${created.artifactId}.`;
   };
   const createWorkflow = async (): Promise<string | undefined> => {
-    if (activeProjectId === undefined) throw new Error('Create or select a workspace first.');
+    if (activeProjectId === undefined) throw new Error('Create or select a Project first.');
     const [name] = await promptValues([{ label: 'Workflow name' }]);
     if (name === undefined || name === '') return undefined;
     const suggestedId = authoringSlug(name, 'workflow');
@@ -449,21 +414,47 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     state = { page: 'workflow', cursor: 0 };
     return `Created workflow ${name} (${created.workflowId}) and compiled ${created.artifactId}.`;
   };
-  const switchWorkspace = async (): Promise<string | undefined> => {
+  const switchProject = async (): Promise<string | undefined> => {
     const projects = snapshot.projects ?? [];
-    if (projects.length < 2) return 'Only one workspace is available.';
+    if (projects.length < 2) return 'Only one Project is available.';
     const currentIndex = projects.findIndex((project) => project.id === activeProjectId);
     const next = projects[(currentIndex + 1 + projects.length) % projects.length];
     if (next === undefined) return undefined;
     activeProjectId = next.id;
     state = { ...state, cursor: 0 };
-    return `Switched to workspace ${next.name}.`;
+    return `Switched to Project ${next.name}.`;
+  };
+  const selectedWorkflow = (): import('../src/domain/types.js').WorkflowDefinition | undefined => state.selectedWorkflowId === undefined
+    ? snapshot.workflows?.[state.cursor]
+    : snapshot.workflows?.find((workflow) => workflow.id === state.selectedWorkflowId);
+  const authorWithAi = async (): Promise<string | undefined> => {
+    if (activeProjectId === undefined) throw new Error('Create or select a Project first.');
+    const workflow = selectedWorkflow();
+    if (workflow === undefined) throw new Error('Select a Workflow first.');
+    const [goal] = await promptValues([{ label: `Describe the change to ${workflow.name}` }]);
+    if (goal === undefined || goal.length < 10) return undefined;
+    const proposal = await requestJson<import('../src/domain/types.js').AuthoringProposal>(`/api/projects/${encodeURIComponent(activeProjectId)}/authoring/proposals`, {
+      method: 'POST',
+      headers: projectHeaders(activeProjectId),
+      body: JSON.stringify({ workflowId: workflow.id, goal }),
+    });
+    state = { page: 'proposal-detail', cursor: 0, selectedProposalId: proposal.id };
+    return `AI proposal ${proposal.id} is ${proposal.status}; review its semantic diff before approval.`;
+  };
+  const updateAuthoringProposal = async (action: 'validate' | 'approve' | 'apply' | 'reject'): Promise<string | undefined> => {
+    if (activeProjectId === undefined || state.selectedProposalId === undefined) throw new Error('Select an authoring proposal first.');
+    const proposal = await requestJson<import('../src/domain/types.js').AuthoringProposal>(`/api/projects/${encodeURIComponent(activeProjectId)}/authoring/proposals/${encodeURIComponent(state.selectedProposalId)}/${action}`, {
+      method: 'POST',
+      headers: projectHeaders(activeProjectId),
+      body: JSON.stringify({ actor: 'factory-terminal' }),
+    });
+    return `Proposal ${proposal.id} is now ${proposal.status}${proposal.artifactId === undefined ? '' : `; compiled ${proposal.artifactId}`}.`;
   };
   const runSelectedWorkflow = async (): Promise<string | undefined> => {
-    if (activeProjectId === undefined) throw new Error('Create or select a workspace first.');
-    const workflow = snapshot.workflows?.[state.cursor];
+    if (activeProjectId === undefined) throw new Error('Create or select a Project first.');
+    const workflow = selectedWorkflow();
     if (workflow === undefined) throw new Error('Select a workflow first.');
-    const artifact = await compileWorkspace();
+    const artifact = await compileProject();
     const run = await requestJson<import('../src/domain/types.js').RunRecord>(`/api/workflows/${encodeURIComponent(workflow.id)}/runs`, {
       method: 'POST',
       headers: projectHeaders(activeProjectId),
@@ -482,47 +473,45 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
       body: JSON.stringify({ path: editor.filePath, content: editor.content, expectedSha256: editor.expectedSha256 }),
     });
     state = { ...state, editor: { ...editor, originalContent: editor.content, expectedSha256: saved.sha256 } };
-    const artifact = await compileWorkspace();
+    const artifact = await compileProject();
     return `Saved ${editor.filePath} and compiled ${artifact.id}.`;
   };
   const moveCursor = (delta: number) => {
-    const count = portalItemCount(snapshot, state.page);
+    const count = portalItemCount(snapshot, state.page, state.selectedWorkflowId);
     if (count === 0) return;
     state = { ...state, cursor: (state.cursor + delta + count) % count };
     render();
   };
   const select = async () => {
     if (state.page === 'home') {
-      const nextPage: TerminalPortalPage[] = ['workspace', 'workflow', 'runs', 'approvals', 'deployments', 'connections', 'proposals', 'factory', 'portals'];
+      const nextPage: TerminalPortalPage[] = ['project', 'workflow', 'runs', 'approvals', 'deployments', 'connections', 'proposals', 'factory', 'portals'];
       state = { page: nextPage[state.cursor]!, cursor: 0 };
       await refreshPage();
       return;
     }
-    if (state.page === 'workspace') {
-      const file = snapshot.files?.[state.cursor];
-      if (file !== undefined) await openSourceEditor(file, 'workspace');
+    if (state.page === 'project') {
+      render();
       return;
     }
     if (state.page === 'workflow' || state.page === 'tree') {
-      const returnPage = state.page;
       const workflow = snapshot.workflows?.[state.cursor];
-      const workflowPath = workflow === undefined ? undefined : snapshot.files?.find((file) => file.path === `workflows/${workflow.id}.workflow.yaml` || file.path === `workflows/${workflow.id}.workflow.yml`)?.path ?? `workflows/${workflow.id}.workflow.yaml`;
-      const file = workflowPath === undefined ? undefined : snapshot.files?.find((candidate) => candidate.path === workflowPath);
-      if (file !== undefined) await openSourceEditor(file, returnPage);
-      else if (workflow !== undefined && activeProjectId !== undefined) void performAuthoring(async () => {
-        const project = snapshot.projects?.find((candidate) => candidate.id === activeProjectId);
-        if (project === undefined) throw new Error('The active workspace was not found.');
-        const materialized = await materializeRemoteWorkflow(project, workflow, snapshot.files ?? []);
-        snapshot = await terminalSnapshot(undefined, activeProjectId);
-        const source = snapshot.files?.find((candidate) => candidate.path === materialized.workflowPath);
-        if (source === undefined) throw new Error(`Workflow source ${materialized.workflowPath} could not be loaded.`);
-        await openSourceEditor(source, returnPage);
-        return `Materialized ${workflow.name} as YAML and compiled ${materialized.artifactId}.`;
-      });
-      else if (workflowPath !== undefined) {
-        snapshot = { ...snapshot, error: `Workflow source ${workflowPath} was not found.` };
+      if (workflow !== undefined) {
+        state = { page: 'workflow-detail', cursor: 0, selectedWorkflowId: workflow.id };
         render();
       }
+      return;
+    }
+    if (state.page === 'workflow-detail') {
+      const workflow = selectedWorkflow();
+      const node = workflow?.nodes[state.cursor];
+      if (workflow !== undefined && node !== undefined) state = { page: 'work-unit-detail', cursor: 0, selectedWorkflowId: workflow.id, selectedNodeId: node.id };
+      render();
+      return;
+    }
+    if (state.page === 'proposals') {
+      const proposal = snapshot.proposals?.[state.cursor];
+      if (proposal !== undefined) state = { page: 'proposal-detail', cursor: 0, selectedProposalId: proposal.id };
+      render();
       return;
     }
     if (state.page === 'runs') {
@@ -606,16 +595,29 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
         process.stdin.off('data', onData);
         resolve();
       } else if (key === 'r') void refreshPage();
-      else if (key === 'e') selectSafely();
-      else if (key === 'n' && state.page === 'workspace') void performAuthoring(createWorkspace);
+      else if (key === 'n' && state.page === 'project') void performAuthoring(createProject);
       else if (key === 'n' && (state.page === 'workflow' || state.page === 'tree')) void performAuthoring(createWorkflow);
-      else if (key === 'w' && state.page === 'workspace') void performAuthoring(createWorkflow);
-      else if (key === 's' && (state.page === 'workspace' || state.page === 'workflow' || state.page === 'tree')) void performAuthoring(switchWorkspace);
-      else if (key === 'v' && (state.page === 'workspace' || state.page === 'workflow' || state.page === 'tree')) void performAuthoring(async () => {
-        const artifact = await compileWorkspace();
-        return `Workspace validated and compiled as ${artifact.id}.`;
+      else if (key === 'w' && state.page === 'project') void performAuthoring(createWorkflow);
+      else if (key === 's' && (state.page === 'project' || state.page === 'workflow' || state.page === 'tree')) void performAuthoring(switchProject);
+      else if (key === 'a' && (state.page === 'workflow' || state.page === 'tree' || state.page === 'workflow-detail')) void performAuthoring(authorWithAi);
+      else if (key === 'a' && state.page === 'proposal-detail') void performAuthoring(() => updateAuthoringProposal('approve'));
+      else if (key === 'y' && state.page === 'proposal-detail') void performAuthoring(() => updateAuthoringProposal('apply'));
+      else if (key === 'd' && state.page === 'proposal-detail') void performAuthoring(() => updateAuthoringProposal('reject'));
+      else if (key === 'v' && state.page === 'proposal-detail') void performAuthoring(() => updateAuthoringProposal('validate'));
+      else if (key === 'v' && (state.page === 'project' || state.page === 'workflow' || state.page === 'tree')) void performAuthoring(async () => {
+        const artifact = await compileProject();
+        return `Project validated and compiled as ${artifact.id}.`;
       });
-      else if (key === 'p' && (state.page === 'workflow' || state.page === 'tree')) void performAuthoring(runSelectedWorkflow);
+      else if (key === 'p' && (state.page === 'workflow' || state.page === 'tree' || state.page === 'workflow-detail')) void performAuthoring(runSelectedWorkflow);
+      else if (key === 'o' && state.page === 'project') {
+        const file = snapshot.files?.[state.cursor];
+        if (file !== undefined) void openSourceEditor(file, 'project');
+      }
+      else if (key === 'o' && (state.page === 'workflow' || state.page === 'tree' || state.page === 'workflow-detail')) {
+        const workflow = selectedWorkflow();
+        const file = workflow === undefined ? undefined : snapshot.files?.find((candidate) => candidate.path === `workflows/${workflow.id}.workflow.yaml` || candidate.path === `workflows/${workflow.id}.workflow.yml`);
+        if (file !== undefined) void openSourceEditor(file, 'workflow');
+      }
       else if (key === 'a') void decide('approve');
       else if (key === 'd') void decide('deny');
       else if (key === '\u001b[A' || key === 'k') moveCursor(-1);
@@ -640,6 +642,62 @@ async function runRunControl(args: FactoryArgs): Promise<void> {
   console.log(`FACTORY ${verb} run ${args.runId}: ${result.status}`);
 }
 
+function printAuthoringProposal(proposal: import('../src/domain/types.js').AuthoringProposal): void {
+  console.log(`${proposal.id} · ${proposal.status} · ${proposal.changes.length} file change${proposal.changes.length === 1 ? '' : 's'}`);
+  console.log(`Goal: ${proposal.goal}`);
+  for (const line of proposal.semanticDiff) console.log(`  ${line}`);
+  for (const issue of proposal.issues) console.log(`  ${issue.severity.toUpperCase()} ${issue.path}:${issue.line} ${issue.message}`);
+  if (proposal.artifactId !== undefined) console.log(`Artifact: ${proposal.artifactId}`);
+}
+
+async function runAuthoringCommand(args: FactoryArgs): Promise<void> {
+  await waitForDashboard();
+  const project = await resolveRemoteProject(args.projectId);
+  const headers = projectHeaders(project.id);
+  const base = `/api/projects/${encodeURIComponent(project.id)}/authoring/proposals`;
+  if (args.authoringAction === 'list') {
+    const proposals = await requestJson<{ items: import('../src/domain/types.js').AuthoringProposal[] }>(base, { headers });
+    if (proposals.items.length === 0) console.log(`No AI authoring proposals for ${project.name}.`);
+    for (const proposal of proposals.items) console.log(`${proposal.id.padEnd(48)} ${proposal.status.padEnd(10)} ${proposal.changes.length} files · ${proposal.goal}`);
+    return;
+  }
+  if (args.authoringAction === 'propose') {
+    const proposal = await requestJson<import('../src/domain/types.js').AuthoringProposal>(base, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ workflowId: args.workflowId, goal: args.goal }),
+    });
+    printAuthoringProposal(proposal);
+    console.log(`Next: factory author approve ${proposal.id} --project ${project.id}`);
+    return;
+  }
+  if (args.authoringAction === 'import') {
+    if (args.resourcePath === undefined) throw new Error('Select an AI authoring proposal bundle.');
+    const bundleSource = await readFile(path.resolve(args.resourcePath), 'utf8');
+    let bundle: unknown;
+    try { bundle = JSON.parse(bundleSource); } catch { throw new Error('The authoring proposal bundle must be valid JSON.'); }
+    const proposal = await requestJson<import('../src/domain/types.js').AuthoringProposal>(base, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(bundle),
+    });
+    printAuthoringProposal(proposal);
+    console.log(`Next: factory author approve ${proposal.id} --project ${project.id}`);
+    return;
+  }
+  if (args.proposalId === undefined || args.authoringAction === undefined) throw new Error('Select an authoring proposal action and id.');
+  if (args.authoringAction === 'show') {
+    printAuthoringProposal(await requestJson<import('../src/domain/types.js').AuthoringProposal>(`${base}/${encodeURIComponent(args.proposalId)}`, { headers }));
+    return;
+  }
+  const proposal = await requestJson<import('../src/domain/types.js').AuthoringProposal>(`${base}/${encodeURIComponent(args.proposalId)}/${args.authoringAction}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ actor: 'factory-cli' }),
+  });
+  printAuthoringProposal(proposal);
+}
+
 async function runLifecycle(args: FactoryArgs): Promise<void> {
   switch (args.command) {
     case 'launch':
@@ -655,16 +713,19 @@ async function runLifecycle(args: FactoryArgs): Promise<void> {
       await waitForDashboard();
       await runTui(args, 'portals');
       return;
-    case 'workspace':
+    case 'project':
       await waitForDashboard();
       if (args.authoringAction === 'new') {
-        const created = await createRemoteWorkspace(args.name ?? 'Workspace');
-        console.log(`FACTORY created workspace ${created.project.name} (${created.project.id}).`);
+        const created = await createRemoteProject(args.name ?? 'Project');
+        console.log(`FACTORY created Project ${created.project.name} (${created.project.id}).`);
         console.log(`Compiled artifact: ${created.artifactId}`);
         console.log(`Next: factory workflow new "My workflow" --project ${created.project.id}`);
         return;
       }
-      await runTui(args, 'workspace');
+      await runTui(args, 'project');
+      return;
+    case 'author':
+      await runAuthoringCommand(args);
       return;
     case 'up':
       compose('up', args);

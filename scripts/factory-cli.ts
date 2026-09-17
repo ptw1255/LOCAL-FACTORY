@@ -1,4 +1,4 @@
-export type FactoryLifecycleCommand = 'launch' | 'open' | 'dashboard' | 'workspace' | 'up' | 'down' | 'restart' | 'status' | 'logs' | 'build' | 'deploy' | 'observe' | 'tui' | 'approve' | 'deny' | 'cancel' | 'pause' | 'resume';
+export type FactoryLifecycleCommand = 'launch' | 'open' | 'dashboard' | 'project' | 'author' | 'up' | 'down' | 'restart' | 'status' | 'logs' | 'build' | 'deploy' | 'observe' | 'tui' | 'approve' | 'deny' | 'cancel' | 'pause' | 'resume';
 export type FactoryResourceCommand = 'validate' | 'plan' | 'workflow' | 'tree' | 'edit' | 'run';
 export type FactoryCommand = FactoryLifecycleCommand | FactoryResourceCommand | 'help';
 
@@ -27,8 +27,10 @@ export function factoryBanner(): string {
 
 export interface FactoryArgs {
   command: FactoryCommand;
-  authoringAction?: 'new';
+  authoringAction?: 'new' | 'list' | 'propose' | 'import' | 'show' | 'validate' | 'approve' | 'apply' | 'reject';
   name?: string;
+  goal?: string;
+  proposalId?: string;
   projectId?: string;
   resourcePath?: string;
   workflowId?: string;
@@ -43,13 +45,14 @@ export interface FactoryArgs {
   help: boolean;
 }
 
-const lifecycleCommands = new Set<FactoryCommand>(['launch', 'open', 'dashboard', 'workspace', 'up', 'down', 'restart', 'status', 'logs', 'build', 'deploy', 'observe', 'tui', 'approve', 'deny', 'cancel', 'pause', 'resume']);
+const lifecycleCommands = new Set<FactoryCommand>(['launch', 'open', 'dashboard', 'project', 'author', 'up', 'down', 'restart', 'status', 'logs', 'build', 'deploy', 'observe', 'tui', 'approve', 'deny', 'cancel', 'pause', 'resume']);
 const resourceCommands = new Set<FactoryCommand>(['validate', 'plan', 'workflow', 'tree', 'edit', 'run']);
 const aliases: Readonly<Record<string, FactoryCommand>> = {
   start: 'up',
   stop: 'down',
   dashboards: 'dashboard',
   watch: 'observe',
+  workspace: 'project',
 };
 
 export function isLifecycleCommand(command: FactoryCommand): command is FactoryLifecycleCommand {
@@ -68,8 +71,10 @@ export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
   const profiles: string[] = [];
   let resourcePath: string | undefined;
   let workflowId: string | undefined;
-  let authoringAction: 'new' | undefined;
+  let authoringAction: FactoryArgs['authoringAction'];
   let name: string | undefined;
+  let goal: string | undefined;
+  let proposalId: string | undefined;
   let projectId: string | undefined;
   let service: string | undefined;
   let runId: string | undefined;
@@ -124,7 +129,12 @@ export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
       continue;
     }
     if (value.startsWith('-')) throw new Error(`Unknown option "${value}". Run "factory help" for usage.`);
-    if ((command === 'workspace' || command === 'workflow') && authoringAction === undefined && value === 'new') authoringAction = 'new';
+    if (command === 'author' && authoringAction === undefined && ['list', 'propose', 'import', 'show', 'validate', 'approve', 'apply', 'reject'].includes(value)) authoringAction = value as Exclude<FactoryArgs['authoringAction'], 'new' | undefined>;
+    else if (command === 'author' && authoringAction === 'propose' && workflowId === undefined) workflowId = value;
+    else if (command === 'author' && authoringAction === 'propose') goal = goal === undefined ? value : `${goal} ${value}`;
+    else if (command === 'author' && authoringAction === 'import' && resourcePath === undefined) resourcePath = value;
+    else if (command === 'author' && authoringAction !== undefined && authoringAction !== 'list' && proposalId === undefined) proposalId = value;
+    else if ((command === 'project' || command === 'workflow') && authoringAction === undefined && value === 'new') authoringAction = 'new';
     else if (authoringAction === 'new' && name === undefined) name = value;
     else if (authoringAction === 'new' && name !== undefined) name = `${name} ${value}`;
     else if (resourceCommands.has(command) && resourcePath === undefined) resourcePath = value;
@@ -137,8 +147,12 @@ export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
   }
   if (resourceCommands.has(command) && resourcePath === undefined && command !== 'workflow') throw new Error(`${command} requires a project.yaml or resource directory.`);
   if (authoringAction === 'new' && (name === undefined || name.trim() === '')) throw new Error(`${command} new requires a name.`);
+  if (command === 'author' && authoringAction === undefined) authoringAction = 'list';
+  if (command === 'author' && authoringAction === 'propose' && (workflowId === undefined || goal === undefined || goal.trim().length < 10)) throw new Error('author propose requires a workflow id and a goal of at least 10 characters.');
+  if (command === 'author' && authoringAction === 'import' && resourcePath === undefined) throw new Error('author import requires a proposal bundle path.');
+  if (command === 'author' && !['list', 'propose', 'import'].includes(authoringAction ?? '') && proposalId === undefined) throw new Error(`author ${authoringAction} requires a proposal id.`);
   if (['approve', 'deny', 'cancel', 'pause', 'resume'].includes(command) && runId === undefined) throw new Error(`${command} requires a run id.`);
-  return { command, ...(authoringAction === undefined ? {} : { authoringAction }), ...(name === undefined ? {} : { name }), ...(projectId === undefined ? {} : { projectId }), ...(resourcePath === undefined ? {} : { resourcePath }), ...(workflowId === undefined ? {} : { workflowId }), ...(service === undefined ? {} : { service }), ...(runId === undefined ? {} : { runId }), ...(reason === undefined ? {} : { reason }), profiles: [...new Set(profiles)], follow, once, intervalMs, web, help: false };
+  return { command, ...(authoringAction === undefined ? {} : { authoringAction }), ...(name === undefined ? {} : { name }), ...(goal === undefined ? {} : { goal }), ...(proposalId === undefined ? {} : { proposalId }), ...(projectId === undefined ? {} : { projectId }), ...(resourcePath === undefined ? {} : { resourcePath }), ...(workflowId === undefined ? {} : { workflowId }), ...(service === undefined ? {} : { service }), ...(runId === undefined ? {} : { runId }), ...(reason === undefined ? {} : { reason }), profiles: [...new Set(profiles)], follow, once, intervalMs, web, help: false };
 }
 
 export function composeArguments(action: 'up' | 'down' | 'restart' | 'ps' | 'logs' | 'build', profiles: readonly string[], service?: string): string[] {
@@ -181,8 +195,9 @@ Lifecycle:
   deploy                            Build and start the stack
   open                             Open the browser dashboard directly
   dashboard | dashboards           Open the terminal Portals selector
-  workspace                        Open terminal file-backed authoring (n create, e edit)
-  workspace new <name>             Create a file-backed workspace
+  project                          Open the active file-backed Project
+  project new <name>               Create and initialize a Project
+  workspace ...                    Compatibility alias for project
   observe [run-id]                 Show runs, approvals, and telemetry
   tui                              Interactive terminal monitor (q quit, a approve, d deny)
   approve <run-id> [reason]        Approve a waiting run
@@ -197,13 +212,21 @@ Authoring:
   workflow                         Open terminal Workflow authoring
   workflow new <name>              Create and compile a starter workflow
   workflow <path> [workflow-id]     Inspect a local workflow resource
+  author list                       List AI authoring proposals
+  author propose <workflow> <goal>  Propose validated Project file changes
+  author import <bundle.json>       Submit exact file changes produced by an external AI
+  author show <proposal-id>         Show the semantic file diff
+  author validate <proposal-id>     Revalidate against current Project files
+  author approve <proposal-id>      Approve a validated proposal
+  author apply <proposal-id>        Atomically apply and compile an approved proposal
+  author reject <proposal-id>       Reject a proposal without changing files
   tree <path>                      Compatibility alias for workflow
   edit <path>                      Open a local resource in $EDITOR, then validate
   run <path> [workflow-id]         Execute a workflow locally
 
 Options:
   --profile <name>                 Enable a Compose profile (repeatable)
-  --project <id>                   Select a workspace/project for API commands
+  --project <id>                   Select a Project for API commands
   --all                            Enable temporal, observability, and ollama
   --follow                         Keep observe output live
   --once                           Render one TUI snapshot and exit
@@ -217,6 +240,6 @@ Environment:
   FACTORY_TENANT_ID                Tenant selected by terminal API commands
   FACTORY_PROJECT_ID               Project selected by terminal authoring (default: first project)
   FACTORY_ENVIRONMENT              Compile target for terminal saves (default: local)
-  VISUAL / EDITOR                  Editor opened by Workspace and Workflow authoring
+  VISUAL / EDITOR                  Editor used only by the advanced edit command
   FACTORY_NO_OPEN=1                Print the URL without launching a browser`;
 }

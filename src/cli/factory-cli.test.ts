@@ -18,8 +18,12 @@ describe('FACTORY CLI argument handling', () => {
     });
     expect(parseFactoryArgs(['dashboard'])).toMatchObject({ command: 'dashboard' });
     expect(parseFactoryArgs(['dashboards'])).toMatchObject({ command: 'dashboard' });
-    expect(parseFactoryArgs(['workspace'])).toMatchObject({ command: 'workspace' });
-    expect(parseFactoryArgs(['workspace', 'new', 'Code review'])).toMatchObject({ command: 'workspace', authoringAction: 'new', name: 'Code review' });
+    expect(parseFactoryArgs(['project'])).toMatchObject({ command: 'project' });
+    expect(parseFactoryArgs(['workspace'])).toMatchObject({ command: 'project' });
+    expect(parseFactoryArgs(['workspace', 'new', 'Code review'])).toMatchObject({ command: 'project', authoringAction: 'new', name: 'Code review' });
+    expect(parseFactoryArgs(['author', 'propose', 'review', 'Add approval before publishing', '--project', 'project-a'])).toMatchObject({ command: 'author', authoringAction: 'propose', workflowId: 'review', goal: 'Add approval before publishing', projectId: 'project-a' });
+    expect(parseFactoryArgs(['author', 'import', 'proposal.json', '--project', 'project-a'])).toMatchObject({ command: 'author', authoringAction: 'import', resourcePath: 'proposal.json', projectId: 'project-a' });
+    expect(parseFactoryArgs(['author', 'approve', 'proposal-1'])).toMatchObject({ command: 'author', authoringAction: 'approve', proposalId: 'proposal-1' });
     expect(parseFactoryArgs(['workflow'])).toMatchObject({ command: 'workflow' });
     expect(parseFactoryArgs(['workflow', 'new', 'Review changes', '--project', 'project-a'])).toMatchObject({ command: 'workflow', authoringAction: 'new', name: 'Review changes', projectId: 'project-a' });
     expect(parseFactoryArgs(['tree', 'examples/code-review-loop.yaml'])).toMatchObject({ command: 'tree', resourcePath: 'examples/code-review-loop.yaml' });
@@ -41,7 +45,8 @@ describe('FACTORY CLI argument handling', () => {
     const commands: Array<[string[], string]> = [
       [[], 'launch'], [['up'], 'up'], [['start'], 'up'], [['down'], 'down'], [['stop'], 'down'],
       [['restart'], 'restart'], [['status'], 'status'], [['logs'], 'logs'], [['build'], 'build'],
-      [['deploy'], 'deploy'], [['open'], 'open'], [['dashboard'], 'dashboard'], [['workspace'], 'workspace'], [['workspace', 'new', 'Demo'], 'workspace'],
+      [['deploy'], 'deploy'], [['open'], 'open'], [['dashboard'], 'dashboard'], [['project'], 'project'], [['workspace'], 'project'], [['workspace', 'new', 'Demo'], 'project'],
+      [['author'], 'author'], [['author', 'propose', 'review', 'Add a safe approval step'], 'author'], [['author', 'import', 'proposal.json'], 'author'], [['author', 'show', 'proposal-1'], 'author'],
       [['observe'], 'observe'], [['tui'], 'tui'], [['approve', 'run-1'], 'approve'], [['deny', 'run-1'], 'deny'],
       [['cancel', 'run-1'], 'cancel'], [['pause', 'run-1'], 'pause'], [['resume', 'run-1'], 'resume'],
       [['validate', 'project.yaml'], 'validate'], [['plan', 'project.yaml'], 'plan'], [['workflow'], 'workflow'], [['workflow', 'new', 'Demo'], 'workflow'],
@@ -49,7 +54,7 @@ describe('FACTORY CLI argument handling', () => {
       [['run', 'project.yaml'], 'run'], [['help'], 'help'],
     ];
     for (const [argv, command] of commands) expect(parseFactoryArgs(argv).command).toBe(command);
-    expect(isLifecycleCommand(parseFactoryArgs(['workspace']).command)).toBe(true);
+    expect(isLifecycleCommand(parseFactoryArgs(['project']).command)).toBe(true);
     expect(isLifecycleCommand(parseFactoryArgs(['workflow']).command)).toBe(false);
   });
 
@@ -87,7 +92,7 @@ describe('FACTORY CLI argument handling', () => {
     expect(renderTerminalPortal(snapshot, { page: 'portals', cursor: 0 }, { clear: false })).toContain('Observe');
   });
 
-  it('renders source-backed Workspace and Workflow authoring surfaces', () => {
+  it('renders Project, Workflow, and WorkUnit authoring surfaces', () => {
     const snapshot = {
       runs: [], approvals: [], deployments: [],
       projectId: 'project-local',
@@ -95,19 +100,23 @@ describe('FACTORY CLI argument handling', () => {
       files: [{ path: 'workflows/review.workflow.yaml', sha256: 'abc123', content: '' }],
       workflows: [{ id: 'review', name: 'Review', version: 1, status: 'draft', nodes: [{ id: 'trigger', label: 'Manual trigger', type: 'manualTrigger', unit: { kind: 'deterministic' } }], edges: [] }],
     } as never;
-    expect(renderTerminalPortal(snapshot, { page: 'home', cursor: 0 }, { clear: false })).toContain('Workspace');
-    expect(renderTerminalPortal(snapshot, { page: 'workspace', cursor: 0 }, { clear: false })).toContain('workflows/review.workflow.yaml');
-    expect(renderTerminalPortal(snapshot, { page: 'workspace', cursor: 0 }, { clear: false })).toContain('n new workspace');
+    expect(renderTerminalPortal(snapshot, { page: 'home', cursor: 0 }, { clear: false })).toContain('Projects');
+    expect(renderTerminalPortal(snapshot, { page: 'project', cursor: 0 }, { clear: false })).toContain('workflows/review.workflow.yaml');
+    expect(renderTerminalPortal(snapshot, { page: 'project', cursor: 0 }, { clear: false })).toContain('n new Project');
     expect(renderTerminalPortal(snapshot, { page: 'workflow', cursor: 0 }, { clear: false })).toContain('WORKFLOW');
     expect(renderTerminalPortal(snapshot, { page: 'workflow', cursor: 0 }, { clear: false })).toContain('Manual trigger');
-    expect(renderTerminalPortal(snapshot, { page: 'workflow', cursor: 0 }, { clear: false })).toContain('p run selected');
+    expect(renderTerminalPortal(snapshot, { page: 'workflow-detail', cursor: 0, selectedWorkflowId: 'review' }, { clear: false })).toContain('WorkUnit/trigger');
+    expect(renderTerminalPortal(snapshot, { page: 'work-unit-detail', cursor: 0, selectedWorkflowId: 'review', selectedNodeId: 'trigger' }, { clear: false })).toContain('WORKUNIT ENVELOPE');
   });
 
   it('always gives Escape a deterministic route out of terminal pages', () => {
-    const topLevelPages: TerminalPortalPage[] = ['workspace', 'workflow', 'tree', 'runs', 'approvals', 'deployments', 'connections', 'proposals', 'factory', 'portals'];
+    const topLevelPages: TerminalPortalPage[] = ['project', 'workflow', 'tree', 'runs', 'approvals', 'deployments', 'connections', 'proposals', 'factory', 'portals'];
     for (const page of topLevelPages) expect(backTerminalState({ page, cursor: 4 })).toEqual({ page: 'home', cursor: 0 });
     expect(backTerminalState({ page: 'run-detail', cursor: 0, selectedRunId: 'run-1' })).toEqual({ page: 'runs', cursor: 0 });
-    expect(backTerminalState({ page: 'source-editor', cursor: 0, editor: { filePath: 'factory.yaml', content: '', originalContent: '', expectedSha256: 'abc', cursorOffset: 0, returnPage: 'workspace' } })).toEqual({ page: 'workspace', cursor: 0 });
+    expect(backTerminalState({ page: 'workflow-detail', cursor: 0, selectedWorkflowId: 'review' })).toEqual({ page: 'workflow', cursor: 0 });
+    expect(backTerminalState({ page: 'work-unit-detail', cursor: 0, selectedWorkflowId: 'review', selectedNodeId: 'trigger' })).toEqual({ page: 'workflow-detail', cursor: 0, selectedWorkflowId: 'review' });
+    expect(backTerminalState({ page: 'proposal-detail', cursor: 0, selectedProposalId: 'proposal-1' })).toEqual({ page: 'proposals', cursor: 0 });
+    expect(backTerminalState({ page: 'source-editor', cursor: 0, editor: { filePath: 'factory.yaml', content: '', originalContent: '', expectedSha256: 'abc', cursorOffset: 0, returnPage: 'project' } })).toEqual({ page: 'project', cursor: 0 });
     expect(backTerminalState({ page: 'home', cursor: 8 })).toEqual({ page: 'home', cursor: 0 });
   });
 

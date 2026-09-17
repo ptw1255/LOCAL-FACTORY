@@ -19,6 +19,7 @@ describe('Authenticator', () => {
     expect(authenticator.authorize(principal, { method: 'POST', url: '/api/projects', tenantId: 'tenant-a', projectId: 'project-a' }).allowed).toBe(true);
     expect(authenticator.authorize(principal, { method: 'POST', url: '/api/deployments/demo/action', tenantId: 'tenant-a', projectId: 'project-a' })).toMatchObject({ allowed: false, requiredRole: 'operator' });
     expect(authenticator.authorize(principal, { method: 'POST', url: '/api/workflows/demo/runs', tenantId: 'tenant-a', projectId: 'project-a' })).toMatchObject({ allowed: false, requiredRole: 'operator' });
+    expect(authenticator.authorize(principal, { method: 'POST', url: '/api/projects/project-a/authoring/proposals/change-1/approve', tenantId: 'tenant-a', projectId: 'project-a' })).toMatchObject({ allowed: false, requiredRole: 'reviewer' });
     expect(authenticator.authorize(principal, { method: 'GET', url: '/api/workflows', tenantId: 'tenant-b', projectId: 'project-a' })).toMatchObject({ allowed: false, reason: expect.stringContaining('not authorized') });
     const operator = new Authenticator('required', [{ token: 'operator-secret', principal: { id: 'operator-1', role: 'operator', tenantIds: ['tenant-a'], projectIds: ['project-a'] } }]).authenticate('Bearer operator-secret');
     expect(new Authenticator('required', []).authorize(operator, { method: 'POST', url: '/api/projects', tenantId: 'tenant-a', projectId: 'project-a' }).allowed).toBe(false);
