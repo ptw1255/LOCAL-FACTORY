@@ -57,6 +57,28 @@ describe('WorkflowReplayService', () => {
     expect(replayRun).toEqual(expect.objectContaining({ replayOfRunId: source.id, workflowVersion: 7 }));
   });
 
+  it('replays the source trigger input instead of silently substituting an empty input', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-replay-input-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const executor = new LocalWorkflowExecutor(store, events);
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-replay-input';
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'normalize', type: 'code', label: 'Normalize', position: { x: 160, y: 0 }, config: { operation: 'uppercase' }, unit: defaultWorkUnit('code') },
+    ];
+    workflow.edges = [{ id: 'trigger-normalize', source: 'trigger', target: 'normalize' }];
+    const source = await executor.start(workflow, { input: 'replay me' });
+    await waitFor(store, source.id);
+    const replay = await new WorkflowReplayService(store, executor).replay(source.id);
+
+    expect(replay.status).toBe('passed');
+    const replayRun = await store.read((state) => state.runs.find((run) => run.id === replay.replayRunId));
+    expect(replayRun?.input).toBe('replay me');
+  });
+
   it('rejects workflows whose pinned definition includes nondeterministic nodes', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-replay-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
