@@ -115,6 +115,27 @@ describe('TemporalWorkflowExecutor', () => {
     expect(start).toHaveBeenCalledTimes(2);
   });
 
+  it('retries a search-attribute mapping race without creating another run', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-attribute-retry-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-attribute-retry');
+    let attempts = 0;
+    const start = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('Failed to start Workflow: Namespace default has no mapping defined for search attribute Environment');
+      return handle;
+    });
+    const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+
+    const run = await executor.start(structuredClone(seedWorkflow));
+
+    expect(run.status).toBe('running');
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(await store.read((state) => state.runs.filter((candidate) => candidate.id === run.id))).toHaveLength(1);
+  });
+
   it('retries a transient Temporal transport-unavailable response', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-transport-retry-'));
     const store = new JsonStore(path.join(directory, 'state.json'));

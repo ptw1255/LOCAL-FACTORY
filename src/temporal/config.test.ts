@@ -4,9 +4,15 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { temporalConnectionSettings } from './config.js';
+import { temporalConnectionSettings, temporalTaskQueues } from './config.js';
 
 describe('Temporal connection settings', () => {
+  it('resolves one versioned queue by default and bounded explicit queues for rollout', () => {
+    expect(temporalTaskQueues({ TEMPORAL_TASK_QUEUE_PREFIX: 'factory', TEMPORAL_WORKFLOW_VERSION: '7' })).toEqual(['factory-v7']);
+    expect(temporalTaskQueues({ TEMPORAL_TASK_QUEUE: 'factory-custom' })).toEqual(['factory-custom']);
+    expect(temporalTaskQueues({ TEMPORAL_TASK_QUEUES: 'factory-v1, factory-v2, factory-v1' })).toEqual(['factory-v1', 'factory-v2']);
+  });
+
   it('keeps local defaults while accepting a Temporal API key', () => {
     expect(temporalConnectionSettings({ TEMPORAL_API_KEY: '  temporal-secret  ' })).toEqual({ address: 'localhost:7233', namespace: 'default', apiKey: 'temporal-secret' });
   });
