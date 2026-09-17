@@ -27,6 +27,29 @@ test.describe('IDE workspace', () => {
     await expect(page.getByText('Node palette', { exact: true })).toBeVisible();
   });
 
+  test('announces workspace status and keeps status badges readable', async ({ page }) => {
+    const status = page.locator('[role="status"]').first();
+    await expect(status).toBeVisible();
+    await expect(status).toContainText(/Quick start|Preparing|Project definition/);
+
+    const contrastRatios = await page.locator('.status-badge').evaluateAll((badges) => badges.map((badge) => {
+      const parse = (value: string): [number, number, number] => {
+        const match = value.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        return match === null ? [0, 0, 0] : [Number(match[1]), Number(match[2]), Number(match[3])];
+      };
+      const luminance = (value: [number, number, number]): number => value.reduce((sum, channel, index) => {
+        const normalized = channel / 255;
+        return sum + (normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4) * [0.2126, 0.7152, 0.0722][index]!;
+      }, 0);
+      const style = getComputedStyle(badge);
+      const foreground = luminance(parse(style.color));
+      const background = luminance(parse(style.backgroundColor));
+      return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+    }));
+    expect(contrastRatios.length).toBeGreaterThan(0);
+    for (const ratio of contrastRatios) expect(ratio).toBeGreaterThanOrEqual(3);
+  });
+
   test('opens, reorders, closes, and restores file-backed editor tabs', async ({ page, request }) => {
     const migration = await request.post('/api/projects/project-local/migrate', { data: { dryRun: false } });
     expect(migration.ok()).toBeTruthy();
