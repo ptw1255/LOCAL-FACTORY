@@ -143,7 +143,8 @@ describe('coding workflow API', () => {
     ];
     workflow.edges = workflow.nodes.slice(0, -1).map((node, index) => ({ id: `edge-${node.id}-${workflow.nodes[index + 1]?.id}`, source: node.id, target: workflow.nodes[index + 1]?.id ?? node.id }));
     await store.mutate((state) => { state.workflows.push(workflow); state.workflowVersions.push(structuredClone(workflow)); });
-    const app = await createApp({ store, repositoryWorkspace, githubRepository: github, serveStatic: false });
+    let app = await createApp({ store, repositoryWorkspace, githubRepository: github, serveStatic: false });
+    let restarted = false;
     try {
       const started = await app.inject({ method: 'POST', url: `/api/workflows/${workflow.id}/runs`, payload: {} });
       const startedRun = started.json() as { id: string; traceId?: string; releaseBundleHash?: string; pinnedAgentVersions?: Record<string, number> };
@@ -156,12 +157,18 @@ describe('coding workflow API', () => {
       for (let attempt = 0; attempt < 100; attempt += 1) {
         const current = await app.inject({ method: 'GET', url: `/api/runs/${runId}` }).then((response) => response.json() as Record<string, unknown>);
         if (current.status === 'waiting') {
+          if (!restarted) {
+            await app.close();
+            app = await createApp({ store, repositoryWorkspace, githubRepository: github, serveStatic: false });
+            restarted = true;
+          }
           const approved = await app.inject({ method: 'POST', url: `/api/runs/${runId}/approve`, payload: {} });
           expect(approved.statusCode).toBe(200);
         } else if (current.status === 'succeeded' || current.status === 'failed') { terminal = current; break; }
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       expect(terminal?.status).toBe('succeeded');
+      expect(restarted).toBe(true);
       expect(githubFetcher).toHaveBeenCalledTimes(4);
       const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
       const operations = (evidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items;
