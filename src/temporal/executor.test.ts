@@ -126,6 +126,29 @@ describe('TemporalWorkflowExecutor', () => {
     expect((await events.list(run.id)).map((event) => event.type)).toEqual(expect.arrayContaining(['run.paused', 'run.resumed']));
   });
 
+  it('does not overwrite a terminal state when a pause signal races completion', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-pause-race-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    const events = new EventService(store);
+    const handle = new FakeHandle('factory-pause-race');
+    const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
+    const executor = new TemporalWorkflowExecutor({ store, events, client });
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-temporal-pause-race';
+    const run = await executor.start(workflow);
+    handle.signal.mockImplementationOnce(async () => {
+      await store.mutate((state) => {
+        const target = state.runs.find((candidate) => candidate.id === run.id);
+        if (target !== undefined) target.status = 'succeeded';
+      });
+    });
+
+    const result = await executor.pause(run.id);
+
+    expect(result.status).toBe('succeeded');
+    expect((await events.list(run.id)).some((event) => event.type === 'run.paused')).toBe(false);
+  });
+
   it('retries a terminal Temporal run with pinned provenance', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-retry-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
