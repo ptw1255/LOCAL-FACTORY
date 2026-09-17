@@ -85,6 +85,11 @@ export class EventService {
       const persistedParentSpanId = options.nodeId === undefined
         ? undefined
         : [...state.events].reverse().find((event) => event.runId === runId && event.nodeId === options.nodeId)?.spanId;
+      // Keep every event in one navigable run tree. Events for a new node use
+      // the run.started span as their parent; same-node lifecycle events still
+      // chain from the most recent event above.
+      const persistedRunRootSpanId = [...state.events].reverse().find((event) => event.runId === runId && event.type === 'run.started')?.spanId
+        ?? [...state.events].find((event) => event.runId === runId && event.parentSpanId === undefined)?.spanId;
       return {
         traceId: run?.traceId ?? active?.traceId,
         tenantId: run?.tenantId,
@@ -99,12 +104,14 @@ export class EventService {
         persistedParentSpanId,
         activeTraceId: active?.traceId,
         activeSpanId: active?.spanId,
+        persistedRunRootSpanId,
       };
     });
     const traceId = options.traceId ?? runContext.traceId ?? runId.replaceAll('-', '').padEnd(32, '0').slice(0, 32);
     const parentSpanId = options.parentSpanId
       ?? (runContext.activeTraceId === traceId ? runContext.activeSpanId : undefined)
-      ?? runContext.persistedParentSpanId;
+      ?? runContext.persistedParentSpanId
+      ?? (options.nodeId === undefined && type === 'run.started' ? undefined : runContext.persistedRunRootSpanId);
     const spanId = randomUUID().replaceAll('-', '').slice(0, 16);
     const data = options.data === undefined
       ? undefined
