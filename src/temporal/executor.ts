@@ -5,6 +5,7 @@ import { requiresTemporalApproval, type TemporalWorkflowResult } from './workflo
 import { createQueuedRun, releaseBundleHash, type RunCreationOptions } from '../runtime/executor.js';
 import type { PlatformStore } from '../storage/store.js';
 import type { EventService } from '../observability/event-service.js';
+import { temporalConnectionSettings } from './config.js';
 
 const TEMPORAL_START_ATTEMPTS = 8;
 
@@ -86,8 +87,9 @@ export class TemporalWorkflowExecutor {
     namespace?: string;
     taskQueuePrefix?: string;
   }): Promise<{ executor: TemporalWorkflowExecutor; close: () => Promise<void> }> {
-    const connection = await Connection.connect({ address: options.address ?? process.env.TEMPORAL_ADDRESS ?? 'localhost:7233' });
-    const client = new Client({ connection, namespace: options.namespace ?? process.env.TEMPORAL_NAMESPACE ?? 'default' });
+    const settings = temporalConnectionSettings({ ...process.env, ...(options.address === undefined ? {} : { TEMPORAL_ADDRESS: options.address }), ...(options.namespace === undefined ? {} : { TEMPORAL_NAMESPACE: options.namespace }) });
+    const connection = await Connection.connect({ address: settings.address, ...(settings.tls === undefined ? {} : { tls: settings.tls }), ...(settings.apiKey === undefined ? {} : { apiKey: settings.apiKey }) });
+    const client = new Client({ connection, namespace: settings.namespace });
     const executor = new TemporalWorkflowExecutor({ ...options, client: client as unknown as TemporalWorkflowClientLike });
     return { executor, close: () => connection.close() };
   }

@@ -35,6 +35,10 @@ const { executeAgentToolActivity } = proxyActivities<typeof activities>({
   startToCloseTimeout: '2 minutes',
   retry: { maximumAttempts: 1 },
 });
+const { validateReleaseBundleActivity } = proxyActivities<typeof activities>({
+  startToCloseTimeout: '30 seconds',
+  retry: { maximumAttempts: 1 },
+});
 
 export const approveSignal = defineSignal<[string]>('approve');
 export const pauseSignal = defineSignal('pause');
@@ -229,6 +233,20 @@ export async function executeWorkflow(
   setHandler(statusSignal, (status) => {
     setTemporalStatus(status);
   });
+
+  // Validate the persisted release identity inside the worker before any node
+  // activity can execute. This prevents a stale client or malformed replay from
+  // running a workflow definition under an unrelated release bundle.
+  try {
+    await validateReleaseBundleActivity({
+      workflow: { id: input.definition.id, version: input.definition.version, agents: input.definition.agents },
+      ...(input.releaseBundleHash === undefined ? {} : { releaseBundleHash: input.releaseBundleHash }),
+      ...(input.pinnedAgentVersions === undefined ? {} : { pinnedAgentVersions: input.pinnedAgentVersions }),
+    });
+  } catch (error) {
+    setTemporalStatus('failed');
+    throw error;
+  }
 
   while (completed.size < activated.size) {
     await condition(() => !paused);

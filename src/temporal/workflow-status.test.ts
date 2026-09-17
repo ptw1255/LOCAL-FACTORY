@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed.js';
+import { releaseBundleHash } from '../runtime/executor.js';
 
 const temporal = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => void>();
@@ -14,7 +15,8 @@ const temporal = vi.hoisted(() => {
     if (fail.value || failOn.has(input.nodeId)) throw new Error('activity failed');
     return { nodeId: input.nodeId, result: results.get(input.nodeId) ?? 'ok', lifecycle: { spanId: `span-${input.nodeId}` } };
   });
-  return { handlers, statuses, calls, results, failOn, fail, activity };
+  const validateReleaseBundle = vi.fn(async () => ({ releaseBundleHash: 'sha256:test', pinnedAgentVersions: {} }));
+  return { handlers, statuses, calls, results, failOn, fail, activity, validateReleaseBundle };
 });
 
 vi.mock('@temporalio/workflow', () => ({
@@ -27,6 +29,7 @@ vi.mock('@temporalio/workflow', () => ({
     executeNodeSideEffectActivity: temporal.activity,
     executeAgentIterationActivity: temporal.activity,
     executeAgentToolActivity: temporal.activity,
+    validateReleaseBundleActivity: temporal.validateReleaseBundle,
   }),
   setHandler: (signal: string, handler: (...args: unknown[]) => void) => {
     temporal.handlers.set(signal, handler);
@@ -51,6 +54,7 @@ describe('Temporal workflow status search attributes', () => {
     temporal.handlers.clear();
     temporal.fail.value = false;
     temporal.activity.mockClear();
+    temporal.validateReleaseBundle.mockClear();
   });
 
   function singleNodeDefinition() {
@@ -63,18 +67,31 @@ describe('Temporal workflow status search attributes', () => {
     return definition;
   }
 
+  function input(definition: ReturnType<typeof singleNodeDefinition>, runId: string, traceId: string) {
+    return { runId, traceId, definition, releaseBundleHash: releaseBundleHash(definition), pinnedAgentVersions: {} };
+  }
+
   it('updates Temporal status from running to succeeded', async () => {
-    const result = await executeWorkflow({ runId: 'workflow-status-success', traceId: 'a'.repeat(32), definition: singleNodeDefinition() });
+    const result = await executeWorkflow(input(singleNodeDefinition(), 'workflow-status-success', 'a'.repeat(32)));
 
     expect(result.completedNodeIds).toHaveLength(1);
     expect(temporal.activity).toHaveBeenCalledWith(expect.objectContaining({ traceId: 'a'.repeat(32) }));
     expect(temporal.statuses).toEqual([{ Status: ['running'] }, { Status: ['succeeded'] }]);
   });
 
+  it('fails before node execution when the release bundle validator rejects input', async () => {
+    temporal.validateReleaseBundle.mockRejectedValueOnce(new Error('release bundle mismatch'));
+
+    await expect(executeWorkflow(input(singleNodeDefinition(), 'workflow-status-release-mismatch', 'e'.repeat(32)))).rejects.toThrow('release bundle mismatch');
+
+    expect(temporal.activity).not.toHaveBeenCalled();
+    expect(temporal.statuses).toEqual([{ Status: ['running'] }, { Status: ['failed'] }]);
+  });
+
   it('updates Temporal status to failed when an activity fails', async () => {
     temporal.fail.value = true;
 
-    await expect(executeWorkflow({ runId: 'workflow-status-failure', traceId: 'b'.repeat(32), definition: singleNodeDefinition() })).rejects.toThrow('activity failed');
+    await expect(executeWorkflow(input(singleNodeDefinition(), 'workflow-status-failure', 'b'.repeat(32)))).rejects.toThrow('activity failed');
     expect(temporal.statuses).toEqual([{ Status: ['running'] }, { Status: ['failed'] }]);
   });
 
@@ -90,7 +107,7 @@ describe('Temporal workflow status search attributes', () => {
     ];
     temporal.results.set(trigger.id, 'yes');
 
-    const result = await executeWorkflow({ runId: 'workflow-status-branch', traceId: 'c'.repeat(32), definition });
+    const result = await executeWorkflow({ ...input(definition, 'workflow-status-branch', 'c'.repeat(32)), pinnedAgentVersions: {} });
 
     expect(result.completedNodeIds).toEqual([trigger.id, yes.id]);
     expect(temporal.calls).toEqual([trigger.id, yes.id]);
@@ -116,7 +133,7 @@ describe('Temporal workflow status search attributes', () => {
     ];
     temporal.failOn.add(failNode.id);
 
-    await expect(executeWorkflow({ runId: 'workflow-status-compensation', traceId: 'd'.repeat(32), definition })).rejects.toThrow('activity failed');
+    await expect(executeWorkflow({ ...input(definition, 'workflow-status-compensation', 'd'.repeat(32)), pinnedAgentVersions: {} })).rejects.toThrow('activity failed');
 
     expect(temporal.calls).toEqual([trigger.id, prepare.id, failNode.id, 'prepare:compensate']);
     expect(temporal.statuses.at(-1)).toEqual({ Status: ['failed'] });

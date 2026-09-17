@@ -19,9 +19,11 @@ import { OpenAISDKClient } from '../runtime/openai-sdk.js';
 import { OpenAICompatibleClient } from '../runtime/openai-compatible.js';
 import { AnthropicClient } from '../runtime/anthropic.js';
 import { GeminiClient } from '../runtime/gemini.js';
+import { temporalConnectionSettings } from './config.js';
 
-const address = process.env.TEMPORAL_ADDRESS ?? 'localhost:7233';
-const namespace = process.env.TEMPORAL_NAMESPACE ?? 'default';
+const temporalSettings = temporalConnectionSettings();
+const address = temporalSettings.address;
+const namespace = temporalSettings.namespace;
 const configuredTaskQueue = process.env.TEMPORAL_TASK_QUEUE;
 const taskQueue = configuredTaskQueue ?? `${process.env.TEMPORAL_TASK_QUEUE_PREFIX ?? 'agentic-workflows'}-v${process.env.TEMPORAL_WORKFLOW_VERSION ?? '1'}`;
 const databaseUrl = process.env.DATABASE_URL;
@@ -59,7 +61,7 @@ const providers = new Map<string, TemporalModelClient>([
   ['localai', new OpenAICompatibleClient({ provider: 'localai', secretBroker })],
 ]);
 configureTemporalModelProviders({ clients: providers, ollama });
-const connection = await NativeConnection.connect({ address });
+const connection = await NativeConnection.connect({ address, ...(temporalSettings.tls === undefined ? {} : { tls: temporalSettings.tls }), ...(temporalSettings.apiKey === undefined ? {} : { apiKey: temporalSettings.apiKey }) });
 const compiledWorkflowsPath = new URL('./workflows.js', import.meta.url);
 const sourceWorkflowsPath = new URL('./workflows.ts', import.meta.url);
 const worker = await Worker.create({

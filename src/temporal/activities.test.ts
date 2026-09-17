@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { defaultWorkUnit } from '../domain/catalog.js';
 import { seedWorkflow } from '../domain/seed.js';
 import { WorkUnitTimeoutError } from '../runtime/work-unit-dispatcher.js';
-import { configureTemporalGitHubRepository, configureTemporalModelProviders, configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, configureTemporalToolExecutors, executeAgentIterationActivity, executeAgentToolActivity, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError } from './activities.js';
+import { configureTemporalGitHubRepository, configureTemporalModelProviders, configureTemporalObservabilitySink, configureTemporalRepositoryWorkspace, configureTemporalToolExecutors, executeAgentIterationActivity, executeAgentToolActivity, executeNodeActivity, linkTemporalCancellation, TemporalActivityUnsupportedError, TemporalReleaseBundleMismatchError, validateReleaseBundleActivity } from './activities.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 
 const execFileAsync = (file: string, args: string[], options: { cwd?: string } = {}) => new Promise<void>((resolve, reject) => {
@@ -16,6 +17,13 @@ const execFileAsync = (file: string, args: string[], options: { cwd?: string } =
 });
 
 describe('Temporal node activities', () => {
+  it('fails closed when the persisted Temporal release identity is stale', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const validHash = `sha256:${createHash('sha256').update(JSON.stringify({ workflow: { id: workflow.id, version: workflow.version }, agents: [] })).digest('hex')}`;
+    await expect(validateReleaseBundleActivity({ workflow: { id: workflow.id, version: workflow.version, agents: [] }, releaseBundleHash: 'sha256:stale', pinnedAgentVersions: {} })).rejects.toBeInstanceOf(TemporalReleaseBundleMismatchError);
+    await expect(validateReleaseBundleActivity({ workflow: { id: workflow.id, version: workflow.version, agents: [] }, releaseBundleHash: validHash, pinnedAgentVersions: { unexpected: 1 } })).rejects.toThrow('pinned agent versions');
+    await expect(validateReleaseBundleActivity({ workflow: { id: workflow.id, version: workflow.version, agents: [] }, releaseBundleHash: validHash, pinnedAgentVersions: {} })).resolves.toEqual({ releaseBundleHash: validHash, pinnedAgentVersions: {} });
+  });
   it('executes deterministic nodes through the WorkUnit contract', async () => {
     const result = await executeNodeActivity({
       runId: 'run-temporal',

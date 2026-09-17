@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { activityInfo, cancellationSignal } from '@temporalio/activity';
 
 import { defaultWorkUnit } from '../domain/catalog.js';
-import type { AgentDefinition, WorkUnitDefinition, WorkflowNode } from '../domain/types.js';
+import type { AgentDefinition, WorkUnitDefinition, WorkflowDefinition, WorkflowNode } from '../domain/types.js';
 import { parseRepositoryCheckSandbox, RepositoryCheckError, RepositoryCheckTimeoutError, RepositoryWorkspace } from '../repository/workspace.js';
 import { RepositoryCiError, RepositoryMergeError, RepositoryReviewError, type GitHubRepositoryClient } from '../repository/github.js';
 import { WorkUnitDispatcher } from '../runtime/work-unit-dispatcher.js';
@@ -128,6 +128,57 @@ export interface NodeActivityResult {
   nodeId: string;
   result: unknown;
   lifecycle: TemporalActivityLifecycle;
+}
+
+export interface TemporalReleaseBundleValidationInput {
+  /** Only immutable release identity is needed; payloads are intentionally excluded. */
+  workflow: Pick<WorkflowDefinition, 'id' | 'version' | 'agents'>;
+  releaseBundleHash?: string;
+  pinnedAgentVersions?: Record<string, number>;
+}
+
+export interface TemporalReleaseBundleValidationResult {
+  releaseBundleHash: string;
+  pinnedAgentVersions: Record<string, number>;
+}
+
+/** A non-retryable contract error for stale or tampered Temporal input. */
+export class TemporalReleaseBundleMismatchError extends Error {
+  public readonly code = 'TEMPORAL_RELEASE_BUNDLE_MISMATCH';
+
+  public constructor(message: string) {
+    super(message);
+    this.name = 'TemporalReleaseBundleMismatchError';
+  }
+}
+
+function releaseBundleIdentity(workflow: Pick<WorkflowDefinition, 'id' | 'version' | 'agents'>): { workflow: { id: string; version: number }; agents: Array<{ id: string; version: number }> } {
+  return {
+    workflow: { id: workflow.id, version: workflow.version },
+    agents: [...workflow.agents]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((agent) => ({ id: agent.id, version: agent.version })),
+  };
+}
+
+function expectedReleaseBundle(input: TemporalReleaseBundleValidationInput): TemporalReleaseBundleValidationResult {
+  const identity = releaseBundleIdentity(input.workflow);
+  const expectedHash = `sha256:${createHash('sha256').update(JSON.stringify(identity)).digest('hex')}`;
+  const expectedPins = Object.fromEntries(identity.agents.map((agent) => [agent.id, agent.version]));
+  return { releaseBundleHash: expectedHash, pinnedAgentVersions: expectedPins };
+}
+
+/** Validate the immutable workflow/agent identity before the first WorkUnit runs. */
+export async function validateReleaseBundleActivity(input: TemporalReleaseBundleValidationInput): Promise<TemporalReleaseBundleValidationResult> {
+  const expected = expectedReleaseBundle(input);
+  if (input.releaseBundleHash !== expected.releaseBundleHash) {
+    throw new TemporalReleaseBundleMismatchError('Temporal workflow release bundle hash does not match its immutable definition.');
+  }
+  const suppliedPins = input.pinnedAgentVersions;
+  if (suppliedPins === undefined || JSON.stringify(suppliedPins) !== JSON.stringify(expected.pinnedAgentVersions)) {
+    throw new TemporalReleaseBundleMismatchError('Temporal workflow pinned agent versions do not match its immutable definition.');
+  }
+  return expected;
 }
 
 /** A non-retryable workflow-contract error for kinds not implemented by the worker. */

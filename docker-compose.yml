@@ -30,6 +30,13 @@ services:
       TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-temporal:7233}
       TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE_PREFIX: ${TEMPORAL_TASK_QUEUE_PREFIX:-agentic-workflows}
+      # Optional Temporal Cloud/self-hosted TLS. Keep certificate material out
+      # of the image; mount files and set these paths in production.
+      TEMPORAL_TLS_CERT_FILE: ${TEMPORAL_TLS_CERT_FILE:-}
+      TEMPORAL_TLS_KEY_FILE: ${TEMPORAL_TLS_KEY_FILE:-}
+      TEMPORAL_TLS_CA_FILE: ${TEMPORAL_TLS_CA_FILE:-}
+      TEMPORAL_TLS_SERVER_NAME: ${TEMPORAL_TLS_SERVER_NAME:-}
+      TEMPORAL_API_KEY: ${TEMPORAL_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -173,6 +180,11 @@ services:
       TEMPORAL_NAMESPACE: ${TEMPORAL_NAMESPACE:-default}
       TEMPORAL_TASK_QUEUE_PREFIX: ${TEMPORAL_TASK_QUEUE_PREFIX:-agentic-workflows}
       TEMPORAL_WORKFLOW_VERSION: ${TEMPORAL_WORKFLOW_VERSION:-1}
+      TEMPORAL_TLS_CERT_FILE: ${TEMPORAL_TLS_CERT_FILE:-}
+      TEMPORAL_TLS_KEY_FILE: ${TEMPORAL_TLS_KEY_FILE:-}
+      TEMPORAL_TLS_CA_FILE: ${TEMPORAL_TLS_CA_FILE:-}
+      TEMPORAL_TLS_SERVER_NAME: ${TEMPORAL_TLS_SERVER_NAME:-}
+      TEMPORAL_API_KEY: ${TEMPORAL_API_KEY:-}
       # Optional bounded repository workspace for repository check/patch activities.
       REPOSITORY_WORKSPACE: ${REPOSITORY_WORKSPACE:-}
       # Persist run-scoped Temporal repository workspaces across worker restarts.
@@ -195,6 +207,8 @@ services:
         condition: service_healthy
     volumes:
       - app_data:/app/.data
+      # In production, mount a read-only secret volume at /run/secrets/temporal
+      # and point the *_FILE variables above at its files.
     restart: unless-stopped
 
 volumes:
