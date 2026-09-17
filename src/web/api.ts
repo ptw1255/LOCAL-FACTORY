@@ -206,6 +206,8 @@ export const api = {
   deploymentAction: (id: string, action: DeploymentRecord['history'][number]['action'], options: { artifactId?: string; expectedUpdatedAt?: string; idempotencyKey?: string; runId?: string; approvalId?: string } = {}) =>
     request<DeploymentRecord>(`/api/deployments/${encodeURIComponent(id)}/action`, { method: 'POST', body: JSON.stringify({ action, ...options }) }),
   deploymentApprovals: () => request<ItemsResponse<DeploymentApprovalRecord>>('/api/deployment-approvals'),
+  requestDeploymentApproval: (deploymentId: string, artifactId: string, runId: string, expiresInMs?: number) =>
+    request<DeploymentApprovalRecord>(`/api/deployments/${encodeURIComponent(deploymentId)}/approval`, { method: 'POST', body: JSON.stringify({ action: 'request', artifactId, runId, ...(expiresInMs === undefined ? {} : { expiresInMs }) }) }),
   decideDeploymentApproval: (deploymentId: string, approvalId: string, action: 'approve' | 'deny', reason?: string) =>
     request<DeploymentApprovalRecord>(`/api/deployments/${encodeURIComponent(deploymentId)}/approval`, { method: 'POST', body: JSON.stringify({ action, approvalId, ...(reason === undefined ? {} : { reason }) }) }),
   reconcileDeployment: (id: string) =>
