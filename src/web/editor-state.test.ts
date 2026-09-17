@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
+import { clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -51,6 +51,14 @@ describe('IDE editor tab state', () => {
     expect(nextObserveTab('traces', 'Home')).toBe('runs');
     expect(nextObserveTab('runs', 'End')).toBe('metrics');
     expect(nextObserveTab('runs', 'Enter')).toBeNull();
+  });
+
+  it('wraps modal dialog focus in either direction and handles focus outside the dialog', () => {
+    expect(nextDialogFocusIndex(2, 1, 3)).toBe(0);
+    expect(nextDialogFocusIndex(0, -1, 3)).toBe(2);
+    expect(nextDialogFocusIndex(-1, 1, 3)).toBe(0);
+    expect(nextDialogFocusIndex(-1, -1, 3)).toBe(2);
+    expect(nextDialogFocusIndex(0, 1, 0)).toBe(-1);
   });
 
   it('maps parser errors to source-aware Problems diagnostics', () => {
