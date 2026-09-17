@@ -625,7 +625,10 @@ Every node is also a versioned work unit with declared input/output schema names
 timeouts, retry count, and idempotency metadata. Deterministic code units use a
 small allow-listed operation set (`uppercase`, `lowercase`, `trim`, and JSON
 parse/stringify) and persist their outputs for downstream units; arbitrary code
-execution remains a separate sandboxed integration boundary.
+execution remains a separate sandboxed integration boundary. Connector and
+consumer units are always dispatched once per attempt, even if their envelope
+declares a higher retry count, because an external side effect may have committed
+before an error was observed.
 
 ## Architecture
 

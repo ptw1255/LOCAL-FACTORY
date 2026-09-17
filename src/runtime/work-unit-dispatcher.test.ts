@@ -84,6 +84,17 @@ describe('WorkUnitDispatcher', () => {
     expect(calls[0]).toEqual(expect.objectContaining({ idempotencyKey: 'connector:unit-1' }));
   });
 
+  it('never retries a side-effecting connector after an uncertain failure', async () => {
+    const dispatcher = new WorkUnitDispatcher();
+    let attempts = 0;
+    dispatcher.register('connector', 1, () => {
+      attempts += 1;
+      throw new Error('external request outcome is unknown');
+    });
+    await expect(dispatcher.dispatch({ ...node.unit!, kind: 'connector', retryAttempts: 3, idempotencyKey: 'connector:once' }, context())).rejects.toThrow('unknown');
+    expect(attempts).toBe(1);
+  });
+
   it('resolves named schemas and rejects unknown references', async () => {
     const dispatcher = new WorkUnitDispatcher({
       'review-input': (payload) => typeof payload === 'object' && payload !== null && 'request' in payload,
