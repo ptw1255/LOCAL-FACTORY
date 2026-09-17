@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clampBottomPanelHeight, filterProjectItems, nextExplorerIndex, nextObserveTab, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, sourceSyntaxDiagnostics } from './App';
+import { clampBottomPanelHeight, filterProjectItems, nextExplorerIndex, nextObserveTab, observeRunHash, projectSwitchRequiresConfirmation, removeOpenPath, renameOpenPath, retainSelection, sourceSyntaxDiagnostics } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -62,5 +62,11 @@ describe('IDE editor tab state', () => {
       code: 'yaml.parse',
       message: 'bad indentation',
     }]);
+  });
+
+  it('creates a shareable Observe URL for a selected run', () => {
+    expect(observeRunHash('run 1')).toBe('#/observe?runId=run+1');
+    expect(observeRunHash(null)).toBe('#/observe');
+    expect(observeRunHash('   ')).toBe('#/observe');
   });
 });
