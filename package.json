@@ -8,6 +8,7 @@
     "check:bundle": "node scripts/check-bundle-size.mjs",
     "check:image": "node scripts/check-docker-image-size.mjs",
     "test:observability-smoke": "node scripts/observability-smoke.mjs",
+    "test:temporal-smoke": "node scripts/temporal-smoke.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "demo": "tsx scripts/demo.ts",
     "factory": "tsx scripts/factory.ts",
