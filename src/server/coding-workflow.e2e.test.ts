@@ -189,7 +189,7 @@ describe('coding workflow API', () => {
     workflow.nodes = [
       { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
       { id: 'ci', type: 'repositoryCi', label: 'Verify CI', position: { x: 180, y: 0 }, config: { ref: 'commit-failed', required: ['test'], timeoutMs: 500, intervalMs: 10, failurePolicy: 'route' }, unit: defaultWorkUnit('repositoryCi') },
-      { id: 'repair', type: 'transform', label: 'Prepare remediation', position: { x: 360, y: 120 }, config: { value: 'repair-required' }, unit: defaultWorkUnit('transform') },
+      { id: 'repair', type: 'transform', label: 'Prepare remediation', position: { x: 360, y: 120 }, config: { value: 'repair-required', requiresApproval: true }, unit: defaultWorkUnit('transform') },
       { id: 'ci-retry', type: 'repositoryCi', label: 'Verify remediation', position: { x: 540, y: 120 }, config: { ref: 'commit-repaired', required: ['test'], timeoutMs: 500, intervalMs: 10 }, unit: defaultWorkUnit('repositoryCi') },
       { id: 'output', type: 'output', label: 'Route outcome', position: { x: 720, y: 120 }, config: { value: 'remediation-complete' }, unit: defaultWorkUnit('output') },
     ];
@@ -201,17 +201,30 @@ describe('coding workflow API', () => {
     ];
     await store.mutate((state) => { state.workflows.push(workflow); state.workflowVersions.push(structuredClone(workflow)); });
     const app = await createApp({ store, githubRepository: github, serveStatic: false });
+    let restartedApp: Awaited<ReturnType<typeof createApp>> | undefined;
     try {
       const started = await app.inject({ method: 'POST', url: `/api/workflows/${workflow.id}/runs`, payload: {} });
       const runId = (started.json() as { id: string }).id;
-      const completed = await waitFor(app, runId, 'succeeded');
+      await waitFor(app, runId, 'waiting');
+      // Restart while remediation is waiting for approval. The new app must
+      // resume from the durable CI failure without polling the failed check a
+      // second time or losing the routed branch.
+      await app.close();
+      restartedApp = await createApp({ store, githubRepository: github, serveStatic: false });
+      const approved = await restartedApp.inject({ method: 'POST', url: `/api/runs/${runId}/approve`, payload: {} });
+      expect(approved.statusCode).toBe(200);
+      const completed = await waitFor(restartedApp, runId, 'succeeded');
       expect((completed.unitOutputs as { repair?: string }).repair).toBe('repair-required');
-      const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
+      expect(githubFetcher).toHaveBeenCalledTimes(2);
+      const evidence = await restartedApp.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
       const ciEvidence = (evidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items.find((entry) => entry.unitId === 'ci' && entry.status === 'succeeded');
       expect(ciEvidence?.metadata).toEqual(expect.objectContaining({ 'ci.status': 'failure', 'ci.failure.0.name': 'test', 'ci.failure.0.conclusion': 'failure', 'ci.failure.0.url': 'https://github.com/example/repo/actions/runs/3' }));
       const retryEvidence = (evidence.json() as { items: Array<{ unitId: string; status: string; metadata?: Record<string, unknown> }> }).items.find((entry) => entry.unitId === 'ci-retry' && entry.status === 'succeeded');
       expect(retryEvidence?.metadata).toEqual(expect.objectContaining({ 'ci.status': 'success', 'ci.ref': 'commit-repaired' }));
-    } finally { await app.close(); }
+    } finally {
+      await app.close();
+      await restartedApp?.close();
+    }
   });
 
   it('requires commits to bind selected paths to an upstream patch artifact', async () => {
