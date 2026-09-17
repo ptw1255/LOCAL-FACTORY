@@ -2509,6 +2509,7 @@ function RunsView() {
   const [retentionHours, setRetentionHours] = useState(48);
   const [evidenceRetentionHours, setEvidenceRetentionHours] = useState<number | null>(null);
   const [phoenixUiUrl, setPhoenixUiUrl] = useState<string | null>(null);
+  const [exporterHealth, setExporterHealth] = useState<{ status: 'healthy' | 'degraded'; failureCount: number; lastErrorAt?: string; lastSuccessAt?: string } | null>(null);
   const observeTabs = ['runs', 'logs', 'traces', 'metrics'] as const;
   const projectId = window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? 'project-local';
 
@@ -2534,6 +2535,7 @@ function RunsView() {
       setTimeFilterHours((current) => current === 48 ? health.observability.retentionHours : current);
       setEvidenceRetentionHours(health.observability.evidenceRetentionHours);
       setPhoenixUiUrl(health.observability.phoenixConfigured ? health.observability.phoenixUiUrl : null);
+      setExporterHealth(health.observability.exporterHealth);
     } catch (loadError) {
       setError(errorText(loadError));
     } finally {
@@ -2703,7 +2705,7 @@ function RunsView() {
       <AppHeader eyebrow="Observability" title="Observe">
         <button className="button secondary" onClick={() => void loadRuns()} type="button"><Icon name="refresh" /> Refresh</button>
       </AppHeader>
-      <section className="observe-retention" aria-label="Telemetry retention policy"><Icon name="clock" size={15} /><span><strong>Telemetry retention:</strong> {retentionHours} hours. Durable operation evidence is retained {evidenceRetentionHours === null ? 'independently of telemetry policy' : `for ${evidenceRetentionHours} hours`}.</span>{phoenixUiUrl === null ? null : <a className="observe-phoenix-link" href={phoenixUiUrl} rel="noreferrer" target="_blank">Open Phoenix <Icon name="chevron" size={12} /></a>}</section>
+      <section className="observe-retention" aria-label="Telemetry retention policy"><Icon name="clock" size={15} /><span><strong>Telemetry retention:</strong> {retentionHours} hours. Durable operation evidence is retained {evidenceRetentionHours === null ? 'independently of telemetry policy' : `for ${evidenceRetentionHours} hours`}.</span>{exporterHealth === null ? null : <span aria-label={`Telemetry exporter ${exporterHealth.status}`} className={`telemetry-exporter-health telemetry-${exporterHealth.status}`}>{exporterHealth.status === 'healthy' ? 'Exporter healthy' : `Exporter degraded · ${exporterHealth.failureCount} failure${exporterHealth.failureCount === 1 ? '' : 's'}`}</span>}{phoenixUiUrl === null ? null : <a className="observe-phoenix-link" href={phoenixUiUrl} rel="noreferrer" target="_blank">Open Phoenix <Icon name="chevron" size={12} /></a>}</section>
       <section aria-label="Observe scope" className="observe-scope"><span><strong>Project</strong> {selectedRun?.projectId ?? projectId}</span><span><strong>Environment</strong> {environmentFilter === 'all' ? 'All environments' : environmentFilter}</span></section>
       <section className="summary-strip">
         <div><span>All runs</span><strong>{runs.length}</strong></div>
