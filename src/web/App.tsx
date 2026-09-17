@@ -739,7 +739,7 @@ export function App() {
   );
 }
 
-function workflowToCanvas(
+export function workflowToCanvas(
   workflow: WorkflowDefinition,
   catalog: NodeCatalogItem[],
 ): { nodes: CanvasNode[]; edges: Edge[] } {
@@ -756,6 +756,7 @@ function workflowToCanvas(
           category: catalogItem?.category ?? 'Operations',
           description: catalogItem?.description ?? 'Workflow operation',
           config: node.config,
+          ...(catalogItem === undefined ? { unresolved: true } : {}),
           ...(node.sourcePath === undefined ? {} : { sourcePath: node.sourcePath }),
           ...(node.sourceLine === undefined ? {} : { sourceLine: node.sourceLine }),
           unit: node.unit,

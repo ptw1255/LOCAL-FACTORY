@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { seedWorkflow } from '../domain/seed';
-import { canvasOnlyChangesPresentation, clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceNodeForLine, sourceSyntaxDiagnostics, tryAcquireRunLock } from './App';
+import { canvasOnlyChangesPresentation, clampBottomPanelHeight, filterProjectItems, mergeRecentRuns, nextDialogFocusIndex, nextExplorerIndex, nextObserveTab, observeRunHash, observeScopeHash, projectSwitchRequiresConfirmation, recentRunLogs, removeOpenPath, renameOpenPath, retainSelection, selectWorkflowArtifact, sourceNodeForLine, sourceSyntaxDiagnostics, tryAcquireRunLock, workflowToCanvas } from './App';
 import type { CanvasNode } from './WorkflowNodeCard';
 
 describe('IDE editor tab state', () => {
@@ -105,6 +105,13 @@ describe('IDE editor tab state', () => {
     expect(sourceNodeForLine(workflow, 'workflows/demo.workflow.yaml', 13)?.id).toBe(workflow.nodes[0]!.id);
     expect(sourceNodeForLine(workflow, 'workflows/demo.workflow.yaml', 11)).toBeUndefined();
     expect(sourceNodeForLine(workflow, 'workflows/other.workflow.yaml', 12)).toBeUndefined();
+  });
+
+  it('marks catalog-missing Canvas nodes as unresolved diagnostics', () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.nodes[0]!.type = 'missing.node';
+    const projection = workflowToCanvas(workflow, []);
+    expect(projection.nodes[0]?.data).toEqual(expect.objectContaining({ unresolved: true, nodeType: 'missing.node' }));
   });
 
   it('creates a shareable Observe URL for a selected run', () => {
