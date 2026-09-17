@@ -2098,6 +2098,11 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
       artifactId: envelope.spec.artifactId,
       desiredState: (envelope.spec.desiredState === 'live' ? 'running' : 'stopped') as DeploymentRecord['desiredState'],
       observedState: envelope.status.observedState,
+      health: envelope.status.observedState === 'live'
+        ? 'healthy'
+        : ['degraded', 'failed'].includes(envelope.status.observedState)
+          ? 'degraded'
+          : 'unknown',
       updatedAt: envelope.status.updatedAt,
       lastError: envelope.status.error ?? undefined,
       history: evidence === undefined
