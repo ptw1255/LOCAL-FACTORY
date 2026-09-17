@@ -1268,7 +1268,7 @@ export class LocalWorkflowExecutor {
       if (registered !== undefined) {
         result = await registered.chat({ agent: routeAgent, goal, signal, traceId });
       } else if (provider === 'ollama') {
-        result = await this.ollama.chat({ agent: routeAgent, goal, signal });
+        result = await this.ollama.chat({ agent: routeAgent, goal, signal, traceId });
       } else if (provider === 'openai') {
         if (this.openai === undefined) throw new Error('OpenAI credentials are not configured for this runtime.');
         result = await this.openai.chat({ agent: routeAgent, goal, signal, traceId });
