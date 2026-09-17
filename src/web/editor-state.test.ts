@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { removeOpenPath, renameOpenPath } from './App';
+import { nextExplorerIndex, removeOpenPath, renameOpenPath } from './App';
 
 describe('IDE editor tab state', () => {
   it('renames an open path without disturbing tab order', () => {
@@ -13,5 +13,11 @@ describe('IDE editor tab state', () => {
       .toEqual(['project.yaml']);
     expect(removeOpenPath(['workflows/review.yaml'], 'workflows/review.yaml', 'project.yaml'))
       .toEqual(['project.yaml']);
+  });
+
+  it('wraps keyboard explorer focus at either end of the visible list', () => {
+    expect(nextExplorerIndex(0, -1, 3)).toBe(2);
+    expect(nextExplorerIndex(2, 1, 3)).toBe(0);
+    expect(nextExplorerIndex(1, 1, 3)).toBe(2);
   });
 });

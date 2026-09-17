@@ -18,6 +18,7 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   lazy,
   Suspense,
@@ -137,6 +138,13 @@ export function renameOpenPath(paths: string[], previousPath: string, nextPath: 
 export function removeOpenPath(paths: string[], removedPath: string, fallbackPath: string): string[] {
   const remaining = paths.filter((path) => path !== removedPath);
   return remaining.length === 0 ? [fallbackPath] : remaining;
+}
+
+export function nextExplorerIndex(index: number, direction: -1 | 1, count: number): number {
+  if (count <= 0) return 0;
+  if (direction === 1 && index >= count - 1) return 0;
+  if (direction === -1 && index <= 0) return count - 1;
+  return index + direction;
 }
 
 function readStudioLine(): number | undefined {
@@ -1605,6 +1613,17 @@ function OperationalTree({
   const visibleFiles = (files.length > 0 ? files : [{ path: 'project.yaml', sha256: '', projectId, tenantId: '', updatedAt: '' }])
     .filter((file) => !file.path.split('/').slice(0, -1).some((folder, index, folders) => collapsedFolders.has(folders.slice(0, index + 1).join('/'))));
   const folders = [...new Set(visibleFiles.flatMap((file) => file.path.split('/').slice(0, -1).map((_part, index, parts) => parts.slice(0, index + 1).join('/'))))];
+  const explorerItemCount = folders.length + visibleFiles.length;
+  function moveExplorerFocus(event: ReactKeyboardEvent<HTMLButtonElement>, index: number): void {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? Math.max(0, explorerItemCount - 1)
+        : nextExplorerIndex(index, event.key === 'ArrowDown' ? 1 : -1, explorerItemCount);
+    document.querySelectorAll<HTMLButtonElement>('.ide-file-tree-item')[nextIndex]?.focus();
+  }
   const treeQuery = treeSearch.trim().toLowerCase();
   const visibleTreeNodes = workflow.nodes.filter((node) => {
     if (treeKindFilter === 'agents') return false;
@@ -1771,8 +1790,8 @@ function OperationalTree({
         <label className="ide-view-selector"><span>View</span><select aria-label="Workspace view" onChange={(event) => onModeChange(event.target.value as 'files' | 'tree' | 'canvas')} value={mode}><option value="files">Files</option><option value="tree">Tree</option><option value="canvas">Canvas</option></select></label>
         <label className="ide-file-search"><span className="sr-only">Filter files</span><input onChange={(event) => setFileSearch(event.target.value)} placeholder="Filter files" type="search" value={fileSearch} /></label>
         <div className="ide-project"><Icon name="factory" size={15} /><strong>{workflow.projectId ?? 'project'}</strong></div>
-        {[...new Set([...folders, ...directories])].sort().map((folder) => <button className="ide-folder" key={folder} onClick={() => setCollapsedFolders((current) => { const next = new Set(current); if (next.has(folder)) next.delete(folder); else next.add(folder); return next; })} type="button"><Icon name={collapsedFolders.has(folder) ? 'chevron' : 'chevronDown'} size={12} /> {folder}</button>)}
-        {visibleFiles.map((file) => <button className={`ide-file ${selectedPath === file.path ? 'active' : ''}`} key={file.path} onClick={() => void selectFile(file)} type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={14} /> <span>{file.path}</span>{selectedPath === file.path && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>)}
+        {[...new Set([...folders, ...directories])].sort().map((folder, index) => <button aria-expanded={!collapsedFolders.has(folder)} className="ide-folder ide-file-tree-item" data-explorer-item="true" key={folder} onClick={() => setCollapsedFolders((current) => { const next = new Set(current); if (next.has(folder)) next.delete(folder); else next.add(folder); return next; })} onKeyDown={(event) => moveExplorerFocus(event, index)} role="treeitem" type="button"><Icon name={collapsedFolders.has(folder) ? 'chevron' : 'chevronDown'} size={12} /> {folder}</button>)}
+        {visibleFiles.map((file, index) => <button aria-current={selectedPath === file.path ? 'page' : undefined} className={`ide-file ide-file-tree-item ${selectedPath === file.path ? 'active' : ''}`} data-explorer-item="true" key={file.path} onClick={() => void selectFile(file)} onKeyDown={(event) => moveExplorerFocus(event, folders.length + index)} role="treeitem" type="button"><Icon name={file.path.includes('agent') ? 'agent' : 'code'} size={14} /> <span>{file.path}</span>{selectedPath === file.path && dirty ? <span className="ide-tab-dot" title="Unsaved changes" /> : null}</button>)}
         {files.length === 0 ? workflow.agents.map((agent) => <div className="ide-file muted" key={agent.id}><Icon name="agent" size={14} /> agents/{agent.id}.agent.yaml</div>) : null}
         <div className="ide-folder"><Icon name="chevron" size={12} /> runtime</div>
         <div className="ide-file muted"><Icon name="runs" size={14} /> runs</div>
