@@ -78,10 +78,14 @@ export class EventService {
   private async createEvent(runId: string, type: string, message: string, options: EventOptions): Promise<RunEvent> {
     const runContext = await this.store.read((state) => {
       const run = state.runs.find((candidate) => candidate.id === runId);
+      const parentSpanId = options.parentSpanId ?? (options.nodeId === undefined
+        ? undefined
+        : [...state.events].reverse().find((event) => event.runId === runId && event.nodeId === options.nodeId)?.spanId);
       return {
         traceId: run?.traceId,
         tenantId: run?.tenantId,
         projectId: run?.projectId,
+        parentSpanId,
       };
     });
     const traceId = options.traceId ?? runContext.traceId ?? runId.replaceAll('-', '').padEnd(32, '0').slice(0, 32);
@@ -102,7 +106,7 @@ export class EventService {
       spanId,
       ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
       ...(data === undefined ? {} : { data: data as Record<string, unknown> }),
-      ...(options.parentSpanId === undefined ? {} : { parentSpanId: options.parentSpanId }),
+      ...(runContext.parentSpanId === undefined ? {} : { parentSpanId: runContext.parentSpanId }),
       ...(options.spanKind === undefined ? {} : { spanKind: options.spanKind }),
       ...(options.severityText === undefined ? {} : { severityText: options.severityText }),
       attributes: {
