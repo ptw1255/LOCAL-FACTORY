@@ -1716,6 +1716,22 @@ function RunsView() {
   const visibleEvents = observeTab === 'runs'
     ? events
     : events.filter((event) => event.signal === (observeTab === 'logs' ? 'log' : observeTab === 'traces' ? 'trace' : 'metric'));
+  const eventBySpanId = new Map(events.map((event) => [event.spanId, event]));
+  const eventDepth = new Map<string, number>();
+  const depthFor = (event: RunEvent, seen = new Set<string>()): number => {
+    const cached = eventDepth.get(event.id);
+    if (cached !== undefined) return cached;
+    if (event.parentSpanId === undefined || seen.has(event.parentSpanId)) {
+      eventDepth.set(event.id, 0);
+      return 0;
+    }
+    seen.add(event.parentSpanId);
+    const parent = eventBySpanId.get(event.parentSpanId);
+    const depth = parent === undefined ? 0 : Math.min(6, depthFor(parent, seen) + 1);
+    eventDepth.set(event.id, depth);
+    return depth;
+  };
+  events.forEach((event) => depthFor(event));
 
   function openSource(path: string, line?: number): void {
     const projectId = selectedRun?.projectId ?? window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? '';
@@ -1863,7 +1879,7 @@ function RunsView() {
                 ) : (
                   <ol className="timeline">
                     {visibleEvents.map((event, index) => (
-                      <li key={event.id}>
+                      <li aria-level={(eventDepth.get(event.id) ?? 0) + 1} key={event.id} style={{ marginLeft: `${(eventDepth.get(event.id) ?? 0) * 18}px` }}>
                         <span className={`timeline-dot ${index === visibleEvents.length - 1 ? 'latest' : ''}`} />
                         <div className="timeline-card">
                           <div><strong>{event.type.replaceAll('_', ' ')}</strong><time>{formatDate(event.timestamp)}</time></div>
