@@ -1139,6 +1139,11 @@ export async function createApp(
     return { items: format === 'envelope' ? items.map(toDeploymentEnvelope) : items };
   });
 
+  app.get('/api/deployment-approvals', async (request) => {
+    const scope = scopeFromRequest(request);
+    return { items: await store.read((state) => state.deploymentApprovals.filter((approval) => inScope(approval, scope))) };
+  });
+
   app.post<{ Body: unknown }>('/api/deployments', async (request, reply) => {
     const body = request.body as { workflowId?: unknown; environment?: unknown; artifactId?: unknown; trigger?: unknown };
     if (![body?.workflowId, body?.environment, body?.artifactId, body?.trigger].every((value) => typeof value === 'string' && value.trim() !== '')) return reply.status(422).send({ message: 'workflowId, environment, artifactId, and trigger are required.' });
@@ -1150,7 +1155,7 @@ export async function createApp(
   });
 
   app.post<{ Params: { id: string }; Body: unknown }>('/api/deployments/:id/action', async (request, reply) => {
-    const body = request.body as { action?: unknown; artifactId?: unknown; reason?: unknown; expectedUpdatedAt?: unknown; idempotencyKey?: unknown; runId?: unknown };
+    const body = request.body as { action?: unknown; artifactId?: unknown; reason?: unknown; expectedUpdatedAt?: unknown; idempotencyKey?: unknown; runId?: unknown; approvalId?: unknown };
     const actions = new Set(['deploy', 'start', 'stop', 'restart', 'rollback']);
     if (typeof body?.action !== 'string' || !actions.has(body.action)) return reply.status(422).send({ message: 'A supported deployment action is required.' });
     try {
@@ -1160,10 +1165,31 @@ export async function createApp(
         ...(typeof body.expectedUpdatedAt === 'string' ? { expectedUpdatedAt: body.expectedUpdatedAt } : {}),
         ...(typeof body.idempotencyKey === 'string' ? { idempotencyKey: body.idempotencyKey } : {}),
         ...(typeof body.runId === 'string' ? { runId: body.runId } : {}),
+        ...(typeof body.approvalId === 'string' ? { approvalId: body.approvalId } : {}),
       });
     } catch (error) {
       return reply.status(409).send({ message: errorMessage(error) });
     }
+  });
+
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/deployments/:id/approval', async (request, reply) => {
+    const body = request.body as { action?: unknown; approvalId?: unknown; artifactId?: unknown; runId?: unknown; reason?: unknown; expiresInMs?: unknown };
+    if (body?.action === 'request') {
+      if (typeof body.artifactId !== 'string' || typeof body.runId !== 'string') return reply.status(422).send({ message: 'artifactId and runId are required to request deployment approval.' });
+      try {
+        return await deployments.requestApproval(request.params.id, scopeFromRequest(request), { artifactId: body.artifactId, runId: body.runId, ...(typeof body.expiresInMs === 'number' ? { expiresInMs: body.expiresInMs } : {}) });
+      } catch (error) {
+        return reply.status(409).send({ message: errorMessage(error) });
+      }
+    }
+    if ((body?.action === 'approve' || body?.action === 'deny') && typeof body.approvalId === 'string') {
+      try {
+        return await deployments.decideApproval(request.params.id, scopeFromRequest(request), body.approvalId, body.action === 'approve' ? 'approved' : 'denied', { ...(typeof body.reason === 'string' ? { reason: body.reason } : {}) });
+      } catch (error) {
+        return reply.status(409).send({ message: errorMessage(error) });
+      }
+    }
+    return reply.status(422).send({ message: 'Approval action must be request, approve, or deny.' });
   });
 
   app.post<{ Params: { id: string } }>('/api/deployments/:id/reconcile', async (request, reply) => {

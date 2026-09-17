@@ -260,7 +260,12 @@ describe('DeploymentReconciler', () => {
     const reconciler = new DeploymentReconciler(store);
     const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'production', artifactId: artifact.id, trigger: 'manual' });
     await expect(reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifact.id })).rejects.toThrow('require a successful coding-workflow run');
-    const promoted = await reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifact.id, runId: run.id });
+    await expect(reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifact.id, runId: run.id })).rejects.toThrow('approved deployment approval');
+    const approval = await reconciler.requestApproval(deployment.id, scope, { artifactId: artifact.id, runId: run.id });
+    expect(approval.decision).toBe('pending');
+    await expect(reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifact.id, runId: run.id, approvalId: approval.id })).rejects.toThrow('approved deployment approval');
+    await expect(reconciler.decideApproval(deployment.id, scope, approval.id, 'approved', { actor: 'release-manager' })).resolves.toMatchObject({ decision: 'approved', actor: 'release-manager' });
+    const promoted = await reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifact.id, runId: run.id, approvalId: approval.id });
     expect(promoted).toMatchObject({ observedState: 'live', health: 'healthy', lastVerifiedRunId: run.id });
   });
 
@@ -280,7 +285,9 @@ describe('DeploymentReconciler', () => {
     await store.appendEvidence({ id: 'evidence-production-ci', tenantId: scope.tenantId, projectId: scope.projectId, runId: run.id, unitId: 'ci', operation: 'repositoryCi', attempt: 1, status: 'succeeded', occurredAt: new Date().toISOString(), metadata: { 'ci.status': 'success' } });
     const reconciler = new DeploymentReconciler(store, 30_000, { observe: () => ({ observedState: 'degraded', health: 'degraded', triggerStatus: 'active', lastError: 'Health check failed.' }) });
     const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'production', artifactId: artifact.id, trigger: 'manual' });
-    await expect(reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifact.id, runId: run.id })).resolves.toMatchObject({ observedState: 'degraded', health: 'degraded' });
+    const approval = await reconciler.requestApproval(deployment.id, scope, { artifactId: artifact.id, runId: run.id });
+    await reconciler.decideApproval(deployment.id, scope, approval.id, 'approved');
+    await expect(reconciler.action(deployment.id, scope, 'deploy', { artifactId: artifact.id, runId: run.id, approvalId: approval.id })).resolves.toMatchObject({ observedState: 'degraded', health: 'degraded' });
     expect((await reconciler.list(scope)).find((candidate) => candidate.id === deployment.id)?.lastVerifiedRunId).toBeUndefined();
   });
 

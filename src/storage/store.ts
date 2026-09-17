@@ -33,6 +33,7 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
   state.evidence ??= [];
   state.approvals ??= [];
   state.deployments ??= [];
+  state.deploymentApprovals ??= [];
   state.replayReports ??= [];
   state.evaluationDatasets ??= [];
   state.tenants ??= [{
