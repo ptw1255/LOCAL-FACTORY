@@ -241,6 +241,10 @@ export function nextExplorerIndex(index: number, direction: -1 | 1, count: numbe
   return index + direction;
 }
 
+export function filterProjectItems<T extends { projectId?: string }>(items: T[], projectId: string): T[] {
+  return items.filter((item) => item.projectId === projectId);
+}
+
 export function projectSwitchRequiresConfirmation(currentProjectId: string | null, nextProjectId: string, dirty: boolean): boolean {
   return currentProjectId !== null && currentProjectId !== nextProjectId && dirty;
 }
@@ -1998,6 +2002,7 @@ function RunsView() {
   const [evidenceRetentionHours, setEvidenceRetentionHours] = useState<number | null>(null);
   const [phoenixUiUrl, setPhoenixUiUrl] = useState<string | null>(null);
   const observeTabs = ['runs', 'logs', 'traces', 'metrics'] as const;
+  const projectId = window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? 'project-local';
 
   function handleObserveTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, tab: ObserveTab): void {
     const index = observeTabs.indexOf(tab);
@@ -2022,11 +2027,11 @@ function RunsView() {
     setError(null);
     try {
       const [response, health] = await Promise.all([api.runs(), api.health()]);
-      const sorted = [...response.items].sort(
+      const sorted = filterProjectItems(response.items, projectId).sort(
         (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
       );
       setRuns(sorted);
-      setSelectedRunId((current) => current ?? sorted[0]?.id ?? null);
+      setSelectedRunId((current) => current !== null && sorted.some((run) => run.id === current) ? current : sorted[0]?.id ?? null);
       setRetentionHours(health.observability.retentionHours);
       setTimeFilterHours((current) => current === 48 ? health.observability.retentionHours : current);
       setEvidenceRetentionHours(health.observability.evidenceRetentionHours);
@@ -2036,7 +2041,7 @@ function RunsView() {
     } finally {
       if (!quiet) setLoading(false);
     }
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     void loadRuns();
@@ -2050,6 +2055,15 @@ function RunsView() {
 
   useEffect(() => {
     if (selectedRunId === null) {
+      setSelectedRun(null);
+      setEvents([]);
+      setEvidence([]);
+      setToolCheckpoints([]);
+      setApprovals([]);
+      return;
+    }
+    if (!runs.some((run) => run.id === selectedRunId)) {
+      setSelectedRunId(runs[0]?.id ?? null);
       setSelectedRun(null);
       setEvents([]);
       setEvidence([]);
@@ -2137,8 +2151,8 @@ function RunsView() {
   events.forEach((event) => depthFor(event));
 
   function openSource(path: string, line?: number): void {
-    const projectId = selectedRun?.projectId ?? window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? '';
-    if (projectId !== '') window.sessionStorage.setItem(`${STUDIO_FILE_STORAGE_PREFIX}${projectId}`, path);
+    const sourceProjectId = selectedRun?.projectId ?? projectId;
+    if (sourceProjectId !== '') window.sessionStorage.setItem(`${STUDIO_FILE_STORAGE_PREFIX}${sourceProjectId}`, path);
     const query = new URLSearchParams({ file: path, ...(line === undefined ? {} : { line: String(line) }) });
     window.location.hash = `/studio?${query.toString()}`;
   }
@@ -2180,6 +2194,7 @@ function RunsView() {
         <button className="button secondary" onClick={() => void loadRuns()} type="button"><Icon name="refresh" /> Refresh</button>
       </AppHeader>
       <section className="observe-retention" aria-label="Telemetry retention policy"><Icon name="clock" size={15} /><span><strong>Telemetry retention:</strong> {retentionHours} hours. Durable operation evidence is retained {evidenceRetentionHours === null ? 'independently of telemetry policy' : `for ${evidenceRetentionHours} hours`}.</span>{phoenixUiUrl === null ? null : <a className="observe-phoenix-link" href={phoenixUiUrl} rel="noreferrer" target="_blank">Open Phoenix <Icon name="chevron" size={12} /></a>}</section>
+      <section aria-label="Observe scope" className="observe-scope"><span><strong>Project</strong> {selectedRun?.projectId ?? projectId}</span><span><strong>Environment</strong> {environmentFilter === 'all' ? 'All environments' : environmentFilter}</span></section>
       <section className="summary-strip">
         <div><span>All runs</span><strong>{runs.length}</strong></div>
         <div><span>Active now</span><strong>{activeRuns}</strong></div>
@@ -2544,13 +2559,16 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
     setError(null);
     try {
       const [deploymentResponse, envelopeResponse, artifactResponse, approvalResponse, runResponse] = await Promise.all([api.deployments(), api.deploymentEnvelopes(), api.artifacts(projectId), api.deploymentApprovals(), api.runs()]);
-      setDeployments(deploymentResponse.items);
-      setDeploymentEnvelopes(envelopeResponse.items);
+      const scopedDeployments = filterProjectItems(deploymentResponse.items, projectId);
+      const scopedDeploymentIds = new Set(scopedDeployments.map((deployment) => deployment.id));
+      setDeployments(scopedDeployments);
+      setDeploymentEnvelopes(envelopeResponse.items.filter((envelope) => envelope.metadata.projectId === projectId));
       setArtifacts(artifactResponse.items);
-      setDeploymentApprovals(approvalResponse.items);
-      setRuns(runResponse.items);
-      setSuccessfulRuns(runResponse.items.filter((run) => run.status === 'succeeded'));
-      const evidenceResponses = await Promise.allSettled(deploymentResponse.items.map(async (deployment) => [deployment.id, (await api.deploymentEvidence(deployment.id)).items] as const));
+      setDeploymentApprovals(approvalResponse.items.filter((approval) => scopedDeploymentIds.has(approval.deploymentId)));
+      const scopedRuns = filterProjectItems(runResponse.items, projectId);
+      setRuns(scopedRuns);
+      setSuccessfulRuns(scopedRuns.filter((run) => run.status === 'succeeded'));
+      const evidenceResponses = await Promise.allSettled(scopedDeployments.map(async (deployment) => [deployment.id, (await api.deploymentEvidence(deployment.id)).items] as const));
       setDeploymentEvidence(Object.fromEntries(evidenceResponses.flatMap((response) => response.status === 'fulfilled' ? [response.value] : [])));
       setForm((current) => ({ ...current, artifactId: current.artifactId || artifactResponse.items[0]?.id || '', workflowId: current.workflowId || artifactResponse.items[0]?.workflows[0]?.id || '' }));
     }
@@ -2566,17 +2584,20 @@ function DeploymentsView({ onNavigate }: { onNavigate: (view: ViewId) => void })
   }, [loadDeployments]);
 
   const refreshDeploymentState = useCallback(async () => {
-    const current = await api.deployments();
-    await Promise.allSettled(current.items.map((deployment) => api.reconcileDeployment(deployment.id)));
+    const current = filterProjectItems((await api.deployments()).items, projectId);
+    await Promise.allSettled(current.map((deployment) => api.reconcileDeployment(deployment.id)));
     const [refreshed, refreshedEnvelopes, approvalResponse, runResponse] = await Promise.all([api.deployments(), api.deploymentEnvelopes(), api.deploymentApprovals(), api.runs()]);
-    setDeployments(refreshed.items);
-    setDeploymentEnvelopes(refreshedEnvelopes.items);
-    setDeploymentApprovals(approvalResponse.items);
-    setRuns(runResponse.items);
-    setSuccessfulRuns(runResponse.items.filter((run) => run.status === 'succeeded'));
-    const evidenceResponses = await Promise.allSettled(refreshed.items.map(async (deployment) => [deployment.id, (await api.deploymentEvidence(deployment.id)).items] as const));
+    const scopedDeployments = filterProjectItems(refreshed.items, projectId);
+    const scopedDeploymentIds = new Set(scopedDeployments.map((deployment) => deployment.id));
+    setDeployments(scopedDeployments);
+    setDeploymentEnvelopes(refreshedEnvelopes.items.filter((envelope) => envelope.metadata.projectId === projectId));
+    setDeploymentApprovals(approvalResponse.items.filter((approval) => scopedDeploymentIds.has(approval.deploymentId)));
+    const scopedRuns = filterProjectItems(runResponse.items, projectId);
+    setRuns(scopedRuns);
+    setSuccessfulRuns(scopedRuns.filter((run) => run.status === 'succeeded'));
+    const evidenceResponses = await Promise.allSettled(scopedDeployments.map(async (deployment) => [deployment.id, (await api.deploymentEvidence(deployment.id)).items] as const));
     setDeploymentEvidence(Object.fromEntries(evidenceResponses.flatMap((response) => response.status === 'fulfilled' ? [response.value] : [])));
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     const interval = window.setInterval(() => { void refreshDeploymentState().catch(() => undefined); }, 5_000);
