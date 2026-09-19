@@ -30,6 +30,7 @@ describe('DeliveryActionPlan', () => {
     expect(() => validateDeliveryActionPlan({ ...plan, tasks: [{ id: 'implement', title: 'Implement', dependsOn: ['missing'] }] })).toThrow(/unknown task/);
     expect(() => validateDeliveryActionPlan({ ...plan, issue: { ...plan.issue, repository: 'other/repo' } })).toThrow(/must match/);
     expect(() => validateDeliveryActionPlan({ ...plan, checks: ['curl https://example.test'] })).toThrow(/unsupported command/);
+    expect(() => validateDeliveryActionPlan({ ...plan, commit: { ...plan.commit, paths: [] } })).toThrow(/include every delivery mutation path/);
   });
 
   it('binds only explicit context paths and preserves object values for exact bindings', () => {
