@@ -560,6 +560,17 @@ describe('LocalWorkflowExecutor', () => {
     expect(recorded.find((event) => event.type === 'llm.completed')?.attributes).toEqual(expect.objectContaining({ 'llm.provider': 'lmstudio', 'llm.request_id': 'local-1' }));
   });
 
+  it('requires non-core providers to be registered by the composition root', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    const agent = workflow.agents[0];
+    if (agent === undefined) throw new Error('Seed agent is missing.');
+    agent.model = { provider: 'custom-brand', model: 'custom-model' };
+    const portableExecutor = new LocalWorkflowExecutor(store, events);
+    const run = await portableExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'failed');
+    await expect(store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.error)).resolves.toMatch(/Unsupported model provider/);
+  });
+
   it('resolves registered hosted adapters by provider name', async () => {
     const workflow = structuredClone(seedWorkflow);
     const agent = workflow.agents[0];
