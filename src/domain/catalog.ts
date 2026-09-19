@@ -24,6 +24,7 @@ const unitKinds: Record<string, WorkUnitKind> = {
   repositoryReview: 'connector',
   repositoryMerge: 'connector',
   repositoryCi: 'connector',
+  repositoryIssue: 'connector',
 };
 
 export function defaultWorkUnit(type: string): WorkUnitDefinition {
@@ -185,6 +186,13 @@ export const nodeCatalog: NodeCatalogItem[] = [
     category: 'Repository',
     description: 'Poll required GitHub checks and route the terminal result.',
     defaultConfig: { ref: '', required: [], timeoutMs: 120000, intervalMs: 2000, failurePolicy: 'fail' },
+  },
+  {
+    type: 'repositoryIssue',
+    label: 'Manage repository issue',
+    category: 'Repository',
+    description: 'Read an issue, create a linked task, add a lifecycle comment, or close an issue through GitHub.',
+    defaultConfig: { operation: 'get', number: 0, title: '', body: '', labels: [] },
   },
   {
     type: 'repositoryReview',
