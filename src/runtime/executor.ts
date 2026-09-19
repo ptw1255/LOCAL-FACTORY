@@ -1404,6 +1404,10 @@ export class LocalWorkflowExecutor {
     goal: string,
     signal: AbortSignal,
   ): Promise<{ provider: string; result: OpenAIModelResult | OllamaModelResult; routeIndex: number; routingStrategy: 'single' | 'fallback' | 'ensemble'; adapterVersion?: string } | undefined> {
+    const scope = await this.store.read((state) => {
+      const run = state.runs.find((candidate) => candidate.id === runId);
+      return { tenantId: run?.tenantId, projectId: run?.projectId };
+    });
     const declaredRoutes = agent.model.routes ?? [];
     const routes: Array<AgentModelRoute | undefined> = declaredRoutes.length === 0
       ? [undefined]
@@ -1449,15 +1453,15 @@ export class LocalWorkflowExecutor {
         if (missing.length > 0) throw new Error(`Provider "${provider}" does not support required capabilities: ${missing.join(', ')}.`);
       }
       if (registered !== undefined) {
-        result = await registered.chat({ agent: routeAgent, goal, signal, traceId });
+        result = await registered.chat({ agent: routeAgent, goal, signal, traceId, ...scope });
       } else if (provider === 'ollama') {
         result = await this.ollama.chat({ agent: routeAgent, goal, signal, traceId });
       } else if (provider === 'openai') {
         if (this.openai === undefined) throw new Error('OpenAI credentials are not configured for this runtime.');
-        result = await this.openai.chat({ agent: routeAgent, goal, signal, traceId });
+        result = await this.openai.chat({ agent: routeAgent, goal, signal, traceId, ...scope });
       } else if (provider === 'openai-compatible' || provider === 'lmstudio' || provider === 'lm-studio' || provider === 'vllm' || provider === 'localai') {
         if (this.openaiCompatible === undefined) throw new Error(`The ${provider} model adapter is not configured for this runtime.`);
-        result = await this.openaiCompatible.chat({ agent: routeAgent, goal, signal, traceId });
+        result = await this.openaiCompatible.chat({ agent: routeAgent, goal, signal, traceId, ...scope });
       } else {
         throw new Error(`Unsupported model provider "${provider}".`);
       }

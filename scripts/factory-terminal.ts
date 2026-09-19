@@ -32,6 +32,13 @@ export interface TerminalPrompt {
   label: string;
   value: string;
   defaultValue?: string;
+  /** Never render sensitive input, even while it is being entered. */
+  sensitive?: boolean;
+}
+
+export interface TerminalConnectionDraft {
+  name: string;
+  secret: string;
 }
 
 export interface TerminalPortalState {
@@ -43,6 +50,8 @@ export interface TerminalPortalState {
   selectedProposalId?: string;
   editor?: TerminalSourceEditor;
   prompt?: TerminalPrompt;
+  connectionDraft?: TerminalConnectionDraft;
+  removingConnectionName?: string;
   error?: string;
 }
 
@@ -53,6 +62,9 @@ const terminalBlue = '\u001b[36m';
 const terminalGreen = '\u001b[32m';
 const terminalYellow = '\u001b[33m';
 const terminalRed = '\u001b[31m';
+
+export const terminalCursorHidden = '\u001b[?25l';
+export const terminalCursorVisible = '\u001b[?25h';
 
 function colorStatus(status: string): string {
   const color = ['succeeded', 'approved', 'live', 'healthy'].includes(status)
@@ -333,9 +345,16 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
     if (snapshot.deployments.length === 0) lines.push('  No deployments recorded.');
     snapshot.deployments.forEach((deployment, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(deployment.id, 18).padEnd(18)} ${short(deployment.workflowId, 24).padEnd(24)} ${colorStatus(deployment.observedState)}  desired=${deployment.desiredState}`));
   } else if (state.page === 'connections') {
-    lines.push(`${terminalBlue}CONNECTIONS${terminalReset} ${terminalDim}· provider health and secret references${terminalReset}`, '');
+    lines.push(`${terminalBlue}CONNECTIONS${terminalReset} ${terminalDim}· local Vault-backed provider keys${terminalReset}`, '');
     if ((snapshot.connections ?? []).length === 0) lines.push('  No connections recorded.');
     (snapshot.connections ?? []).forEach((connection, index) => lines.push(`${selectedMarker(state.cursor === index)} ${short(connection.name, 28).padEnd(28)} ${short(connection.connector, 18).padEnd(18)} ${colorStatus(connection.status)}  secret=${connection.secretConfigured ? 'configured' : 'missing'}`));
+    if (state.connectionDraft !== undefined) {
+      lines.push('', `${terminalYellow}NEW CONNECTION${terminalReset}`, `  name     ${state.connectionDraft.name}`, `  api key  ${'•'.repeat(Math.min(24, Math.max(8, state.connectionDraft.secret.length)))}`, `${terminalDim}s save to local Vault · Esc cancel${terminalReset}`);
+    }
+    if (state.removingConnectionName !== undefined) {
+      lines.push('', `${terminalYellow}REMOVE CONNECTION${terminalReset}`, `  Connection/${state.removingConnectionName}`, `${terminalDim}s confirm removal · Esc cancel${terminalReset}`);
+    }
+    lines.push('', `${terminalDim}c create · Enter/t test selected · d remove selected · r refresh · Esc Core${terminalReset}`);
   } else if (state.page === 'proposals') {
     lines.push(`${terminalPurple}AUTHORING PROPOSALS${terminalReset} ${terminalDim}· validated Project changes${terminalReset}`, '');
     if ((snapshot.proposals ?? []).length === 0) lines.push('  No proposals recorded.');
@@ -402,7 +421,8 @@ export function renderTerminalPortal(snapshot: TerminalSnapshot, state: Terminal
   }
   if (state.prompt !== undefined) {
     const fallback = state.prompt.defaultValue === undefined ? '' : ` (${state.prompt.defaultValue})`;
-    lines.push('', `${terminalYellow}${state.prompt.label}${fallback}:${terminalReset} ${state.prompt.value}${terminalPurple}▏${terminalReset}`, `${terminalDim}Enter accepts · Esc cancels and returns home${terminalReset}`);
+    const value = state.prompt.sensitive ? '•'.repeat(state.prompt.value.length) : state.prompt.value;
+    lines.push('', `${terminalYellow}${state.prompt.label}${fallback}:${terminalReset} ${value}${terminalPurple}▏${terminalReset}`, `${terminalDim}Enter accepts · Esc cancels and returns home${terminalReset}`);
   }
   const keys = state.page === 'source-editor'
     ? 'Arrows move · Ctrl+S save/compile · Esc back · Ctrl+C quit'

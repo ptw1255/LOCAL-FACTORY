@@ -1,6 +1,7 @@
 export type FactoryLifecycleCommand = 'launch' | 'open' | 'dashboard' | 'project' | 'author' | 'up' | 'down' | 'restart' | 'status' | 'logs' | 'build' | 'deploy' | 'observe' | 'tui' | 'approve' | 'deny' | 'cancel' | 'pause' | 'resume';
 export type FactoryResourceCommand = 'validate' | 'plan' | 'workflow' | 'tree' | 'edit' | 'run';
-export type FactoryCommand = FactoryLifecycleCommand | FactoryResourceCommand | 'help';
+export type FactorySecretCommand = 'secrets';
+export type FactoryCommand = FactoryLifecycleCommand | FactoryResourceCommand | FactorySecretCommand | 'help';
 
 const ansiReset = '\u001b[0m';
 const ansiPurple = '\u001b[35m';
@@ -28,6 +29,7 @@ export function factoryBanner(): string {
 export interface FactoryArgs {
   command: FactoryCommand;
   authoringAction?: 'new' | 'list' | 'propose' | 'import' | 'show' | 'validate' | 'approve' | 'apply' | 'reject';
+  secretAction?: 'set' | 'list' | 'test' | 'remove';
   name?: string;
   goal?: string;
   proposalId?: string;
@@ -37,6 +39,9 @@ export interface FactoryArgs {
   service?: string;
   runId?: string;
   reason?: string;
+  provider?: string;
+  fromClipboard: boolean;
+  yes: boolean;
   follow: boolean;
   once: boolean;
   intervalMs: number;
@@ -64,10 +69,10 @@ export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
   const hasCommand = firstArgument !== undefined && !firstArgument.startsWith('-');
   const rawCommand = hasCommand ? firstArgument : 'launch';
   const command = aliases[rawCommand] ?? (rawCommand as FactoryCommand);
-  if (command !== 'help' && !lifecycleCommands.has(command) && !resourceCommands.has(command)) {
+  if (command !== 'help' && !lifecycleCommands.has(command) && !resourceCommands.has(command) && command !== 'secrets') {
     throw new Error(`Unknown command "${rawCommand}". Run "factory help" for usage.`);
   }
-  if (command === 'help') return { command: 'help', profiles: [], follow: false, once: true, intervalMs: 2_000, web: true, help: true };
+  if (command === 'help') return { command: 'help', profiles: [], follow: false, once: true, intervalMs: 2_000, web: true, fromClipboard: false, yes: false, help: true };
   const profiles: string[] = [];
   let resourcePath: string | undefined;
   let workflowId: string | undefined;
@@ -79,14 +84,30 @@ export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
   let service: string | undefined;
   let runId: string | undefined;
   let reason: string | undefined;
+  let provider: string | undefined;
+  let secretAction: FactoryArgs['secretAction'];
   let follow = false;
   let once = false;
   let intervalMs = 2_000;
   let web = true;
+  let fromClipboard = false;
+  let yes = false;
   for (let index = hasCommand ? 1 : 0; index < argv.length; index += 1) {
     const value = argv[index]!;
-    if (value === '--help' || value === '-h') return { command: 'help', profiles, follow, once: true, intervalMs, web, help: true };
+    if (value === '--help' || value === '-h') return { command: 'help', profiles, follow, once: true, intervalMs, web, fromClipboard: false, yes: false, help: true };
     if (value === '--no-web') { web = false; continue; }
+    if (value === '--from-clipboard' || value === '--clipboard') { fromClipboard = true; continue; }
+    if (value === '--yes' || value === '-y') { yes = true; continue; }
+    if (value === '--provider') {
+      provider = argv[++index]?.trim();
+      if (provider === undefined || provider === '') throw new Error('--provider requires a value.');
+      continue;
+    }
+    if (value.startsWith('--provider=')) {
+      provider = value.slice('--provider='.length).trim();
+      if (provider === '') throw new Error('--provider requires a value.');
+      continue;
+    }
     if (value === '--follow' || value === '-f') { follow = true; continue; }
     if (value === '--once') { once = true; continue; }
     if (value === '--interval' || value === '--interval-ms') {
@@ -129,7 +150,9 @@ export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
       continue;
     }
     if (value.startsWith('-')) throw new Error(`Unknown option "${value}". Run "factory help" for usage.`);
-    if (command === 'author' && authoringAction === undefined && ['list', 'propose', 'import', 'show', 'validate', 'approve', 'apply', 'reject'].includes(value)) authoringAction = value as Exclude<FactoryArgs['authoringAction'], 'new' | undefined>;
+    if (command === 'secrets' && secretAction === undefined && ['set', 'list', 'test', 'remove'].includes(value)) secretAction = value as FactoryArgs['secretAction'];
+    else if (command === 'secrets' && secretAction !== undefined && secretAction !== 'list' && name === undefined) name = value;
+    else if (command === 'author' && authoringAction === undefined && ['list', 'propose', 'import', 'show', 'validate', 'approve', 'apply', 'reject'].includes(value)) authoringAction = value as Exclude<FactoryArgs['authoringAction'], 'new' | undefined>;
     else if (command === 'author' && authoringAction === 'propose' && workflowId === undefined) workflowId = value;
     else if (command === 'author' && authoringAction === 'propose') goal = goal === undefined ? value : `${goal} ${value}`;
     else if (command === 'author' && authoringAction === 'import' && resourcePath === undefined) resourcePath = value;
@@ -148,11 +171,13 @@ export function parseFactoryArgs(argv: readonly string[]): FactoryArgs {
   if (resourceCommands.has(command) && resourcePath === undefined && command !== 'workflow') throw new Error(`${command} requires a project.yaml or resource directory.`);
   if (authoringAction === 'new' && (name === undefined || name.trim() === '')) throw new Error(`${command} new requires a name.`);
   if (command === 'author' && authoringAction === undefined) authoringAction = 'list';
+  if (command === 'secrets' && secretAction === undefined) secretAction = 'list';
+  if (command === 'secrets' && secretAction !== 'list' && (name === undefined || name.trim() === '')) throw new Error(`secrets ${secretAction} requires a connection name.`);
   if (command === 'author' && authoringAction === 'propose' && (workflowId === undefined || goal === undefined || goal.trim().length < 10)) throw new Error('author propose requires a workflow id and a goal of at least 10 characters.');
   if (command === 'author' && authoringAction === 'import' && resourcePath === undefined) throw new Error('author import requires a proposal bundle path.');
   if (command === 'author' && !['list', 'propose', 'import'].includes(authoringAction ?? '') && proposalId === undefined) throw new Error(`author ${authoringAction} requires a proposal id.`);
   if (['approve', 'deny', 'cancel', 'pause', 'resume'].includes(command) && runId === undefined) throw new Error(`${command} requires a run id.`);
-  return { command, ...(authoringAction === undefined ? {} : { authoringAction }), ...(name === undefined ? {} : { name }), ...(goal === undefined ? {} : { goal }), ...(proposalId === undefined ? {} : { proposalId }), ...(projectId === undefined ? {} : { projectId }), ...(resourcePath === undefined ? {} : { resourcePath }), ...(workflowId === undefined ? {} : { workflowId }), ...(service === undefined ? {} : { service }), ...(runId === undefined ? {} : { runId }), ...(reason === undefined ? {} : { reason }), profiles: [...new Set(profiles)], follow, once, intervalMs, web, help: false };
+  return { command, ...(authoringAction === undefined ? {} : { authoringAction }), ...(secretAction === undefined ? {} : { secretAction }), ...(name === undefined ? {} : { name }), ...(goal === undefined ? {} : { goal }), ...(proposalId === undefined ? {} : { proposalId }), ...(projectId === undefined ? {} : { projectId }), ...(resourcePath === undefined ? {} : { resourcePath }), ...(workflowId === undefined ? {} : { workflowId }), ...(service === undefined ? {} : { service }), ...(runId === undefined ? {} : { runId }), ...(reason === undefined ? {} : { reason }), ...(provider === undefined ? {} : { provider }), profiles: [...new Set(profiles)], follow, once, intervalMs, web, fromClipboard, yes, help: false };
 }
 
 export function composeArguments(action: 'up' | 'down' | 'restart' | 'ps' | 'logs' | 'build', profiles: readonly string[], service?: string): string[] {
@@ -205,6 +230,10 @@ Lifecycle:
   cancel <run-id>                  Cancel a run
   pause <run-id>                   Pause a run
   resume <run-id>                  Resume a run
+  secrets list                     List configured Project secrets (values are never shown)
+  secrets set <name>               Store a provider key securely for the active Project
+  secrets test <name>              Verify that FACTORY can read a stored key
+  secrets remove <name>            Remove a Project secret and its Connection
 
 Authoring:
   validate <path>                  Validate a project YAML/resource directory
@@ -227,6 +256,9 @@ Authoring:
 Options:
   --profile <name>                 Enable a Compose profile (repeatable)
   --project <id>                   Select a Project for API commands
+  --provider <name>                Provider label for secrets set (default: openai-compatible)
+  --from-clipboard                 Read a secret from the macOS clipboard without echoing it
+  --yes                            Confirm a destructive secret removal non-interactively
   --all                            Enable temporal, observability, and ollama
   --follow                         Keep observe output live
   --once                           Render one TUI snapshot and exit

@@ -14,6 +14,7 @@ import type { PlatformStore } from '../storage/store.js';
 import { RepositoryWorkspace } from '../repository/workspace.js';
 import { GitHubRepositoryClient } from '../repository/github.js';
 import { VaultSecretBroker } from '../connections/vault-secret-broker.js';
+import { ConnectionSecretBroker } from '../connections/connection-secret-broker.js';
 import { HttpOllamaClient } from '../runtime/ollama.js';
 import { OpenAISDKClient } from '../runtime/openai-sdk.js';
 import { OpenAICompatibleClient } from '../runtime/openai-compatible.js';
@@ -41,9 +42,10 @@ const configuredGithubToken = process.env.GITHUB_TOKEN?.trim();
 const configuredGithubSecretRef = process.env.GITHUB_SECRET_REF?.trim();
 const vaultAddress = process.env.VAULT_ADDR?.trim();
 const vaultToken = process.env.VAULT_TOKEN?.trim();
-const secretBroker = vaultAddress !== undefined && vaultToken !== undefined
+const vaultSecretBroker = vaultAddress !== undefined && vaultToken !== undefined
   ? new VaultSecretBroker({ address: vaultAddress, token: vaultToken })
   : undefined;
+const secretBroker = vaultSecretBroker === undefined ? undefined : new ConnectionSecretBroker(store, vaultSecretBroker);
 const githubRepository = configuredGithubOwner !== undefined && configuredGithubOwner !== '' && configuredGithubRepo !== undefined && configuredGithubRepo !== '' && ((configuredGithubToken !== undefined && configuredGithubToken !== '') || (configuredGithubSecretRef !== undefined && configuredGithubSecretRef !== '' && secretBroker !== undefined))
   ? new GitHubRepositoryClient({ owner: configuredGithubOwner, repo: configuredGithubRepo, ...(configuredGithubToken === undefined || configuredGithubToken === '' ? {} : { token: configuredGithubToken }), ...(configuredGithubSecretRef === undefined || configuredGithubSecretRef === '' || secretBroker === undefined ? {} : { secretRef: configuredGithubSecretRef, secretBroker }) })
   : undefined;

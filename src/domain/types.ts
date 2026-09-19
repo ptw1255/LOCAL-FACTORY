@@ -478,6 +478,8 @@ export interface DeploymentRecord {
 export interface ConnectionRecord {
   tenantId?: string;
   projectId?: string;
+  /** True when this reusable Connection belongs to FACTORY Local, not a Project. */
+  factoryScoped?: boolean;
   id: string;
   name: string;
   connector: string;

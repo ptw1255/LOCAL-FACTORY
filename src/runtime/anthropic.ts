@@ -41,11 +41,11 @@ export class AnthropicClient implements OpenAIClient {
     this.fetcher = options.fetcher ?? fetch;
   }
 
-  public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string }): Promise<OpenAIModelResult> {
+  public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string; tenantId?: string; projectId?: string }): Promise<OpenAIModelResult> {
     const startedAt = Date.now();
     const model = input.agent.model.model;
     if (model === undefined) throw new Error(`Anthropic agent "${input.agent.id}" must declare model.model.`);
-    const apiKey = await this.resolveApiKey(input.agent);
+    const apiKey = await this.resolveApiKey(input.agent, input);
     if (input.signal.aborted) throw new OpenAIProviderError('cancelled', 'Anthropic request was cancelled.', { retryable: false });
     const body = {
       model,
@@ -176,10 +176,12 @@ export class AnthropicClient implements OpenAIClient {
     return { content, model, ...(promptTokens === undefined ? {} : { promptTokens }), ...(completionTokens === undefined ? {} : { completionTokens }), ...(finishReason === undefined ? {} : { finishReason }), ...(requestId === undefined ? {} : { requestId }), ...(tools.size === 0 ? {} : { toolCalls: [...tools.values()] }), ...(promptTokens !== undefined && completionTokens !== undefined && pricing !== undefined ? { estimatedCostUsd: Number(((promptTokens / 1_000) * pricing.promptPer1kUsd + (completionTokens / 1_000) * pricing.completionPer1kUsd).toFixed(6)) } : {}) };
   }
 
-  private async resolveApiKey(agent: AgentDefinition): Promise<string> {
+  private async resolveApiKey(agent: AgentDefinition, scope: { tenantId?: string; projectId?: string }): Promise<string> {
     if (agent.model.secretRef !== undefined) {
       if (this.secretBroker === undefined) throw new Error('A configured Vault secret broker is required for the Anthropic connection.');
-      return this.secretBroker.get(agent.model.secretRef);
+      return scope.tenantId === undefined && scope.projectId === undefined
+        ? this.secretBroker.get(agent.model.secretRef)
+        : this.secretBroker.get(agent.model.secretRef, scope);
     }
     if (this.apiKey === undefined || this.apiKey.trim() === '') throw new OpenAIProviderError('authentication', 'Anthropic credentials are not configured.', { retryable: false });
     return this.apiKey;

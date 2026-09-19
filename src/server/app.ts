@@ -10,6 +10,7 @@ import Fastify, {
 
 import { ProposalService } from '../agents/proposal-service.js';
 import { ConnectionService } from '../connections/connection-service.js';
+import { ConnectionSecretBroker } from '../connections/connection-secret-broker.js';
 import { VaultSecretBroker } from '../connections/vault-secret-broker.js';
 import { nodeCatalog } from '../domain/catalog.js';
 import {
@@ -17,6 +18,7 @@ import {
   cloneWorkflowSchema,
   declarativeImportSchema,
   createConnectionSchema,
+  setConnectionSecretSchema,
   createAuthoringProposalSchema,
   authoringDecisionSchema,
   createProposalSchema,
@@ -201,11 +203,12 @@ export async function createApp(
     : new PostgresStore(databaseUrl));
   const vaultAddress = process.env.VAULT_ADDR;
   const vaultToken = process.env.VAULT_TOKEN;
-  const secretBroker = options.secretBroker ?? (
+  const vaultSecretBroker = options.secretBroker ?? (
     vaultAddress !== undefined && vaultToken !== undefined
       ? new VaultSecretBroker({ address: vaultAddress, token: vaultToken })
       : undefined
   );
+  const secretBroker = vaultSecretBroker === undefined ? undefined : new ConnectionSecretBroker(store, vaultSecretBroker);
   const retentionHours = options.observabilityRetentionHours
     ?? positiveNumber(process.env.OBSERVABILITY_RETENTION_HOURS, 48);
   const evidenceRetentionHours = process.env.EVIDENCE_RETENTION_HOURS === undefined
@@ -1076,6 +1079,53 @@ export async function createApp(
     },
   );
 
+  const projectSecretScope = async (projectId: string, scope: ReturnType<typeof scopeFromRequest>): Promise<boolean> =>
+    projectId === scope.projectId && await store.read((state) => state.projects.some((project) => project.id === projectId && project.tenantId === scope.tenantId));
+
+  app.get<{ Params: { projectId: string } }>('/api/projects/:projectId/secrets', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    if (!await projectSecretScope(request.params.projectId, scope)) return reply.status(404).send({ message: 'Project not found.' });
+    const items = (await connections.list(request.params.projectId, scope.tenantId))
+      .filter((connection) => connection.secretConfigured)
+      .map(({ name, connector, status, lastCheckedAt }) => ({ name, connector, status, lastCheckedAt, configured: true }));
+    return { items };
+  });
+
+  app.put<{ Params: { projectId: string; name: string }; Body: unknown }>('/api/projects/:projectId/secrets/:name', async (request, reply) => {
+    const parsed = setConnectionSecretSchema.safeParse(request.body);
+    if (!parsed.success) return reply.status(422).send({ message: 'Secret configuration is invalid.', issues: parsed.error.issues });
+    const scope = scopeFromRequest(request);
+    if (!await projectSecretScope(request.params.projectId, scope)) return reply.status(404).send({ message: 'Project not found.' });
+    try {
+      const connection = await connections.setSecret({ tenantId: scope.tenantId, projectId: request.params.projectId, name: request.params.name, ...parsed.data });
+      return { name: connection.name, connector: connection.connector, status: connection.status, configured: connection.secretConfigured };
+    } catch (error) {
+      return reply.status(503).send({ message: errorMessage(error) });
+    }
+  });
+
+  app.post<{ Params: { projectId: string; name: string } }>('/api/projects/:projectId/secrets/:name/test', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    if (!await projectSecretScope(request.params.projectId, scope)) return reply.status(404).send({ message: 'Project not found.' });
+    try {
+      const connection = await connections.testSecret(request.params.name, request.params.projectId, scope.tenantId);
+      return { name: connection.name, connector: connection.connector, status: connection.status, configured: true };
+    } catch (error) {
+      return reply.status(503).send({ message: errorMessage(error) });
+    }
+  });
+
+  app.delete<{ Params: { projectId: string; name: string } }>('/api/projects/:projectId/secrets/:name', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    if (!await projectSecretScope(request.params.projectId, scope)) return reply.status(404).send({ message: 'Project not found.' });
+    try {
+      await connections.removeSecret(request.params.name, request.params.projectId, scope.tenantId);
+      return reply.status(204).send();
+    } catch (error) {
+      return reply.status(503).send({ message: errorMessage(error) });
+    }
+  });
+
   app.post<{ Params: { id: string } }>(
     '/api/workflows/:id/runs',
     async (request, reply) => {
@@ -1559,7 +1609,40 @@ export async function createApp(
 
   app.get('/api/connections', async (request) => {
     const scope = scopeFromRequest(request);
-    return { items: await connections.list(scope.projectId, scope.tenantId) };
+    const items = await connections.listFactory(scope.tenantId);
+    return { items: items.map(({ secretRef: _secretRef, ...connection }) => connection) };
+  });
+
+  app.put<{ Params: { name: string }; Body: unknown }>('/api/connections/secrets/:name', async (request, reply) => {
+    const parsed = setConnectionSecretSchema.safeParse(request.body);
+    if (!parsed.success) return reply.status(422).send({ message: 'Secret configuration is invalid.', issues: parsed.error.issues });
+    const scope = scopeFromRequest(request);
+    try {
+      const connection = await connections.setSecret({ tenantId: scope.tenantId, name: request.params.name, ...parsed.data });
+      return { name: connection.name, connector: connection.connector, status: connection.status, configured: connection.secretConfigured };
+    } catch (error) {
+      return reply.status(503).send({ message: errorMessage(error) });
+    }
+  });
+
+  app.post<{ Params: { name: string } }>('/api/connections/secrets/:name/test', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    try {
+      const connection = await connections.testSecret(request.params.name, undefined, scope.tenantId);
+      return { name: connection.name, connector: connection.connector, status: connection.status, configured: true };
+    } catch (error) {
+      return reply.status(503).send({ message: errorMessage(error) });
+    }
+  });
+
+  app.delete<{ Params: { name: string } }>('/api/connections/secrets/:name', async (request, reply) => {
+    const scope = scopeFromRequest(request);
+    try {
+      await connections.removeSecret(request.params.name, undefined, scope.tenantId);
+      return reply.status(204).send();
+    } catch (error) {
+      return reply.status(503).send({ message: errorMessage(error) });
+    }
   });
 
   app.post<{ Body: unknown }>('/api/connections', async (request, reply) => {

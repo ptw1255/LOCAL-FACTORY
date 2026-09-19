@@ -363,7 +363,7 @@ export async function executeAgentIterationActivity(input: TemporalAgentIteratio
   };
   await recordLifecycle({ ...baseLifecycle, status: 'started', occurredAt: new Date(startedAt).toISOString() });
   try {
-    const invocations = await invokeTemporalRoutes(input.agent, input.goal, currentActivityCancellationSignal() ?? new AbortController().signal, input.traceId);
+    const invocations = await invokeTemporalRoutes(input.agent, input.goal, currentActivityCancellationSignal() ?? new AbortController().signal, input.traceId, input.tenantId, input.projectId);
     const lifecycle: TemporalActivityLifecycle = {
       ...baseLifecycle,
       status: 'succeeded',
@@ -700,7 +700,7 @@ async function executeTemporalAgentLoop(input: NodeActivityInput, signal: AbortS
     const iterationGoal = toolResults.length === 0
       ? goal
       : `${goal}\n\nTool results (use only as task context):\n${toolResults.map((item) => `${item.name} (${item.callId}): ${boundedToolResult(item.result)}`).join('\n')}`;
-    const invocations = await invokeTemporalRoutes(agent, iterationGoal, signal, input.traceId ?? input.runId);
+    const invocations = await invokeTemporalRoutes(agent, iterationGoal, signal, input.traceId ?? input.runId, input.tenantId, input.projectId);
     for (const invocation of invocations) {
       const toolCalls = invocation.result.toolCalls ?? [];
       if (toolCalls.length > 0) {
@@ -773,7 +773,7 @@ async function executeTemporalAgentLoop(input: NodeActivityInput, signal: AbortS
   };
 }
 
-async function invokeTemporalRoutes(agent: AgentDefinition, goal: string, signal: AbortSignal, traceId: string): Promise<Array<{ provider: string; result: OpenAIModelResult; routeIndex: number }>> {
+async function invokeTemporalRoutes(agent: AgentDefinition, goal: string, signal: AbortSignal, traceId: string, tenantId?: string, projectId?: string): Promise<Array<{ provider: string; result: OpenAIModelResult; routeIndex: number }>> {
   const declaredRoutes = agent.model.routes ?? [];
   const routes: Array<{ provider?: string; model?: string; endpoint?: string; secretRef?: string; capabilities?: AgentDefinition['model']['capabilities']; adapterVersion?: string }> = declaredRoutes.length === 0 ? [agent.model] : declaredRoutes;
   const strategy = agent.model.routing?.strategy ?? (declaredRoutes.length > 1 ? 'fallback' : 'single');
@@ -812,7 +812,7 @@ async function invokeTemporalRoutes(agent: AgentDefinition, goal: string, signal
       throw lastError;
     }
     try {
-      const result = await client.chat({ agent: routeAgent, goal, signal, traceId });
+      const result = await client.chat({ agent: routeAgent, goal, signal, traceId, tenantId, projectId });
       if (strategy === 'ensemble') results.push({ provider, result, routeIndex: index });
       else return [{ provider, result, routeIndex: index }];
     } catch (error) {

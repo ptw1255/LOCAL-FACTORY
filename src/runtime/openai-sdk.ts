@@ -51,11 +51,11 @@ export class OpenAISDKClient implements OpenAIClient {
     this.clientFactory = options.clientFactory ?? ((clientOptions) => new OpenAI(clientOptions));
   }
 
-  public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string }): Promise<OpenAIModelResult> {
+  public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string; tenantId?: string; projectId?: string }): Promise<OpenAIModelResult> {
     const startedAt = Date.now();
     const model = input.agent.model.model;
     if (model === undefined) throw new Error(`OpenAI agent "${input.agent.id}" must declare model.model.`);
-    const apiKey = await this.resolveApiKey(input.agent);
+    const apiKey = await this.resolveApiKey(input.agent, input);
     if (input.signal.aborted) throw new OpenAIProviderError('cancelled', 'OpenAI request was cancelled.', { retryable: false });
     const client = this.clientFactory({ apiKey, baseURL: input.agent.model.endpoint ?? this.baseUrl, maxRetries: 0, timeout: input.agent.limits.maxDurationMs, ...(this.fetcher === undefined ? {} : { fetch: this.fetcher }) });
     const request = {
@@ -185,10 +185,12 @@ export class OpenAISDKClient implements OpenAIClient {
     return message.replaceAll(apiKey, '[REDACTED]').slice(0, 500);
   }
 
-  private async resolveApiKey(agent: AgentDefinition): Promise<string> {
+  private async resolveApiKey(agent: AgentDefinition, scope: { tenantId?: string; projectId?: string }): Promise<string> {
     if (agent.model.secretRef !== undefined) {
       if (this.secretBroker === undefined) throw new Error('A configured Vault secret broker is required for the OpenAI connection.');
-      return this.secretBroker.get(agent.model.secretRef);
+      return scope.tenantId === undefined && scope.projectId === undefined
+        ? this.secretBroker.get(agent.model.secretRef)
+        : this.secretBroker.get(agent.model.secretRef, scope);
     }
     if (this.apiKey === undefined || this.apiKey.trim() === '') throw new Error('OpenAI credentials are not configured.');
     return this.apiKey;

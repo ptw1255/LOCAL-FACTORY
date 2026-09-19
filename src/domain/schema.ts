@@ -134,6 +134,11 @@ export const createConnectionSchema = z.object({
   secret: z.string().min(1).max(10_000).optional(),
 });
 
+export const setConnectionSecretSchema = z.object({
+  connector: z.string().trim().min(1).max(100),
+  secret: z.string().min(1).max(10_000),
+});
+
 export const createProposalSchema = z.object({
   goal: z.string().trim().min(10).max(2_000),
   workflowId: z.string().min(1),

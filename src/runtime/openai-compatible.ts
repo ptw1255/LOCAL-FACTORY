@@ -62,11 +62,11 @@ export class OpenAICompatibleClient implements OpenAIClient {
     this.fetcher = options.fetcher ?? fetch;
   }
 
-  public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string }): Promise<OpenAIModelResult> {
+  public async chat(input: { agent: AgentDefinition; goal: string; signal: AbortSignal; traceId?: string; tenantId?: string; projectId?: string }): Promise<OpenAIModelResult> {
     const startedAt = Date.now();
     const model = input.agent.model.model;
     if (model === undefined) throw new Error(`${this.provider} agent "${input.agent.id}" must declare model.model.`);
-    const apiKey = await this.resolveApiKey(input.agent);
+    const apiKey = await this.resolveApiKey(input.agent, input);
     if (input.signal.aborted) throw new OpenAIProviderError('cancelled', `${this.provider} request was cancelled.`, { retryable: false });
 
     const messages: ChatMessage[] = [
@@ -239,10 +239,12 @@ export class OpenAICompatibleClient implements OpenAIClient {
     };
   }
 
-  private async resolveApiKey(agent: AgentDefinition): Promise<string> {
+  private async resolveApiKey(agent: AgentDefinition, scope: { tenantId?: string; projectId?: string }): Promise<string> {
     if (agent.model.secretRef !== undefined) {
       if (this.secretBroker === undefined) throw new Error(`A configured Vault secret broker is required for the ${this.provider} connection.`);
-      return this.secretBroker.get(agent.model.secretRef);
+      return scope.tenantId === undefined && scope.projectId === undefined
+        ? this.secretBroker.get(agent.model.secretRef)
+        : this.secretBroker.get(agent.model.secretRef, scope);
     }
     return this.apiKey?.trim() ?? '';
   }

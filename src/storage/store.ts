@@ -75,7 +75,7 @@ export function normalizePlatformState(state: PlatformState): PlatformState {
   }
   for (const connection of state.connections) {
     connection.tenantId ??= tenantId;
-    connection.projectId ??= projectId;
+    if (connection.factoryScoped !== true) connection.projectId ??= projectId;
     connection.secretConfigured ??= connection.secretRef !== undefined;
   }
   for (const run of state.runs) {

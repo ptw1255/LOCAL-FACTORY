@@ -13,7 +13,7 @@ import { createSeedState } from '../src/domain/seed.js';
 import type { AuthoringBrief, WorkflowDefinition } from '../src/domain/types.js';
 import { addProjectResourcePaths, authoringSlug, canvasResourcePath, renderStarterCanvasFile, renderStarterWorkflowFile, renderWorkspaceProjectFile, workflowResourcePath } from './factory-authoring.js';
 import { browserOpenCommand, composeArguments, isLifecycleCommand, parseFactoryArgs, usageText, type FactoryArgs } from './factory-cli.js';
-import { backTerminalState, editTerminalSource, pendingApproval, portalItemCount, renderTerminalPortal, renderTerminalSnapshot, type TerminalPortalPage, type TerminalPortalState, type TerminalPrompt, type TerminalSnapshot } from './factory-terminal.js';
+import { backTerminalState, editTerminalSource, pendingApproval, portalItemCount, renderTerminalPortal, renderTerminalSnapshot, terminalCursorHidden, terminalCursorVisible, type TerminalPortalPage, type TerminalPortalState, type TerminalPrompt, type TerminalSnapshot } from './factory-terminal.js';
 
 const dashboardUrl = (process.env.FACTORY_BASE_URL?.trim() || 'http://localhost:3100').replace(/\/$/, '');
 
@@ -72,6 +72,99 @@ async function requestJson<T>(route: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
   return body as T;
+}
+
+function clipboardSecret(): string {
+  if (process.platform !== 'darwin') throw new Error('--from-clipboard is currently supported on macOS only; paste the value at the hidden prompt instead.');
+  const result = spawnSync('pbpaste', [], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  if (result.error !== undefined || result.status !== 0) throw new Error('FACTORY could not read the macOS clipboard.');
+  const secret = (result.stdout ?? '').replace(/[\r\n]+$/, '');
+  if (secret.length === 0) throw new Error('Your clipboard is empty. Copy the API key, then run the command again.');
+  return secret;
+}
+
+async function promptSecret(): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Use --from-clipboard when setting a secret from a non-interactive shell.');
+  process.stdout.write('Paste API key (input is hidden): ');
+  return new Promise<string>((resolve, reject) => {
+    let value = '';
+    const finish = (error?: Error) => {
+      process.stdin.setRawMode?.(false);
+      process.stdin.pause();
+      process.stdin.off('data', onData);
+      process.stdout.write('\n');
+      if (error !== undefined) reject(error);
+      else resolve(value.replace(/[\r\n]+$/, ''));
+    };
+    const onData = (data: Buffer) => {
+      const input = data.toString().replaceAll('\u001b[200~', '').replaceAll('\u001b[201~', '');
+      if (input === '\u0003') { finish(new Error('Secret entry cancelled.')); return; }
+      if (input === '\r' || input === '\n') { finish(); return; }
+      if (input === '\u007f' || input === '\b') { value = value.slice(0, -1); return; }
+      value += input.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+    };
+    process.stdin.setRawMode?.(true);
+    process.stdin.resume();
+    process.stdin.on('data', onData);
+  });
+}
+
+async function confirmSecretRemoval(name: string): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Pass --yes to remove a secret from a non-interactive shell.');
+  const prompt = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await prompt.question(`Remove stored secret and Connection/${name}? [y/N]: `)).trim().toLowerCase();
+    return answer === 'y' || answer === 'yes';
+  } finally {
+    prompt.close();
+  }
+}
+
+async function ensureLocalSecretsService(): Promise<void> {
+  // A secret command is intentionally self-contained: users should not need
+  // to know which backing services Vault depends on or run Docker commands
+  // before storing their first model key.
+  runExternal('docker', ['compose', 'up', '-d', 'app', 'postgres', 'vault']);
+  await waitForDashboard();
+}
+
+async function runSecretsCommand(args: FactoryArgs): Promise<void> {
+  await ensureLocalSecretsService();
+  const base = '/api/connections/secrets';
+  if (args.secretAction === 'list') {
+    const result = await requestJson<{ items: Array<{ name: string; connector: string; status: string; lastCheckedAt: string; secretConfigured: boolean }> }>('/api/connections');
+    const configured = result.items.filter((connection) => connection.secretConfigured);
+    if (configured.length === 0) {
+      console.log('No model API keys configured for FACTORY Local.');
+      console.log('Next: factory secrets set <provider-name>');
+      return;
+    }
+    for (const secret of configured) console.log(`${secret.name.padEnd(24)} ${secret.connector.padEnd(22)} ${secret.status.padEnd(10)} configured`);
+    return;
+  }
+  if (args.name === undefined || args.secretAction === undefined) throw new Error('Select a secret action and connection name.');
+  if (args.secretAction === 'set') {
+    const secret = args.fromClipboard ? clipboardSecret() : await promptSecret();
+    if (secret.length === 0) throw new Error('API key cannot be empty.');
+    const saved = await requestJson<{ name: string; connector: string }>(`${base}/${encodeURIComponent(args.name)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ connector: args.provider ?? 'openai-compatible', secret }),
+    });
+    console.log(`FACTORY configured ${saved.name} for FACTORY Local.`);
+    console.log(`Use in agent YAML: secretRef: Connection/${saved.name}`);
+    return;
+  }
+  if (args.secretAction === 'test') {
+    const tested = await requestJson<{ name: string; connector: string }>(`${base}/${encodeURIComponent(args.name)}/test`, { method: 'POST' });
+    console.log(`FACTORY can read Connection/${tested.name} (${tested.connector}).`);
+    return;
+  }
+  if (!args.yes && !await confirmSecretRemoval(args.name)) {
+    console.log('FACTORY kept the stored secret.');
+    return;
+  }
+  await requestJson<void>(`${base}/${encodeURIComponent(args.name)}`, { method: 'DELETE' });
+  console.log(`FACTORY removed Connection/${args.name} from FACTORY Local.`);
 }
 
 function projectHeaders(projectId: string | undefined): Record<string, string> {
@@ -301,6 +394,14 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     process.stdout.write('\n');
   };
   if (!interactive) { render(); return; }
+  let cursorHidden = true;
+  const restoreTerminalCursor = () => {
+    if (!cursorHidden) return;
+    cursorHidden = false;
+    process.stdout.write(terminalCursorVisible);
+  };
+  process.stdout.write(terminalCursorHidden);
+  process.once('exit', restoreTerminalCursor);
   let refreshing = false;
   let authoring = false;
   let actionGeneration = 0;
@@ -355,13 +456,18 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     };
     render();
   };
-  const promptValue = (question: { label: string; defaultValue?: string }): Promise<string | undefined> => new Promise((resolve) => {
-    const prompt: TerminalPrompt = { label: question.label, value: '', ...(question.defaultValue === undefined ? {} : { defaultValue: question.defaultValue }) };
+  const promptValue = (question: { label: string; defaultValue?: string; sensitive?: boolean }): Promise<string | undefined> => new Promise((resolve) => {
+    const prompt: TerminalPrompt = {
+      label: question.label,
+      value: '',
+      ...(question.defaultValue === undefined ? {} : { defaultValue: question.defaultValue }),
+      ...(question.sensitive === true ? { sensitive: true } : {}),
+    };
     activePrompt = { resolve };
     state = { ...state, prompt };
     render();
   });
-  const promptValues = async (questions: Array<{ label: string; defaultValue?: string }>): Promise<string[]> => {
+  const promptValues = async (questions: Array<{ label: string; defaultValue?: string; sensitive?: boolean }>): Promise<string[]> => {
     const answers: string[] = [];
     for (const question of questions) {
       const answer = await promptValue(question);
@@ -511,6 +617,51 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     const artifact = await compileProject();
     return `Saved ${editor.filePath} and compiled ${artifact.id}.`;
   };
+  const beginConnectionCreate = async (): Promise<string | undefined> => {
+    const name = await promptValue({ label: 'Connection name' });
+    if (name === undefined || name.trim() === '') return undefined;
+    const secret = await promptValue({ label: 'API key (hidden)', sensitive: true });
+    if (secret === undefined || secret.trim() === '') return undefined;
+    state = {
+      ...state,
+      connectionDraft: { name: name.trim(), secret: secret.trim() },
+      removingConnectionName: undefined,
+    };
+    return `Connection/${name.trim()} is ready to save.`;
+  };
+  const saveConnectionDraft = async (): Promise<string | undefined> => {
+    if (state.connectionDraft === undefined) throw new Error('No Connection is ready to save.');
+    const draft = state.connectionDraft;
+    const saved = await requestJson<{ name: string; connector: string }>(`/api/connections/secrets/${encodeURIComponent(draft.name)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ connector: 'openai-compatible', secret: draft.secret }),
+    });
+    state = { ...state, connectionDraft: undefined, cursor: 0 };
+    return `Saved Connection/${saved.name} in local Vault.`;
+  };
+  const testSelectedConnection = async (): Promise<string | undefined> => {
+    const connection = snapshot.connections?.[state.cursor];
+    if (connection === undefined) throw new Error('Select a Connection first.');
+    const tested = await requestJson<{ name: string; connector: string }>(`/api/connections/secrets/${encodeURIComponent(connection.name)}/test`, {
+      method: 'POST',
+    });
+    return `Connection/${tested.name} is readable from local Vault.`;
+  };
+  const beginConnectionRemoval = async (): Promise<string | undefined> => {
+    const connection = snapshot.connections?.[state.cursor];
+    if (connection === undefined) throw new Error('Select a Connection first.');
+    state = { ...state, removingConnectionName: connection.name, connectionDraft: undefined };
+    return `Review removal of Connection/${connection.name}, then press s to confirm.`;
+  };
+  const removeConnection = async (): Promise<string | undefined> => {
+    if (state.removingConnectionName === undefined) throw new Error('No Connection removal is awaiting confirmation.');
+    const name = state.removingConnectionName;
+    await requestJson<void>(`/api/connections/secrets/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+    state = { ...state, removingConnectionName: undefined, cursor: 0 };
+    return `Removed Connection/${name} from FACTORY Local and Vault.`;
+  };
   const moveCursor = (delta: number) => {
     const count = portalItemCount(snapshot, state.page, state.selectedWorkflowId);
     if (count === 0) return;
@@ -557,6 +708,10 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     if (state.page === 'runs') {
       const run = snapshot.runs[state.cursor];
       if (run !== undefined) { state = { page: 'run-detail', cursor: 0, selectedRunId: run.id }; await refreshPage(); }
+      return;
+    }
+    if (state.page === 'connections') {
+      await performAuthoring(testSelectedConnection);
       return;
     }
     if (state.page === 'portals') {
@@ -635,6 +790,11 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
         process.stdin.off('data', onData);
         resolve();
       } else if (key === 'r') void refreshPage();
+      else if (key === 'c' && state.page === 'connections' && state.connectionDraft === undefined && state.removingConnectionName === undefined) void performAuthoring(beginConnectionCreate);
+      else if (key === 's' && state.page === 'connections' && state.connectionDraft !== undefined) void performAuthoring(saveConnectionDraft);
+      else if (key === 's' && state.page === 'connections' && state.removingConnectionName !== undefined) void performAuthoring(removeConnection);
+      else if (key === 'd' && state.page === 'connections' && state.connectionDraft === undefined && state.removingConnectionName === undefined) void performAuthoring(beginConnectionRemoval);
+      else if (key === 't' && state.page === 'connections') void performAuthoring(testSelectedConnection);
       else if (key === 'n' && state.page === 'project') void performAuthoring(createProject);
       else if (key === 'n' && (state.page === 'workflow' || state.page === 'tree')) void performAuthoring(draftNewWorkflow);
       else if (key === 'w' && state.page === 'project') void performAuthoring(draftNewWorkflow);
@@ -669,6 +829,9 @@ async function runTui(args: FactoryArgs, initialPage: TerminalPortalPage = 'home
     process.stdin.resume();
     process.stdin.on('data', onData);
     render();
+  }).finally(() => {
+    process.off('exit', restoreTerminalCursor);
+    restoreTerminalCursor();
   });
 }
 
@@ -927,6 +1090,10 @@ async function main(): Promise<void> {
   }
   if (isLifecycleCommand(args.command)) {
     await runLifecycle(args);
+    return;
+  }
+  if (args.command === 'secrets') {
+    await runSecretsCommand(args);
     return;
   }
   await runResourceCommand(args);

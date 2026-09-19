@@ -62,6 +62,11 @@ factory project new "My project"
 factory workflow new "My workflow" --project <project-id>
 factory author propose <workflow-id> "Add an approval before publish" --project <project-id>
 factory author import proposal.json --project <project-id>
+factory secrets set openai --provider openai --project <project-id>
+factory secrets set typesafe-ai --provider openai-compatible --from-clipboard --project <project-id>
+factory secrets list --project <project-id>
+factory secrets test typesafe-ai --project <project-id>
+factory secrets remove typesafe-ai --project <project-id>
 factory edit workflows/review.workflow.yaml  # edit a local resource with $EDITOR
 factory approve <run-id>        # approve a waiting run
 factory deny <run-id> "reason"  # deny a waiting run
@@ -79,6 +84,40 @@ snapshot and exits. Use `FACTORY_BASE_URL` for a different API URL and
 `factory --all` to include the optional Temporal, observability, and Ollama profiles.
 Add `--no-web` when the deployment should expose only the API/control plane for
 terminal-native operation.
+
+### Model API keys and local secrets
+
+The normal local flow is through FACTORY, not the Vault CLI. Store each hosted-model
+key once for FACTORY Local, then reuse its Connection from any Project:
+
+```bash
+factory secrets set typesafe-ai --provider openai-compatible --from-clipboard
+factory secrets test typesafe-ai
+factory secrets list
+```
+
+`--from-clipboard` reads a macOS clipboard value without echoing it or placing it in
+shell history. Omit it to paste at FACTORY's hidden terminal prompt. FACTORY starts
+its local Vault service as needed, stores the value under a tenant-scoped Vault
+reference, and creates the corresponding reusable Connection metadata. The key is
+never returned by the CLI or API.
+
+Reference that Connection by name—not by its Vault path—in agent YAML:
+
+```yaml
+model:
+  provider: openai-compatible
+  model: your-model-name
+  endpoint: https://provider.example/v1
+  secretRef: Connection/typesafe-ai
+```
+
+`factory secrets remove typesafe-ai` removes both the FACTORY-level Connection
+metadata and its Vault value after confirmation. Direct Vault paths and provider
+environment variables remain supported for migration and smoke-test compatibility,
+but are advanced paths.
+The bundled Vault uses development-mode local security; it is suitable for a trusted
+developer machine, not a shared or production deployment.
 The authoring model is `Project → Workflow → WorkUnit`. A Project is the durable,
 tenant-scoped file boundary. A Workflow is a graph whose nodes reference versioned
 WorkUnit envelopes. The terminal renders that model directly: Enter opens a Workflow,
@@ -250,22 +289,15 @@ provider-neutral contract.
 ### OpenAI Responses API
 
 Hosted agent boxes use the provider-neutral runtime with a server-side Responses API
-official OpenAI Node SDK Responses adapter. Keep the key in Vault and reference only its connection path from YAML:
+official OpenAI Node SDK Responses adapter. Configure the key with
+`factory secrets set openai --provider openai` and reference the Connection name from YAML:
 
 ```yaml
 model:
   provider: openai
   model: gpt-5-mini
-  secretRef: connections/openai
+  secretRef: Connection/openai
   streaming: true
-```
-
-For local development, start Vault and write the secret before running the server:
-
-```bash
-export VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=dev-root-token
-vault kv put secret/connections/openai value="$OPENAI_API_KEY"
-npm run server
 ```
 
 The default runtime adapter is the official `openai` Node SDK (`maxRetries: 0`, so

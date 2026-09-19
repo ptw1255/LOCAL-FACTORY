@@ -42,6 +42,14 @@ export class VaultSecretBroker implements SecretBroker {
     return value;
   }
 
+  public async delete(reference: string): Promise<void> {
+    const response = await fetch(`${this.address}/v1/${this.mount}/data/${this.path(reference)}`, {
+      method: 'DELETE',
+      headers: { 'X-Vault-Token': this.token },
+    });
+    if (!response.ok) throw new Error(`Vault secret delete failed with status ${response.status}.`);
+  }
+
   private path(reference: string): string {
     const path = reference.replace(/^\/+|\/+$/g, '');
     if (path.length === 0 || path.split('/').some((part) => part === '.' || part === '..')) {

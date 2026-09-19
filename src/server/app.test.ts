@@ -34,6 +34,7 @@ describe('platform API', () => {
       secretBroker: {
         put: async () => undefined,
         get: async () => 'test-secret',
+        delete: async () => undefined,
       },
     });
   });
@@ -717,13 +718,10 @@ describe('platform API', () => {
 
   it('never returns connection credentials through the list API', async () => {
     const created = await app.inject({
-      method: 'POST',
-      url: '/api/connections',
+      method: 'PUT',
+      url: '/api/connections/secrets/private-provider',
       payload: {
-        name: 'Private provider',
         connector: 'OpenAI',
-        environment: 'development',
-        scopes: ['models:invoke'],
         secret: 'credential-must-not-leak',
       },
     });
@@ -732,8 +730,55 @@ describe('platform API', () => {
     expect(listed.statusCode).toBe(200);
     expect(JSON.stringify(listed.json())).not.toContain('credential-must-not-leak');
     expect(listed.json<{ items: Array<{ secretConfigured: boolean; secretRef?: string }> }>().items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ secretConfigured: true, secretRef: expect.stringMatching(/^connections\//) }),
+      expect.objectContaining({ secretConfigured: true }),
     ]));
+    expect(JSON.stringify(listed.json())).not.toContain('secretRef');
+  });
+
+  it('manages project-scoped model secrets without returning values or Vault paths', async () => {
+    const headers = { 'x-tenant-id': 'tenant-local', 'x-project-id': 'project-local' };
+    const stored = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/project-local/secrets/typesafe-ai',
+      headers,
+      payload: { connector: 'openai-compatible', secret: 'typesafe-key-must-not-leak' },
+    });
+    expect(stored.statusCode).toBe(200);
+    expect(stored.json()).toEqual(expect.objectContaining({ name: 'typesafe-ai', configured: true }));
+    expect(JSON.stringify(stored.json())).not.toContain('typesafe-key-must-not-leak');
+
+    const listed = await app.inject({ method: 'GET', url: '/api/projects/project-local/secrets', headers });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json<{ items: Array<{ name: string; configured: boolean }> }>().items).toEqual([expect.objectContaining({ name: 'typesafe-ai', configured: true })]);
+    expect(JSON.stringify(listed.json())).not.toContain('projects/project-local/connections');
+
+    const tested = await app.inject({ method: 'POST', url: '/api/projects/project-local/secrets/typesafe-ai/test', headers });
+    expect(tested.statusCode).toBe(200);
+    expect(tested.json()).toEqual(expect.objectContaining({ name: 'typesafe-ai', configured: true }));
+
+    const removed = await app.inject({ method: 'DELETE', url: '/api/projects/project-local/secrets/typesafe-ai', headers });
+    expect(removed.statusCode).toBe(204);
+    expect((await app.inject({ method: 'GET', url: '/api/projects/project-local/secrets', headers })).json<{ items: unknown[] }>().items).toEqual([]);
+    expect(JSON.stringify(await store.read((state) => state.connections))).not.toContain('typesafe-key-must-not-leak');
+  });
+
+  it('manages reusable FACTORY-level Connections without exposing secret values', async () => {
+    const saved = await app.inject({
+      method: 'PUT',
+      url: '/api/connections/secrets/typesafe-ai',
+      payload: { connector: 'openai-compatible', secret: 'super-secret-value' },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.body).not.toContain('super-secret-value');
+
+    const listed = await app.inject({ method: 'GET', url: '/api/connections' });
+    const connection = listed.json<{ items: Array<{ name: string; projectId?: string; factoryScoped?: boolean; secretRef?: string; secretConfigured: boolean }> }>().items.find((item) => item.name === 'typesafe-ai');
+    expect(connection).toEqual(expect.objectContaining({ name: 'typesafe-ai', factoryScoped: true, secretConfigured: true }));
+    expect(JSON.stringify(connection)).not.toContain('tenants/');
+
+    expect((await app.inject({ method: 'POST', url: '/api/connections/secrets/typesafe-ai/test' })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'DELETE', url: '/api/connections/secrets/typesafe-ai' })).statusCode).toBe(204);
+    expect((await app.inject({ method: 'GET', url: '/api/connections' })).json<{ items: Array<{ name: string }> }>().items.some((item) => item.name === 'typesafe-ai')).toBe(false);
   });
 
   it('preserves immutable workflow versions after a save', async () => {

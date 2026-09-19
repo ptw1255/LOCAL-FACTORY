@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { browserOpenCommand, composeArguments, factoryBanner, isLifecycleCommand, parseFactoryArgs } from '../../scripts/factory-cli.js';
-import { backTerminalState, editTerminalSource, portalItemCount, renderTerminalPortal, renderTerminalSnapshot, type TerminalPortalPage, type TerminalSourceEditor } from '../../scripts/factory-terminal.js';
+import { backTerminalState, editTerminalSource, portalItemCount, renderTerminalPortal, renderTerminalSnapshot, terminalCursorHidden, terminalCursorVisible, type TerminalPortalPage, type TerminalSourceEditor } from '../../scripts/factory-terminal.js';
 
 describe('FACTORY CLI argument handling', () => {
   it('defaults to launching the local dashboard', () => {
@@ -31,6 +31,9 @@ describe('FACTORY CLI argument handling', () => {
     expect(parseFactoryArgs(['logs', 'app'])).toMatchObject({ command: 'logs', service: 'app' });
     expect(parseFactoryArgs(['observe', 'run-1', '--follow', '--interval', '500'])).toMatchObject({ command: 'observe', runId: 'run-1', follow: true, intervalMs: 500 });
     expect(parseFactoryArgs(['deny', 'run-1', 'Needs review'])).toMatchObject({ command: 'deny', runId: 'run-1', reason: 'Needs review' });
+    expect(parseFactoryArgs(['secrets', 'set', 'typesafe-ai', '--provider', 'openai-compatible', '--from-clipboard', '--project', 'project-a'])).toMatchObject({ command: 'secrets', secretAction: 'set', name: 'typesafe-ai', provider: 'openai-compatible', fromClipboard: true, projectId: 'project-a' });
+    expect(parseFactoryArgs(['secrets', 'list'])).toMatchObject({ command: 'secrets', secretAction: 'list' });
+    expect(parseFactoryArgs(['secrets', 'remove', 'typesafe-ai', '--yes'])).toMatchObject({ command: 'secrets', secretAction: 'remove', name: 'typesafe-ai', yes: true });
   });
 
   it('parses declarative resource commands', () => {
@@ -52,6 +55,7 @@ describe('FACTORY CLI argument handling', () => {
       [['validate', 'project.yaml'], 'validate'], [['plan', 'project.yaml'], 'plan'], [['workflow'], 'workflow'], [['workflow', 'new', 'Demo'], 'workflow'],
       [['workflow', 'project.yaml'], 'workflow'], [['tree', 'project.yaml'], 'tree'], [['edit', 'project.yaml'], 'edit'],
       [['run', 'project.yaml'], 'run'], [['help'], 'help'],
+      [['secrets'], 'secrets'], [['secrets', 'set', 'openai'], 'secrets'], [['secrets', 'test', 'openai'], 'secrets'], [['secrets', 'remove', 'openai'], 'secrets'],
     ];
     for (const [argv, command] of commands) expect(parseFactoryArgs(argv).command).toBe(command);
     expect(isLifecycleCommand(parseFactoryArgs(['project']).command)).toBe(true);
@@ -82,6 +86,11 @@ describe('FACTORY CLI argument handling', () => {
     expect(banner).toContain('███████╗');
     expect(banner).toContain('███████╗╚██████╔╝');
     expect(banner.split('\n')).toHaveLength(13);
+  });
+
+  it('provides terminal cursor controls for the interactive TUI lifecycle', () => {
+    expect(terminalCursorHidden).toBe('\u001b[?25l');
+    expect(terminalCursorVisible).toBe('\u001b[?25h');
   });
 
   it('renders a navigable terminal portal with dashboard choices', () => {
