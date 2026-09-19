@@ -1554,7 +1554,7 @@ export class LocalWorkflowExecutor {
       } else if (provider === 'openai') {
         if (this.openai === undefined) throw new Error('OpenAI credentials are not configured for this runtime.');
         result = await this.openai.chat({ agent: routeAgent, goal, signal, traceId, ...scope });
-      } else if (provider === 'openai-compatible' || provider === 'lmstudio' || provider === 'lm-studio' || provider === 'vllm' || provider === 'localai' || provider === 'jev' || provider === 'typesafe-ai' || provider === 'typesafe') {
+      } else if (provider === 'openai-compatible') {
         if (this.openaiCompatible === undefined) throw new Error(`The ${provider} model adapter is not configured for this runtime.`);
         result = await this.openaiCompatible.chat({ agent: routeAgent, goal, signal, traceId, ...scope });
       } else {

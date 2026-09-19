@@ -350,6 +350,11 @@ export async function createApp(
   const providerClients = options.providerClients ?? new Map<string, OpenAIClient>([
     ['anthropic', new AnthropicClient({ secretBroker })],
     ['gemini', new GeminiClient({ secretBroker })],
+    ['openai-compatible', openaiCompatible],
+    ['lmstudio', openaiCompatible],
+    ['lm-studio', openaiCompatible],
+    ['vllm', openaiCompatible],
+    ['localai', openaiCompatible],
     ['jev', new JevClient({ secretBroker })],
     ['typesafe-ai', new JevClient({ provider: 'typesafe-ai', secretBroker })],
     ['typesafe', new JevClient({ provider: 'typesafe', secretBroker })],

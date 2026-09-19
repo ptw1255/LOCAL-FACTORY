@@ -550,7 +550,7 @@ describe('LocalWorkflowExecutor', () => {
       receivedTraceId = input.traceId;
       return { content: 'local result', model: 'qwen2.5-coder-7b', promptTokens: 2, completionTokens: 1, requestId: 'local-1' };
     } };
-    const compatibleExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, undefined, new Map(), compatible);
+    const compatibleExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, undefined, undefined, new Map(), undefined, new Map([['lmstudio', compatible]]));
     const run = await compatibleExecutor.start(workflow);
     await waitFor(async () =>
       (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)))?.status === 'succeeded',
