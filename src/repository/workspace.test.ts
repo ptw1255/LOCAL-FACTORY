@@ -159,6 +159,14 @@ describe('RepositoryWorkspace', () => {
     await rm(runRoot, { recursive: true, force: true });
   });
 
+  it('requires an absolute run root and never clones over the source repository', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'factory-repo-run-root-'));
+    const source = await RepositoryWorkspace.open(root);
+    await expect(source.cloneForRun('relative-root', { rootDirectory: 'runs' })).rejects.toThrow(/absolute/);
+    await expect(source.cloneForRun('source-root', { rootDirectory: root })).rejects.toThrow(/source repository/);
+    await rm(root, { recursive: true, force: true });
+  });
+
   it('returns a content-addressed mutation transaction with patch provenance', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-repo-'));
     await execFileAsync('git', ['init', '-b', 'main'], { cwd: root });
