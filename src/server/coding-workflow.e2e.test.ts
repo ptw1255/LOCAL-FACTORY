@@ -167,7 +167,14 @@ describe('coding workflow API', () => {
         } else if (current.status === 'succeeded' || current.status === 'failed') { terminal = current; break; }
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      expect(terminal?.status).toBe('succeeded');
+      const terminalSummary = terminal && {
+        status: terminal.status,
+        error: terminal.error,
+        completedNodeIds: terminal.completedNodeIds,
+        activatedNodeIds: terminal.activatedNodeIds,
+        approvedNodeIds: terminal.approvedNodeIds,
+      };
+      expect(terminal?.status, `issue-to-merge terminal run: ${JSON.stringify(terminalSummary)}`).toBe('succeeded');
       expect(restarted).toBe(true);
       expect(githubFetcher).toHaveBeenCalledTimes(4);
       const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
@@ -210,7 +217,7 @@ describe('coding workflow API', () => {
       { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
       { id: 'issue', type: 'repositoryIssue', label: 'Create linked task', position: { x: 180, y: 0 }, config: { operation: 'create', parentIssueNumber: 42, title: 'Child task', body: 'Implement the issue.' }, unit: defaultWorkUnit('repositoryIssue') },
       { id: 'mutate', type: 'repositoryMutation', label: 'Apply plan', position: { x: 360, y: 0 }, config: { capabilities: ['repository.write'], requiresApproval: true, deliveryActionPlan: '{{plan}}' }, unit: defaultWorkUnit('repositoryMutation') },
-      { id: 'check', type: 'repositoryCheck', label: 'Run checks', position: { x: 540, y: 0 }, config: { command: 'npm test' }, unit: defaultWorkUnit('repositoryCheck') },
+      { id: 'check', type: 'repositoryCheck', label: 'Run checks', position: { x: 540, y: 0 }, config: { command: 'node --version' }, unit: defaultWorkUnit('repositoryCheck') },
       { id: 'branch', type: 'repositoryBranch', label: 'Branch', position: { x: 720, y: 0 }, config: { requiresApproval: true, branch: '{{plan.branch.name}}', baseRevision: '{{plan.repository.baseRevision}}' }, unit: defaultWorkUnit('repositoryBranch') },
       { id: 'commit', type: 'repositoryCommit', label: 'Commit', position: { x: 900, y: 0 }, config: { requiresApproval: true, message: '{{plan.commit.message}}', paths: '{{plan.commit.paths}}' }, unit: defaultWorkUnit('repositoryCommit') },
       { id: 'pr', type: 'repositoryPullRequest', label: 'Open PR', position: { x: 1080, y: 0 }, config: { requiresApproval: true, title: '{{plan.pullRequest.title}}', body: '{{plan.pullRequest.body}}', head: '{{plan.branch.name}}', base: '{{plan.pullRequest.base}}' }, unit: defaultWorkUnit('repositoryPullRequest') },
@@ -228,7 +235,7 @@ describe('coding workflow API', () => {
       repository: { owner: 'example', name: 'repo', baseRevision },
       tasks: [{ id: 'implement', title: 'Implement the issue' }],
       mutations: [{ operation: 'replace', path: 'README.md', content: 'generated' }],
-      checks: ['npm test'],
+      checks: ['node --version'],
       branch: { name: 'factory/issue-42' },
       commit: { message: 'Implement issue 42', paths: ['README.md'] },
       pullRequest: { title: 'Implement issue 42', body: 'What: update README\nWhy: resolve issue 42', base: 'main' },
@@ -247,7 +254,14 @@ describe('coding workflow API', () => {
         } else if (current.status === 'succeeded' || current.status === 'failed') { terminal = current; break; }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      expect(terminal?.status).toBe('succeeded');
+      const terminalSummary = terminal && {
+        status: terminal.status,
+        error: terminal.error,
+        completedNodeIds: terminal.completedNodeIds,
+        activatedNodeIds: terminal.activatedNodeIds,
+        approvedNodeIds: terminal.approvedNodeIds,
+      };
+      expect(terminal?.status, `issue-to-merge terminal run: ${JSON.stringify(terminalSummary)}`).toBe('succeeded');
       const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
       const items = (evidence.json() as { items: Array<{ unitId: string; operation: string; status: string; metadata?: Record<string, unknown> }> }).items;
       for (const unitId of ['delivery-plan', 'issue', 'mutate', 'check', 'branch', 'commit', 'pr', 'ci', 'review', 'merge']) {
