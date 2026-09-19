@@ -230,10 +230,10 @@ Lifecycle:
   cancel <run-id>                  Cancel a run
   pause <run-id>                   Pause a run
   resume <run-id>                  Resume a run
-  secrets list                     List configured Project secrets (values are never shown)
-  secrets set <name>               Store a provider key securely for the active Project
+  secrets list                     List configured FACTORY Local secrets (values are never shown)
+  secrets set <name>               Store a reusable provider key in local Vault
   secrets test <name>              Verify that FACTORY can read a stored key
-  secrets remove <name>            Remove a Project secret and its Connection
+  secrets remove <name>            Remove a local Vault Connection and its key
 
 Authoring:
   validate <path>                  Validate a project YAML/resource directory
