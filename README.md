@@ -1,10 +1,29 @@
 # Agentic Workflow Factory
 
-Agentic Workflow Factory is a terminal-first, API-first runtime for composing deterministic
-code, bounded agents, human approvals, connectors, evaluators, and consumers into
-durable workflows. Each node is a versioned work unit with an explicit contract;
-each agent is a policy-bound box with declared purpose, skills, tools, budgets,
-boundaries, approvals, and telemetry rules.
+> **FACTORY is a local control plane for durable AI workflows—not another coding-agent UI.**
+
+Codex Cloud and similar hosted agents are excellent **workers**: give them a coding
+task and they can work in an isolated environment, run checks, and return a diff or
+pull request. FACTORY is the system around that worker. It defines when work runs,
+what the worker may access, which deterministic steps happen before and after it,
+which actions require approval, and how the complete run is observed over time.
+
+```text
+deterministic code → bounded agent → approval → external action → run evidence
+                         ↑
+                  Codex, OpenAI, Anthropic,
+                  Gemini, Ollama, or another model
+```
+
+Use FACTORY when the goal is not merely “have an agent make a code change,” but to
+operate a repeatable, inspectable, policy-bound process that safely uses agents to
+get work done.
+
+Agentic Workflow Factory is a terminal-first, API-first runtime for composing those
+workflows from deterministic code, bounded agents, human approvals, connectors,
+evaluators, and consumers. Each node is a versioned WorkUnit with an explicit
+contract; each agent is a policy-bound box with declared purpose, skills, tools,
+budgets, boundaries, approvals, and telemetry rules.
 
 The product is designed for software and operations teams that want agents to do
 useful work without turning the system into an opaque autonomous process. A typical
