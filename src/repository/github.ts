@@ -1,5 +1,7 @@
 export interface PullRequestInput { title: string; body: string; head: string; base: string }
 export interface PullRequest { number: number; url: string; head: string; base: string; state: string; requestId?: string }
+export interface IssueInput { title: string; body?: string; labels?: string[] }
+export interface Issue { number: number; title: string; state: 'open' | 'closed'; url: string; body?: string; requestId?: string }
 export interface PullRequestReview { id: number; user?: string; state: string; submittedAt?: string }
 export interface PullRequestStatus {
   number: number;
@@ -38,6 +40,58 @@ export interface GitHubClientOptions { token?: string; secretRef?: string; secre
 export class GitHubRepositoryClient {
   private readonly fetcher: typeof fetch;
   public constructor(private readonly options: GitHubClientOptions) { this.fetcher = options.fetcher ?? fetch; }
+
+  public async getIssue(number: number): Promise<Issue> {
+    if (!Number.isSafeInteger(number) || number <= 0) throw new Error('A positive issue number is required.');
+    const response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.owner)}/${encodeURIComponent(this.options.repo)}/issues/${number}`, { headers: await this.headers() });
+    if (!response.ok) throw new GitHubApiError(`GitHub issue lookup failed with status ${response.status}.`, response.status);
+    const body = await response.json() as { number?: unknown; title?: unknown; state?: unknown; html_url?: unknown; body?: unknown };
+    if (typeof body.number !== 'number' || typeof body.title !== 'string' || (body.state !== 'open' && body.state !== 'closed') || typeof body.html_url !== 'string') throw new Error('GitHub response did not contain issue metadata.');
+    const requestId = response.headers.get('x-github-request-id');
+    return { number: body.number, title: body.title, state: body.state, url: body.html_url, ...(typeof body.body === 'string' ? { body: body.body } : {}), ...(requestId === null ? {} : { requestId }) };
+  }
+
+  public async createIssue(input: IssueInput): Promise<Issue> {
+    if (input.title.trim() === '') throw new Error('An issue title is required.');
+    const response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.owner)}/${encodeURIComponent(this.options.repo)}/issues`, {
+      method: 'POST',
+      headers: { ...(await this.headers()), 'content-type': 'application/json' },
+      body: JSON.stringify({ title: input.title.trim(), ...(input.body === undefined ? {} : { body: input.body }), ...(input.labels === undefined ? {} : { labels: input.labels }) }),
+    });
+    if (!response.ok) throw new GitHubApiError(`GitHub issue creation failed with status ${response.status}.`, response.status);
+    const body = await response.json() as { number?: unknown; title?: unknown; state?: unknown; html_url?: unknown; body?: unknown };
+    if (typeof body.number !== 'number' || typeof body.title !== 'string' || body.state !== 'open' || typeof body.html_url !== 'string') throw new Error('GitHub response did not contain created issue metadata.');
+    const requestId = response.headers.get('x-github-request-id');
+    return { number: body.number, title: body.title, state: 'open', url: body.html_url, ...(typeof body.body === 'string' ? { body: body.body } : {}), ...(requestId === null ? {} : { requestId }) };
+  }
+
+  public async commentIssue(number: number, body: string): Promise<{ issueNumber: number; url?: string; requestId?: string }> {
+    if (!Number.isSafeInteger(number) || number <= 0) throw new Error('A positive issue number is required.');
+    if (body.trim() === '') throw new Error('An issue comment is required.');
+    const response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.owner)}/${encodeURIComponent(this.options.repo)}/issues/${number}/comments`, {
+      method: 'POST',
+      headers: { ...(await this.headers()), 'content-type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+    if (!response.ok) throw new GitHubApiError(`GitHub issue comment failed with status ${response.status}.`, response.status);
+    const result = await response.json() as { html_url?: unknown };
+    const requestId = response.headers.get('x-github-request-id');
+    return { issueNumber: number, ...(typeof result.html_url === 'string' ? { url: result.html_url } : {}), ...(requestId === null ? {} : { requestId }) };
+  }
+
+  public async updateIssueState(number: number, state: 'open' | 'closed'): Promise<Issue> {
+    if (!Number.isSafeInteger(number) || number <= 0) throw new Error('A positive issue number is required.');
+    const response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.owner)}/${encodeURIComponent(this.options.repo)}/issues/${number}`, {
+      method: 'PATCH',
+      headers: { ...(await this.headers()), 'content-type': 'application/json' },
+      body: JSON.stringify({ state }),
+    });
+    if (!response.ok) throw new GitHubApiError(`GitHub issue update failed with status ${response.status}.`, response.status);
+    const body = await response.json() as { number?: unknown; title?: unknown; state?: unknown; html_url?: unknown; body?: unknown };
+    if (typeof body.number !== 'number' || typeof body.title !== 'string' || (body.state !== 'open' && body.state !== 'closed') || typeof body.html_url !== 'string') throw new Error('GitHub response did not contain updated issue metadata.');
+    const requestId = response.headers.get('x-github-request-id');
+    return { number: body.number, title: body.title, state: body.state, url: body.html_url, ...(typeof body.body === 'string' ? { body: body.body } : {}), ...(requestId === null ? {} : { requestId }) };
+  }
 
   public async createPullRequest(input: PullRequestInput): Promise<PullRequest> {
     const response = await this.fetcher(`https://api.github.com/repos/${encodeURIComponent(this.options.owner)}/${encodeURIComponent(this.options.repo)}/pulls`, {
