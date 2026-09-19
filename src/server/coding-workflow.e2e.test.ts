@@ -167,7 +167,7 @@ describe('coding workflow API', () => {
         } else if (current.status === 'succeeded' || current.status === 'failed') { terminal = current; break; }
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      expect(terminal?.status).toBe('succeeded');
+      expect(terminal?.status, `issue-to-merge terminal run: ${JSON.stringify(terminal)}`).toBe('succeeded');
       expect(restarted).toBe(true);
       expect(githubFetcher).toHaveBeenCalledTimes(4);
       const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
