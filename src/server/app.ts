@@ -45,6 +45,7 @@ import { TemporalWorkflowExecutor, type TemporalWorkflowClientLike } from '../te
 import { HttpOllamaClient } from '../runtime/ollama.js';
 import { OpenAISDKClient } from '../runtime/openai-sdk.js';
 import { OpenAICompatibleClient } from '../runtime/openai-compatible.js';
+import { JevClient } from '../runtime/jev.js';
 import { AnthropicClient } from '../runtime/anthropic.js';
 import { GeminiClient } from '../runtime/gemini.js';
 import { parseRepositoryCheckSandbox, RepositoryWorkspace } from '../repository/workspace.js';
@@ -349,6 +350,9 @@ export async function createApp(
   const providerClients = options.providerClients ?? new Map<string, OpenAIClient>([
     ['anthropic', new AnthropicClient({ secretBroker })],
     ['gemini', new GeminiClient({ secretBroker })],
+    ['jev', new JevClient({ secretBroker })],
+    ['typesafe-ai', new JevClient({ provider: 'typesafe-ai', secretBroker })],
+    ['typesafe', new JevClient({ provider: 'typesafe', secretBroker })],
   ]);
   const configuredExecutionEngine = options.executionEngine ?? process.env.EXECUTION_ENGINE;
   let temporalClose: (() => Promise<void>) | undefined;
