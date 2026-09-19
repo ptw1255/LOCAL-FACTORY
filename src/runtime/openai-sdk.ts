@@ -66,6 +66,7 @@ export class OpenAISDKClient implements OpenAIClient {
         { role: 'user', content: input.goal },
       ],
       ...(input.agent.limits.maxTokens === undefined ? {} : { max_output_tokens: input.agent.limits.maxTokens }),
+      ...(input.agent.model.reasoningEffort === undefined ? {} : { reasoning: { effort: input.agent.model.reasoningEffort } }),
       ...(this.structuredOutput(input.agent) === undefined ? {} : { text: this.structuredOutput(input.agent) }),
       ...(input.agent.model.streaming === true ? { stream: true } : { stream: false }),
       ...(input.agent.tools.length === 0 ? {} : { tools: openAIToolDefinitions(input.agent) }),
