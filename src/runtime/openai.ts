@@ -108,6 +108,7 @@ export class HttpOpenAIClient implements OpenAIClient {
         { role: 'user', content: input.goal },
       ],
       ...(input.agent.limits.maxTokens === undefined ? {} : { max_output_tokens: input.agent.limits.maxTokens }),
+      ...(input.agent.model.reasoningEffort === undefined ? {} : { reasoning: { effort: input.agent.model.reasoningEffort } }),
       ...(input.agent.tools.length === 0 ? {} : { tools: openAIToolDefinitions(input.agent) }),
     });
     const requestSignal = AbortSignal.any([input.signal, AbortSignal.timeout(input.agent.limits.maxDurationMs)]);

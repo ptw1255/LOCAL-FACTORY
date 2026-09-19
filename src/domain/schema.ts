@@ -34,6 +34,7 @@ export const agentDefinitionSchema = z.object({
     streaming: z.boolean().optional(),
     capabilities: z.array(z.enum(['text', 'structured_output', 'streaming', 'tools', 'usage', 'request_ids'])).max(6).optional(),
     adapterVersion: z.string().min(1).optional(),
+    reasoningEffort: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
     pricing: z.object({ promptPer1kUsd: z.number().nonnegative(), completionPer1kUsd: z.number().nonnegative() }).optional(),
     provisioning: z.object({
       mode: z.enum(['never', 'pull-on-start', 'baked']).default('never'),
@@ -47,6 +48,7 @@ export const agentDefinitionSchema = z.object({
       secretRef: z.string().trim().min(1).optional(),
       capabilities: z.array(z.enum(['text', 'structured_output', 'streaming', 'tools', 'usage', 'request_ids'])).max(6).optional(),
       adapterVersion: z.string().trim().min(1).optional(),
+      reasoningEffort: z.enum(['none', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
     })).max(8).optional(),
     routing: z.object({
       strategy: z.enum(['single', 'fallback', 'ensemble']),
