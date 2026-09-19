@@ -247,7 +247,7 @@ describe('coding workflow API', () => {
         } else if (current.status === 'succeeded' || current.status === 'failed') { terminal = current; break; }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      expect(terminal?.status).toBe('succeeded');
+      expect(terminal?.status, `issue-to-merge terminal run: ${JSON.stringify(terminal)}`).toBe('succeeded');
       const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
       const items = (evidence.json() as { items: Array<{ unitId: string; operation: string; status: string; metadata?: Record<string, unknown> }> }).items;
       for (const unitId of ['delivery-plan', 'issue', 'mutate', 'check', 'branch', 'commit', 'pr', 'ci', 'review', 'merge']) {
