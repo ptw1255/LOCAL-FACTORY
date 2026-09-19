@@ -1,128 +1,175 @@
-# First-run onboarding
+# FACTORY Local: 0 → 1
 
-This is the shortest path from a fresh checkout to a running, observable loop.
-The source files are the authoring boundary; PostgreSQL stores compiled and
-runtime state, not editor buffers.
+This guide takes a new local installation from no running services to one
+observable workflow. FACTORY is terminal-first: the terminal control plane is the
+normal path, while the browser dashboard is optional.
 
-## 1. Start the local stack
-
-From the repository root, start the control plane, PostgreSQL, and Vault:
-
-```bash
-docker compose up --build
-```
-
-Open [http://localhost:3100/#/studio](http://localhost:3100/#/studio). The
-default local scope is `tenant-local` / `project-local`. For a lightweight
-non-Docker preview, `npm run dev` starts the JSON-backed local server instead.
-
-## 2. Create or import source files
-
-In Workspace, use the Explorer selector to choose **Files**. Open a file tab and
-edit the YAML; use **Apply YAML** to validate and compile it. The supported
-project layout is:
+## What you will have
 
 ```text
-factory.yaml
-workflows/*.workflow.yaml
-agents/*.agent.yaml
-units/*.unit.yaml
-policies/*.policy.yaml
-connections/*.connection.yaml
-environments/*.environment.yaml
-schemas/*.schema.json
-canvas/*.canvas.yaml
+FACTORY Local
+├── reusable Connection      one model key in local Vault
+├── Project                  one file-backed work boundary
+├── Workflow                 one graph of WorkUnit envelopes
+├── Artifact                 one compiled, immutable version
+└── Run evidence             logs, metrics, traces, approvals, and outputs
 ```
 
-The example project can be imported or used as a reference:
+## Before you begin
+
+- macOS with Docker Desktop running.
+- Node.js 22 or newer, only if you are starting from a source checkout.
+- A hosted-model API key, or a locally running Ollama model. The API key is
+  optional until a workflow invokes that provider.
+
+The canonical checkout is `/Users/parker/agent-factory`.
+
+## 1. Install and launch FACTORY Local
+
+From the checkout:
 
 ```bash
-npm run factory -- validate examples/code-review-loop.yaml
-npm run factory -- plan examples/code-review-loop.yaml
+cd "/Users/parker/agent-factory"
+npm install
 ```
 
-For a project that still only has the legacy aggregate workflow record, generate
-the file-backed layout once through the API (the operation is idempotent):
+Install the user-level launcher once if it is not already available:
 
 ```bash
-curl -X POST http://localhost:3100/api/projects/project-local/migrate -H 'content-type: application/json' -d '{"dryRun":false}'
+npm install --global --prefix "$HOME/.local" .
+ln -sfn "$HOME/.local/bin/factory" "$HOME/.local/bin/launch-factory"
 ```
 
-To create a new source file directly, use the file API; paths are validated and
-kept inside the project workspace:
+Then, from any directory, launch FACTORY:
 
 ```bash
-curl -X PUT http://localhost:3100/api/projects/project-local/files \
-  -H 'content-type: application/json' \
-  -d '{"path":"units/normalize.unit.yaml","content":"apiVersion: factory.agentic/v1\nkind: WorkUnit\nmetadata:\n  id: normalize\n  version: 1\nspec:\n  kind: deterministic\n  version: 1\n  inputSchema: any\n  outputSchema: any\n  timeoutMs: 1000\n  retryAttempts: 1\n"}'
+launch-factory
 ```
 
-After migration, files are authoritative. **Canvas** and **Tree** are projections
-of the same compiled resources; edits made through the compatibility Canvas are
-written back to the corresponding source files.
+It starts the app, PostgreSQL, and local development Vault; waits for health; and
+opens **FACTORY LOCAL**. Press `q` to leave the terminal interface. Docker services
+continue running until you stop them with `factory down`.
 
-## 3. Compile and run
-
-Click **Apply YAML** (or the play-shaped **Run** action in the command bar). If a
-workflow declares an input schema, the run dialog asks for JSON input. A dirty
-buffer, compiler diagnostic, or invalid input blocks the run before any WorkUnit
-executes. Run status and recent events appear in the bottom **Run Output** panel.
-
-The equivalent compile operation is:
+If the command is not found, use the checkout directly:
 
 ```bash
-curl -X POST http://localhost:3100/api/projects/project-local/compile -H 'content-type: application/json' -d '{"environment":"local"}'
+cd "/Users/parker/agent-factory"
+npm run factory -- tui
 ```
 
-## 4. Observe the run
+## 2. Add one reusable model Connection
 
-Open the **Observe** top-level tab, or select **Observe** beside a run in Run
-Output. Observe correlates the run timeline with logs, traces, metrics, evidence,
-and approval waits. Runtime telemetry is retained for 48 hours by default. The
-optional Phoenix/Collector view is available with:
+From FACTORY LOCAL, select **Connections**, then:
+
+1. Press `c`.
+2. Enter a Connection name, such as `typesafe-ai`.
+3. Paste the API key at the hidden prompt and press Enter.
+4. Press `s` to save.
+
+The key is stored in local Vault. FACTORY stores only Connection metadata and a
+non-secret Vault reference; it never writes the key into YAML, Git, API responses,
+logs, telemetry, or Postgres.
+
+Connections live above Projects. Add the key once, then reference it from any
+Project using its semantic name:
+
+```yaml
+secretRef: Connection/typesafe-ai
+```
+
+In the Connections view, `Enter` or `t` checks Vault access for a selected
+Connection, `d` stages removal, `s` confirms removal, `r` refreshes, and `Esc`
+cancels or returns to Core.
+
+The equivalent CLI commands are:
 
 ```bash
-PHOENIX_ENDPOINT=http://phoenix:6006 PHOENIX_UI_URL=http://localhost:6006 docker compose --profile observability up --build
+factory secrets set typesafe-ai --provider openai-compatible --from-clipboard
+factory secrets test typesafe-ai
+factory secrets list
 ```
 
-## 5. Create and operate a deployment
+The bundled Vault is development mode for a trusted developer machine. It is not a
+shared or production secret-management deployment.
 
-Deployments are managed on the **Deployments** top-level screen. The current
-lean API flow creates a deployment from a compiled artifact; the screen then
-provides Docker Desktop-style state, health evidence, recent runs, and Start,
-Stop, Restart, and Observe actions:
+## 3. Create a Project
+
+Projects are the durable, file-backed boundary. A Project owns its workflows,
+artifacts, run history, and approval policy; it does **not** own a duplicate copy of
+your API key.
+
+In Core, select **Projects** and press `n`. Enter a name and description. FACTORY
+creates the Project and its initial `factory.yaml` resource.
+
+CLI equivalent:
 
 ```bash
-ARTIFACT_ID=$(curl -s -X POST http://localhost:3100/api/projects/project-local/compile -H 'content-type: application/json' -d '{"environment":"local"}' | jq -r .id)
-curl -X POST http://localhost:3100/api/deployments -H 'content-type: application/json' -d "{\"workflowId\":\"workflow-agent-intake\",\"environment\":\"local\",\"artifactId\":\"$ARTIFACT_ID\",\"trigger\":\"webhook\"}"
+factory project new "Code review factory"
 ```
 
-For protected environments (`production`, `prod`, `preprod`, or `staging`), a
-succeeded run, passing repository-CI evidence, and an approval bound to the
-exact artifact and run are required before promotion. Local deployments remain
-available for development.
+## 4. Create and draft the first Workflow
 
-## 6. Restart safely
+Select **Workflow**. With an empty Project, select **Draft first Workflow with AI**
+or press `n`. FACTORY asks for a workflow name, then a guided brief covering:
 
-The app, PostgreSQL data, Vault state, workspace files, and artifacts are mounted
-as Compose volumes. Restart the control plane without losing authored files:
+- objective and trigger;
+- input contract and deterministic preparation;
+- the bounded agent responsibility;
+- any external action and approval boundary;
+- observable output and constraints.
 
-```bash
-docker compose restart app
+FACTORY produces a WorkUnit blueprint and a reviewable file proposal. This is the
+safe authoring lifecycle:
+
+```text
+intent → guided brief → WorkUnit blueprint → file proposal
+      → validation → approval → apply → immutable artifact
 ```
 
-Reload Workspace and the file tabs will be restored from the project workspace.
-Use `docker compose down` only when you want to stop the stack; omit `-v` to keep
-the persisted local data.
+Review the proposal. Press `v` to revalidate, `a` to approve, and `y` to apply. No
+Project files change before validation and explicit approval. `Esc` is global: it
+cancels a prompt and walks back toward Core.
 
-## Troubleshooting
+## 5. Connect the Workflow to a model
 
-- `GET /api/health` reports database, Vault, deployment reconciler, and exporter
-  health.
-- If a run is blocked, open **Problems** in the bottom panel and fix the source
-  or input diagnostic before retrying.
-- If Docker is not running, the Docker-gated Temporal and observability smoke
-  tests are intentionally skipped. Start Docker Desktop and run
-  `TEMPORAL_DOCKER_SMOKE=1 npm run test:temporal-smoke` or
-  `OTEL_DOCKER_SMOKE=1 npm run test:observability-smoke` when those boundaries
-  need verification.
+Agent YAML references the reusable Connection by name:
+
+```yaml
+model:
+  provider: openai-compatible
+  model: your-model-name
+  endpoint: https://provider.example/v1
+  secretRef: Connection/typesafe-ai
+```
+
+For an Ollama model, no Vault key is required:
+
+```yaml
+model:
+  provider: ollama
+  model: llama3.2
+  endpoint: http://host.docker.internal:11434
+```
+
+## 6. Validate, run, and observe
+
+From the Workflow view:
+
+- `v` validates and compiles an immutable artifact.
+- `p` starts a run from that artifact.
+- **Runs** shows the current execution list.
+- **Approvals** presents any waiting decisions.
+- **Portals → Observe** opens the correlated operational view.
+
+Observe is where a run’s logs, metrics, traces, status transitions, and durable
+operation evidence meet. Telemetry defaults to a 48-hour retention window; durable
+run evidence has its own configured retention policy.
+
+At this point the first loop is complete: it has a bounded authoring path, a
+compiled artifact, explicit execution, and evidence you can inspect.
+
+## Next
+
+Continue with [Operating FACTORY](./operating-factory.md) to add Projects and
+workflows, manage Connections, operate deployments, and use the optional browser
+views without making them the authoring dependency.

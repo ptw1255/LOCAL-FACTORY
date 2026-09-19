@@ -1,4 +1,7 @@
-# Workspace IDE wireframe
+# Optional browser workspace wireframe
+
+> This is a compatibility/visualization surface. The FACTORY Local terminal is the
+> primary authoring and operating experience; start with [Getting started](./onboarding.md).
 
 This is the interaction contract for the file-first Workspace. It is deliberately
 textual so it can be reviewed alongside the declarative resource model and kept

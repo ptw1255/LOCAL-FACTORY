@@ -14,6 +14,19 @@ or implement a change, execute tests, route to human review, and publish evidenc
 The implementation lives under [`src/`](src/). The product and factory roadmaps
 remain at the repository root and under [`FACTORY/`](FACTORY/).
 
+## Start here
+
+FACTORY has two intentional journeys:
+
+| Journey | Outcome | Guide |
+| --- | --- | --- |
+| **0 → 1** | Install FACTORY Local, add one reusable model Connection, create a Project, author, run, and observe a first workflow. | [Getting started](docs/onboarding.md) |
+| **N + 1** | Add further Projects and workflows without duplicating keys, operate runs and approvals, and manage local deployments. | [Operating FACTORY](docs/operating-factory.md) |
+
+Use `launch-factory` from any terminal after the one-time local installation. It
+starts the local stack and opens the terminal control plane. The browser dashboard
+is optional; FACTORY Local is terminal-first.
+
 ## Status
 
 The repository is an actively developed MVP. The current release includes a
@@ -42,12 +55,13 @@ Without Vault configuration, credential writes are rejected rather than persiste
 The repository includes a terminal-first CLI for managing, running, observing, and
 deploying the local Docker factory. The web dashboard remains an optional visual
 surface; the CLI is the primary control plane.
-Run it through npm, or link the package once to expose the `factory` command:
+Run it through npm during development. On the standard local installation, use the
+user-level `launch-factory` command from any directory:
 
 ```bash
 npm run factory --help
-npm link
-factory                         # start the stack and enter the terminal monitor
+launch-factory                  # start the stack and enter the terminal monitor
+npm run factory -- tui          # equivalent when working from this checkout
 factory status                  # show Docker service status
 factory build                   # build images without starting services
 factory deploy                  # build, start, and wait for health
@@ -62,21 +76,21 @@ factory project new "My project"
 factory workflow new "My workflow" --project <project-id>
 factory author propose <workflow-id> "Add an approval before publish" --project <project-id>
 factory author import proposal.json --project <project-id>
-factory secrets set openai --provider openai --project <project-id>
-factory secrets set typesafe-ai --provider openai-compatible --from-clipboard --project <project-id>
-factory secrets list --project <project-id>
-factory secrets test typesafe-ai --project <project-id>
-factory secrets remove typesafe-ai --project <project-id>
+factory secrets set openai --provider openai
+factory secrets set typesafe-ai --provider openai-compatible --from-clipboard
+factory secrets list
+factory secrets test typesafe-ai
+factory secrets remove typesafe-ai
 factory edit workflows/review.workflow.yaml  # edit a local resource with $EDITOR
 factory approve <run-id>        # approve a waiting run
 factory deny <run-id> "reason"  # deny a waiting run
 factory --no-web                # run a CLI-only stack without static dashboard serving
 ```
 
-The default `factory` command is the single-command launcher requested for local
-development. It starts the Compose stack, waits for `/api/health`, and enters the
-terminal monitor. Use `factory dashboard` for the terminal quick-launch selector, or
-`factory open` when you explicitly want the optional browser dashboard.
+`launch-factory` is the single-command launcher for local development. It starts the
+Compose stack, waits for `/api/health`, and enters the terminal monitor. Use
+`factory dashboard` for the terminal quick-launch selector, or `factory open` when
+you explicitly want the optional browser dashboard.
 `factory observe <run-id> --follow` streams a correlated run timeline;
 `factory tui` adds keyboard controls (`q` quit, `r` refresh, `a` approve first pending
 approval, `d` deny it). In CI or another non-interactive shell, the monitor prints one

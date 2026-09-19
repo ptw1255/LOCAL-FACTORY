@@ -1,4 +1,9 @@
-# IDE workspace state model
+# Optional browser workspace state model
+
+> FACTORY Local is terminal-first. This document describes the optional browser
+> projection; it is not required for the 0 → 1 or N + 1 operating journeys. See
+> [Getting started](./onboarding.md) and [Operating FACTORY](./operating-factory.md)
+> for the canonical terminal experience.
 
 The Workspace is a file-first authoring surface. YAML/JSON resource files are
 the source of truth; Canvas and Tree are projections of the same compiled
@@ -18,11 +23,13 @@ Workspace
 
 Observe     Runs | Logs | Traces | Metrics
 Deployments live / stopped / starting / degraded / failed
-Connections metadata, scopes, health, and Vault references
+Connections metadata, scopes, and health (never Vault references or values)
 ```
 
-`Workspace` is the canonical authoring route. `#/studio` remains a compatibility
-alias for existing links. `#/runtime` and `#/runs` resolve to `Observe`.
+Within the optional browser surface, `Workspace` is the file-authoring route.
+`#/studio` remains a compatibility alias for existing links. `#/runtime` and
+`#/runs` resolve to `Observe`; the terminal is still the canonical local control
+plane.
 
 ## Independent state machines
 
