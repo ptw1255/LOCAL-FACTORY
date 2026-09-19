@@ -119,6 +119,12 @@ export function validateDeliveryActionPlan(value: unknown): DeliveryActionPlan {
   const commit = commitValue as Record<string, unknown>;
   if (!Array.isArray(commit.paths) || commit.paths.length > 128) throw new Error('commit.paths is invalid.');
   const commitPaths = commit.paths.map((pathValue, index) => relativePath(pathValue, `commit.paths[${index}]`));
+  const commitPathSet = new Set(commitPaths);
+  for (const mutation of mutations) {
+    if (!commitPathSet.has(mutation.path) || (mutation.newPath !== undefined && !commitPathSet.has(mutation.newPath))) {
+      throw new Error(`commit.paths must include every delivery mutation path (${mutation.path}).`);
+    }
+  }
   const prValue = candidate.pullRequest;
   if (prValue === null || typeof prValue !== 'object') throw new Error('pullRequest is required.');
   const pr = prValue as Record<string, unknown>;
