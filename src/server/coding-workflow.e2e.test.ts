@@ -183,6 +183,84 @@ describe('coding workflow API', () => {
     } finally { await app.close(); }
   });
 
+  it('observes an issue-bound action plan through mutation, PR, CI, review, and merge', async () => {
+    const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-e2e-issue-merge-'));
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: repoRoot });
+    await execFileAsync('git', ['config', 'user.email', 'factory@example.test'], { cwd: repoRoot });
+    await execFileAsync('git', ['config', 'user.name', 'Factory Test'], { cwd: repoRoot });
+    await writeFile(path.join(repoRoot, 'README.md'), 'source');
+    await writeFile(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'coding-fixture', scripts: { test: `node -e "process.stdout.write('fixture-test-ok')"` } }));
+    await execFileAsync('git', ['add', 'README.md'], { cwd: repoRoot });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repoRoot });
+    const baseRevision = await new Promise<string>((resolve, reject) => execFile('git', ['rev-parse', 'HEAD'], { cwd: repoRoot }, (error, stdout) => error === null ? resolve(stdout.trim()) : reject(error)));
+    const repositoryWorkspace = await RepositoryWorkspace.open(repoRoot);
+    const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'factory-e2e-issue-merge-state-'));
+    const store = new JsonStore(path.join(dataRoot, 'state.json'));
+    const github = {
+      createIssue: vi.fn().mockResolvedValue({ number: 101, title: 'Child task', state: 'open', url: 'https://github.com/example/repo/issues/101' }),
+      createOrGetPullRequest: vi.fn().mockResolvedValue({ number: 202, url: 'https://github.com/example/repo/pull/202', head: 'factory/issue-42', base: 'main', state: 'open' }),
+      waitForChecks: vi.fn().mockResolvedValue({ ref: 'commit-202', status: 'success', checks: [{ name: 'test', status: 'completed', conclusion: 'success' }], required: ['test'], failures: [] }),
+      waitForPullRequestStatus: vi.fn().mockResolvedValue({ number: 202, state: 'open', status: 'approved', approvals: 1, changesRequested: 0, requiredApprovals: 1, reviews: [] }),
+      mergePullRequest: vi.fn().mockResolvedValue({ number: 202, merged: true, sha: 'merge-202', message: 'merged' }),
+    } as unknown as GitHubRepositoryClient;
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-issue-merge-e2e';
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'issue', type: 'repositoryIssue', label: 'Create linked task', position: { x: 180, y: 0 }, config: { operation: 'create', parentIssueNumber: 42, title: 'Child task', body: 'Implement the issue.' }, unit: defaultWorkUnit('repositoryIssue') },
+      { id: 'mutate', type: 'repositoryMutation', label: 'Apply plan', position: { x: 360, y: 0 }, config: { capabilities: ['repository.write'], requiresApproval: true, deliveryActionPlan: '{{plan}}' }, unit: defaultWorkUnit('repositoryMutation') },
+      { id: 'check', type: 'repositoryCheck', label: 'Run checks', position: { x: 540, y: 0 }, config: { command: 'npm test' }, unit: defaultWorkUnit('repositoryCheck') },
+      { id: 'branch', type: 'repositoryBranch', label: 'Branch', position: { x: 720, y: 0 }, config: { requiresApproval: true, branch: '{{plan.branch.name}}', baseRevision: '{{plan.repository.baseRevision}}' }, unit: defaultWorkUnit('repositoryBranch') },
+      { id: 'commit', type: 'repositoryCommit', label: 'Commit', position: { x: 900, y: 0 }, config: { requiresApproval: true, message: '{{plan.commit.message}}', paths: '{{plan.commit.paths}}' }, unit: defaultWorkUnit('repositoryCommit') },
+      { id: 'pr', type: 'repositoryPullRequest', label: 'Open PR', position: { x: 1080, y: 0 }, config: { requiresApproval: true, title: '{{plan.pullRequest.title}}', body: '{{plan.pullRequest.body}}', head: '{{plan.branch.name}}', base: '{{plan.pullRequest.base}}' }, unit: defaultWorkUnit('repositoryPullRequest') },
+      { id: 'ci', type: 'repositoryCi', label: 'Observe CI', position: { x: 1260, y: 0 }, config: { required: ['test'], timeoutMs: 500, intervalMs: 10 }, unit: defaultWorkUnit('repositoryCi') },
+      { id: 'review', type: 'repositoryReview', label: 'Observe review', position: { x: 1440, y: 0 }, config: { number: 202, requiredApprovals: 1, timeoutMs: 500, intervalMs: 10 }, unit: defaultWorkUnit('repositoryReview') },
+      { id: 'merge', type: 'repositoryMerge', label: 'Merge', position: { x: 1620, y: 0 }, config: { number: 202, method: 'squash', requiresApproval: true }, unit: defaultWorkUnit('repositoryMerge') },
+      { id: 'output', type: 'output', label: 'Complete', position: { x: 1800, y: 0 }, config: { value: 'merged' }, unit: defaultWorkUnit('output') },
+    ];
+    workflow.edges = workflow.nodes.slice(0, -1).map((node, index) => ({ id: `edge-${node.id}-${workflow.nodes[index + 1]?.id}`, source: node.id, target: workflow.nodes[index + 1]?.id ?? node.id }));
+    await store.mutate((state) => { state.workflows.push(workflow); state.workflowVersions.push(structuredClone(workflow)); });
+    const app = await createApp({ store, repositoryWorkspace, githubRepository: github, serveStatic: false });
+    const deliveryActionPlan = {
+      version: 1,
+      issue: { number: 42, title: 'Parent issue', repository: 'example/repo' },
+      repository: { owner: 'example', name: 'repo', baseRevision },
+      tasks: [{ id: 'implement', title: 'Implement the issue' }],
+      mutations: [{ operation: 'replace', path: 'README.md', content: 'generated' }],
+      checks: ['npm test'],
+      branch: { name: 'factory/issue-42' },
+      commit: { message: 'Implement issue 42', paths: ['README.md'] },
+      pullRequest: { title: 'Implement issue 42', body: 'What: update README\nWhy: resolve issue 42', base: 'main' },
+      source: { agentId: 'luna-executor', model: 'gpt-5.6-luna', artifactId: 'artifact-42' },
+      policyVersion: 'delivery-v1',
+    };
+    try {
+      const started = await app.inject({ method: 'POST', url: `/api/workflows/${workflow.id}/runs`, payload: { input: { deliveryActionPlan } } });
+      expect(started.statusCode).toBe(200);
+      const runId = (started.json() as { id: string }).id;
+      let terminal: Record<string, unknown> | undefined;
+      for (let attempt = 0; attempt < 160; attempt += 1) {
+        const current = await app.inject({ method: 'GET', url: `/api/runs/${runId}` }).then((response) => response.json() as Record<string, unknown>);
+        if (current.status === 'waiting') {
+          expect((await app.inject({ method: 'POST', url: `/api/runs/${runId}/approve`, payload: {} })).statusCode).toBe(200);
+        } else if (current.status === 'succeeded' || current.status === 'failed') { terminal = current; break; }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(terminal?.status).toBe('succeeded');
+      const evidence = await app.inject({ method: 'GET', url: `/api/evidence?runId=${runId}` });
+      const items = (evidence.json() as { items: Array<{ unitId: string; operation: string; status: string; metadata?: Record<string, unknown> }> }).items;
+      for (const unitId of ['delivery-plan', 'issue', 'mutate', 'check', 'branch', 'commit', 'pr', 'ci', 'review', 'merge']) {
+        expect(items.some((entry) => entry.unitId === unitId && entry.status === 'succeeded')).toBe(true);
+      }
+      expect(items.find((entry) => entry.unitId === 'delivery-plan')?.metadata).toEqual(expect.objectContaining({ 'delivery.issue.number': 42, 'delivery.source.model': 'gpt-5.6-luna' }));
+      expect(github.createIssue).toHaveBeenCalled();
+      expect(github.mergePullRequest).toHaveBeenCalledWith(expect.objectContaining({ number: 202, method: 'squash' }));
+    } finally {
+      await app.close();
+    }
+  });
+
   it('routes a failed required CI result into a bounded remediation branch', async () => {
     const githubFetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ check_runs: [{ name: 'test', status: 'completed', conclusion: 'failure', html_url: 'https://github.com/example/repo/actions/runs/3', output: { text: 'test failed' } }] }), { status: 200 }))
