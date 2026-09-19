@@ -21,6 +21,7 @@ import { RepositoryCiError, RepositoryMergeError, RepositoryReviewError, type Gi
 import type { OpenAIClient, OpenAIModelResult } from './openai.js';
 import { evaluatePolicy, PolicyDeniedError } from '../domain/policy.js';
 import { bindWorkflowNode, deliveryActionPlanHash, validateDeliveryActionPlan } from './delivery-action-plan.js';
+import { agentControlEnvelopeHash, createAgentControlEnvelope, validateAgentControlEnvelope } from './control-envelope.js';
 
 const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
@@ -1274,6 +1275,37 @@ export class LocalWorkflowExecutor {
     if (agent === undefined) {
       throw new Error('Agent loop references a missing agent definition.');
     }
+    const controlEnvelope = await this.store.read((state) => {
+      const run = state.runs.find((candidate) => candidate.id === runId);
+      return createAgentControlEnvelope({ runId, node, agent, context: { input: run?.input, outputs: run?.unitOutputs, workflowVersion: run?.workflowVersion } });
+    });
+    const validatedControlEnvelope = validateAgentControlEnvelope(controlEnvelope);
+    const controlHash = agentControlEnvelopeHash(validatedControlEnvelope);
+    await this.events.recordEvidence({
+      runId,
+      unitId: node.id,
+      operation: 'agent.control',
+      idempotencyKey: `run:${runId}:unit:${node.id}:control:${controlHash}`,
+      source: 'control-envelope',
+      status: 'succeeded',
+      metadata: {
+        'agent.control.hash': controlHash,
+        'agent.control.version': validatedControlEnvelope.version,
+        'agent.control.context_hash': validatedControlEnvelope.contextHash,
+        'agent.control.tools': validatedControlEnvelope.allowedTools.join(','),
+        'agent.control.evidence_mode': validatedControlEnvelope.evidence.mode,
+      },
+    });
+    await this.events.emit(runId, 'agent.control.bound', `Agent ${agent.id} control envelope bound.`, {
+      nodeId: node.id,
+      signal: 'trace',
+      spanKind: 'agent',
+      attributes: {
+        'openinference.span.kind': 'AGENT',
+        'agent.control.hash': controlHash,
+        'agent.control.context_hash': validatedControlEnvelope.contextHash,
+      },
+    });
     const maxIterations =
       typeof node.config.maxIterations === 'number'
         ? Math.min(node.config.maxIterations, agent.limits.maxIterations)
