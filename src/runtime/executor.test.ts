@@ -71,6 +71,24 @@ describe('LocalWorkflowExecutor', () => {
     );
   });
 
+  it('intakes an issue and creates a linked task through an auditable WorkUnit', async () => {
+    const workflow = structuredClone(seedWorkflow);
+    workflow.id = 'workflow-issue-intake';
+    workflow.agents = [];
+    workflow.nodes = [
+      { id: 'trigger', type: 'manualTrigger', label: 'Start', position: { x: 0, y: 0 }, config: {}, unit: defaultWorkUnit('manualTrigger') },
+      { id: 'issue', type: 'repositoryIssue', label: 'Create linked task', position: { x: 180, y: 0 }, config: { operation: 'create', parentIssueNumber: 42, title: 'Child task', body: 'Implement the next step.', labels: ['factory'] }, unit: defaultWorkUnit('repositoryIssue') },
+      { id: 'output', type: 'output', label: 'Complete', position: { x: 360, y: 0 }, config: { value: 'done' }, unit: defaultWorkUnit('output') },
+    ];
+    workflow.edges = [{ id: 'trigger-issue', source: 'trigger', target: 'issue' }, { id: 'issue-output', source: 'issue', target: 'output' }];
+    const github = { createIssue: vi.fn().mockResolvedValue({ number: 43, title: 'Child task', state: 'open', url: 'https://github.com/example/repo/issues/43' }) } as unknown as GitHubRepositoryClient;
+    const issueExecutor = new LocalWorkflowExecutor(store, events, undefined, undefined, undefined, github);
+    const run = await issueExecutor.start(workflow);
+    await waitFor(async () => (await store.read((state) => state.runs.find((candidate) => candidate.id === run.id)?.status)) === 'succeeded');
+    expect(github.createIssue).toHaveBeenCalledWith(expect.objectContaining({ title: 'Child task', body: expect.stringContaining('Parent issue: #42') }));
+    expect((await events.listEvidence(run.id)).find((entry) => entry.unitId === 'issue' && entry.status === 'succeeded')?.metadata).toEqual(expect.objectContaining({ 'issue.number': 43, 'issue.state': 'open' }));
+  });
+
   it('validates and propagates a workflow input through the trigger', async () => {
     const workflow = structuredClone(seedWorkflow);
     workflow.id = 'workflow-input-contract';

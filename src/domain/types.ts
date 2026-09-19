@@ -229,6 +229,8 @@ export interface RunRecord {
   /** Initial trigger payload retained so a recovered run can resume deterministically. */
   input?: unknown;
   inputHash?: string;
+  /** Hash of the validated issue-to-delivery action plan, when one is bound. */
+  deliveryActionPlanHash?: string;
   /** Source run when this execution was created by deterministic replay. */
   replayOfRunId?: string;
   /** Client-supplied key making a retry request idempotent for one source run. */
