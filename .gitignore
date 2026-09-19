@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-server/
 .data/
+/projects/
 *.log
 .DS_Store
 coverage/

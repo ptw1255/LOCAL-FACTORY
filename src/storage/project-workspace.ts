@@ -7,6 +7,8 @@ import type { DeletedProjectFileRecord, ProjectDirectoryRecord, ProjectFileRecor
 export interface ProjectWorkspaceScope {
   tenantId: string;
   projectId: string;
+  /** When set, store this project directly under the workspace root. */
+  workspaceSlug?: string;
 }
 
 export interface ProjectWorkspaceListing {
@@ -212,6 +214,14 @@ export class ProjectWorkspace {
     await mkdir(this.root, { recursive: true });
     const rootDetails = await lstat(this.root);
     if (rootDetails.isSymbolicLink() || !rootDetails.isDirectory()) throw new Error('Project workspace root must be a directory without symlinks.');
+    if (scope.workspaceSlug !== undefined) {
+      this.validateScopePart(scope.workspaceSlug, 'project');
+      const projectRoot = path.join(this.root, scope.workspaceSlug);
+      await mkdir(projectRoot, { recursive: true });
+      const projectDetails = await lstat(projectRoot);
+      if (projectDetails.isSymbolicLink() || !projectDetails.isDirectory()) throw new Error('Project workspace scope must be a directory without symlinks.');
+      return projectRoot;
+    }
     const tenantRoot = path.join(this.root, scope.tenantId);
     await mkdir(tenantRoot, { recursive: true });
     const tenantDetails = await lstat(tenantRoot);

@@ -25,6 +25,7 @@ export interface ProjectRecord {
   name: string;
   description: string;
   createdAt: string;
+  workspaceSlug?: string;
 }
 
 export interface ProjectFileRecord {

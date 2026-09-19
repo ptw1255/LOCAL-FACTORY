@@ -610,7 +610,7 @@ describe('platform API', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'factory-api-migration-rollback-'));
     const projectWorkspace = new ProjectWorkspace(root);
     app = await createApp({ store, projectWorkspace, serveStatic: false });
-    const scope = { tenantId: 'tenant-local', projectId: 'project-local' };
+    const scope = { tenantId: 'tenant-local', projectId: 'project-local', workspaceSlug: 'default-loop' };
     const headers = { 'x-tenant-id': scope.tenantId, 'x-project-id': scope.projectId };
     // The sorted migration plan writes several resources before workflows; a
     // conflicting directory at the workflow path forces a deterministic write

@@ -2,6 +2,7 @@ node_modules
 dist
 dist-server
 .data
+projects
 .git
 .DS_Store
 npm-debug.log*

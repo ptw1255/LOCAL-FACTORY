@@ -10,7 +10,12 @@ services:
       # Compose is the local-development surface; production can opt back in.
       FACTORY_AUTH_MODE: ${FACTORY_AUTH_MODE:-local}
       DATABASE_URL: postgresql://factory:factory@postgres:5432/factory
-      WORKSPACE_ROOT: /app/.data/workspaces
+      # Project sources are intentionally host-visible and never included in
+      # the image or this repository's Git history.
+      WORKSPACE_ROOT: /app/projects
+      # Existing named-volume workspaces are copied into /app/projects on
+      # first access, preserving upgrades from earlier FACTORY releases.
+      LEGACY_WORKSPACE_ROOT: /app/.data/workspaces
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: dev-only-token
       OBSERVABILITY_RETENTION_HOURS: 48
@@ -51,6 +56,7 @@ services:
       timeout: 5s
       retries: 5
     volumes:
+      - ./projects:/app/projects
       - app_data:/app/.data
       - artifact_data:/app/.data/artifacts
     extra_hosts:

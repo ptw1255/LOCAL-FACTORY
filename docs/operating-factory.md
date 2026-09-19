@@ -168,5 +168,8 @@ npm run check              # typecheck, tests, and production web build
 ```
 
 Do not use `docker compose down -v` unless you intentionally want to erase local
-Postgres, Vault, and workspace data. Keep provider keys local and use Git for
+Postgres, Vault, and workspace data. Project source files are host-visible under
+`~/agent-factory/projects/<project-slug>/` and are intentionally ignored by the
+FACTORY repository; initialize Git inside an individual project if you want to version
+that project's declarative resources. Keep provider keys local and use Git for
 declarative resources, policies, tests, and documentation only.

@@ -25,6 +25,8 @@ export interface ProjectRecord {
   name: string;
   description: string;
   createdAt: string;
+  /** Stable, human-readable directory name under the local projects root. */
+  workspaceSlug?: string;
 }
 
 export interface ProjectFileRecord {

@@ -572,11 +572,14 @@ The control plane polls persisted deployments every 30 seconds and reconciles de
 versus observed state even when no browser is open. Override the interval for local
 testing with `DEPLOYMENT_RECONCILE_INTERVAL_MS`; the value must be a positive number.
 
-Compose sets `WORKSPACE_ROOT=/app/.data/workspaces`. Authored Project files and empty
-directories are stored in that durable workspace volume rather than in PostgreSQL
-control-plane state; compiled artifacts, runs, deployments, evidence, and telemetry
-remain in their dedicated stores. Project paths are tenant/project scoped and
-symlinks are rejected so a mounted source directory cannot escape its Project boundary.
+Compose bind-mounts `./projects` into the application. Each Project gets a stable,
+human-readable local folder, such as `~/agent-factory/projects/minorrez/`; authored
+files and empty directories live there rather than in PostgreSQL control-plane state.
+The folder is ignored by the FACTORY repository's Git history and Docker build context,
+so local projects and any working files stay on the developer machine. Compiled
+artifacts, runs, deployments, evidence, and telemetry remain in their dedicated
+stores. Existing named-volume workspaces migrate into this folder on first access.
+Symlinks are rejected so a project source directory cannot escape its boundary.
 
 Compose also starts a local Vault development server on port `8200`. Connection API
 keys are written to Vault and represented in PostgreSQL only by an opaque reference.
