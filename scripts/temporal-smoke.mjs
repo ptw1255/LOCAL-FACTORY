@@ -61,6 +61,10 @@ let originalWorkflow;
 let smokeFailed = false;
 try {
   compose('up', '-d', '--build');
+  // The app can become healthy before the search-attribute sidecar finishes.
+  // Wait for that declarative setup job before the first Temporal start so a
+  // fresh namespace cannot reject the workflow's visibility fields.
+  compose('wait', 'temporal-search-attributes');
   await waitFor('http://localhost:3100/api/health', async (response) => response.ok && (await response.json()).executionEngine === 'temporal');
   originalWorkflow = await json('http://localhost:3100/api/workflows/workflow-agent-intake', { headers: scopeHeaders });
   const workflow = {
