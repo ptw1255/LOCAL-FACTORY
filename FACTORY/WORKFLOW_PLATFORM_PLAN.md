@@ -116,7 +116,7 @@ agent-led development environment:
   metadata, and audit indices.
 - Temporal persistence for durable execution state.
 - Object storage for artifacts and large payloads.
-- OpenTelemetry-compatible telemetry backend for traces, logs, and metrics.
+- OpenTelemetry-compatible telemetry backend for compact logs and metrics (trace export deferred).
 - Optional pluggable retrieval store for agent memory, kept separate from the
   workflow source of truth.
 

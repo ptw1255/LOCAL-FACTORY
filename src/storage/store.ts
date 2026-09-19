@@ -6,6 +6,13 @@ export const DEFAULT_PROJECT_ID = 'project-local';
 
 export type StateMutation<T> = (state: PlatformState) => T | Promise<T>;
 
+export interface EventListOptions {
+  /** Maximum number of rows to return. Omit for internal, unbounded reads. */
+  limit?: number;
+  /** Return rows older than this timestamp when paging backwards. */
+  before?: string;
+}
+
 /** Storage contract shared by the JSON development adapter and PostgreSQL. */
 export interface PlatformStore {
   read<T>(select: (state: PlatformState) => T): Promise<T>;
@@ -13,7 +20,7 @@ export interface PlatformStore {
   /** Apply a state transition and append its lifecycle event in one store operation. */
   mutateAndAppendEvent?<T>(mutation: StateMutation<{ value: T; event?: RunEvent }>): Promise<{ value: T; eventAppended: boolean }>;
   appendEvent(event: RunEvent): Promise<void>;
-  listEvents(runId?: string): Promise<RunEvent[]>;
+  listEvents(runId?: string, options?: EventListOptions): Promise<RunEvent[]>;
   appendEvidence(evidence: OperationEvidence): Promise<void>;
   /** Append an immutable compiled artifact when the backing store supports a dedicated artifact table. */
   appendArtifact?(artifact: ArtifactRecord): Promise<void>;

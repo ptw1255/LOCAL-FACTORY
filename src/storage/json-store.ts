@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { createSeedState } from '../domain/seed.js';
 import type { EvidenceQuery, OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
-import { normalizePlatformState, type PlatformStore, type StateMutation } from './store.js';
+import { normalizePlatformState, type EventListOptions, type PlatformStore, type StateMutation } from './store.js';
 
 export class JsonStore implements PlatformStore {
   private state: PlatformState | undefined;
@@ -106,12 +106,13 @@ export class JsonStore implements PlatformStore {
     });
   }
 
-  public listEvents(runId?: string): Promise<RunEvent[]> {
+  public listEvents(runId?: string, options: EventListOptions = {}): Promise<RunEvent[]> {
     return this.read((state) =>
       state.events
         .filter((event) => runId === undefined || event.runId === runId)
+        .filter((event) => options.before === undefined || event.timestamp < options.before)
         .sort((left, right) => left.timestamp.localeCompare(right.timestamp)),
-    );
+    ).then((events) => options.limit === undefined ? events : events.slice(Math.max(0, events.length - Math.max(1, options.limit))));
   }
 
   private async load(): Promise<PlatformState> {

@@ -2205,13 +2205,13 @@ function RunsView() {
   const [workflowFilter, setWorkflowFilter] = useState(() => readObserveQueryValue('workflowId') ?? window.sessionStorage.getItem('factory.observeWorkflowFilter') ?? 'all');
   const [environmentFilter, setEnvironmentFilter] = useState(() => readObserveQueryValue('environment') ?? window.sessionStorage.getItem('factory.observeEnvironmentFilter') ?? 'all');
   const [artifactFilter, setArtifactFilter] = useState('all');
-  const [timeFilterHours, setTimeFilterHours] = useState(48);
+  const [timeFilterHours, setTimeFilterHours] = useState(12);
   const [observeTab, setObserveTab] = useState<ObserveTab>('runs');
-  const [retentionHours, setRetentionHours] = useState(48);
+  const [retentionHours, setRetentionHours] = useState(12);
   const [evidenceRetentionHours, setEvidenceRetentionHours] = useState<number | null>(null);
   const [phoenixUiUrl, setPhoenixUiUrl] = useState<string | null>(null);
   const [exporterHealth, setExporterHealth] = useState<{ status: 'healthy' | 'degraded'; failureCount: number; lastErrorAt?: string; lastSuccessAt?: string } | null>(null);
-  const observeTabs = ['runs', 'logs', 'traces', 'metrics'] as const;
+  const observeTabs = ['runs', 'logs', 'metrics'] as const;
   const projectId = window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? 'project-local';
 
   function handleObserveTabKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, tab: ObserveTab): void {
@@ -2233,7 +2233,7 @@ function RunsView() {
       setRuns(sorted);
       setSelectedRunId((current) => retainSelection(sorted, current));
       setRetentionHours(health.observability.retentionHours);
-      setTimeFilterHours((current) => current === 48 ? health.observability.retentionHours : current);
+      setTimeFilterHours((current) => current === 12 ? health.observability.retentionHours : current);
       setEvidenceRetentionHours(health.observability.evidenceRetentionHours);
       setPhoenixUiUrl(health.observability.phoenixConfigured ? health.observability.phoenixUiUrl : null);
       setExporterHealth(health.observability.exporterHealth);
@@ -2345,7 +2345,7 @@ function RunsView() {
   const totalCost = runs.reduce((sum, run) => sum + run.costUsd, 0);
   const visibleEvents = observeTab === 'runs'
     ? events
-    : events.filter((event) => event.signal === (observeTab === 'logs' ? 'log' : observeTab === 'traces' ? 'trace' : 'metric'));
+    : events.filter((event) => event.signal === (observeTab === 'logs' ? 'log' : 'metric'));
   const eventBySpanId = new Map(events.map((event) => [event.spanId, event]));
   const eventDepth = new Map<string, number>();
   const depthFor = (event: RunEvent, seen = new Set<string>()): number => {
@@ -2444,7 +2444,7 @@ function RunsView() {
               </select>
               <select aria-label="Filter by time window" onChange={(event) => setTimeFilterHours(Number(event.target.value))} value={timeFilterHours}>
                 <option value={24}>Last 24 hours</option>
-                <option value={48}>Last 48 hours</option>
+                <option value={12}>Last 12 hours</option>
                 <option value={0}>All retained runs</option>
               </select>
               <select aria-label="Filter by status" onChange={(event) => setStatusFilter(event.target.value)} value={statusFilter}>

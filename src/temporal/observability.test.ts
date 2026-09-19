@@ -31,7 +31,7 @@ function lifecycle(overrides: Partial<TemporalActivityLifecycle> = {}): Temporal
 }
 
 describe('PlatformTemporalObservabilitySink', () => {
-  it('persists correlated evidence and telemetry with retry-safe IDs', async () => {
+  it('persists correlated evidence while keeping successful runs out of telemetry', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-observability-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
     const sink = new PlatformTemporalObservabilitySink(store);
@@ -52,18 +52,7 @@ describe('PlatformTemporalObservabilitySink', () => {
       outputHash: record.outputHash,
       correlationId: record.traceId,
     }));
-    expect(events).toHaveLength(1);
-    expect(events[0]).toEqual(expect.objectContaining({
-      type: 'unit.succeeded',
-      signal: 'trace',
-      traceId: record.traceId,
-      spanId: record.spanId,
-      attributes: expect.objectContaining({
-        'runtime.engine': 'temporal',
-        'run.id': record.runId,
-        'unit.id': record.nodeId,
-      }),
-    }));
+    expect(events).toHaveLength(0);
   });
 
   it('retains bounded failure details without storing payloads', async () => {
@@ -75,6 +64,7 @@ describe('PlatformTemporalObservabilitySink', () => {
     const evidence = await store.listEvidence('run-temporal');
     const events = await store.listEvents('run-temporal');
     expect(evidence[0]?.error).toHaveLength(2_000);
+    expect(events[0]).toEqual(expect.objectContaining({ type: 'run.failed', signal: 'log', severityText: 'ERROR' }));
     expect(events[0]?.data).toEqual({ error: 'x'.repeat(2_000) });
     expect(JSON.stringify(evidence)).not.toContain('payload');
   });
@@ -92,7 +82,7 @@ describe('PlatformTemporalObservabilitySink', () => {
     await sink.record(retry);
 
     expect(await store.listEvidence(first.runId)).toHaveLength(2);
-    expect(await store.listEvents(first.runId)).toHaveLength(2);
+    expect(await store.listEvents(first.runId)).toHaveLength(0);
     expect((await store.listEvidence(first.runId)).map((entry) => entry.attempt)).toEqual([1, 2]);
   });
 
@@ -103,8 +93,7 @@ describe('PlatformTemporalObservabilitySink', () => {
     await sink.record(lifecycle({ nodeId: 'parent', spanId: 'p'.repeat(16) }));
     await sink.record(lifecycle({ nodeId: 'child', spanId: 'c'.repeat(16), parentSpanId: 'p'.repeat(16), idempotencyKey: 'run-temporal:temporal:child:3' }));
 
-    const events = await store.listEvents('run-temporal');
-    expect(events.find((event) => event.nodeId === 'child')).toEqual(expect.objectContaining({ parentSpanId: 'p'.repeat(16) }));
+    expect(await store.listEvents('run-temporal')).toHaveLength(0);
   });
 
   it('links workflow and agent release identity into Temporal evidence and telemetry', async () => {
@@ -113,8 +102,7 @@ describe('PlatformTemporalObservabilitySink', () => {
     const sink = new PlatformTemporalObservabilitySink(store);
     await sink.record(lifecycle({ workflowId: 'workflow-release', workflowVersion: 4, releaseBundleHash: 'sha256:release', pinnedAgentVersions: { planner: 2 } }));
     const evidence = (await store.listEvidence('run-temporal'))[0];
-    const event = (await store.listEvents('run-temporal'))[0];
     expect(evidence?.metadata).toEqual(expect.objectContaining({ 'workflow.id': 'workflow-release', 'workflow.version': 4, 'release.bundle.hash': 'sha256:release', 'agent.versions': JSON.stringify({ planner: 2 }) }));
-    expect(event?.attributes).toEqual(expect.objectContaining({ 'workflow.id': 'workflow-release', 'workflow.version': 4, 'release.bundle.hash': 'sha256:release' }));
+    expect(await store.listEvents('run-temporal')).toHaveLength(0);
   });
 });

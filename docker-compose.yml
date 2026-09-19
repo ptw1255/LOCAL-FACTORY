@@ -18,7 +18,7 @@ services:
       LEGACY_WORKSPACE_ROOT: /app/.data/workspaces
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: dev-only-token
-      OBSERVABILITY_RETENTION_HOURS: 48
+      OBSERVABILITY_RETENTION_HOURS: 12
       # Ollama normally runs on the host during local development. Override with
       # OLLAMA_BASE_URL=http://ollama:11434 when using the optional Compose service.
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
@@ -50,6 +50,7 @@ services:
       vault:
         condition: service_healthy
     restart: unless-stopped
+    mem_limit: 512m
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3100/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
@@ -77,6 +78,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 1g
 
   vault:
     image: hashicorp/vault:1.20
@@ -90,13 +92,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 512m
 
   phoenix:
     image: arizephoenix/phoenix:latest
     profiles: ["observability"]
     environment:
-      # Phoenix retention is expressed in days; two days matches the factory's 48-hour policy.
-      PHOENIX_DEFAULT_RETENTION_POLICY_DAYS: 2
+      # Phoenix accepts whole-day retention only. The factory's local store and
+      # OTLP exporter enforce the authoritative 12-hour policy; this optional
+      # backend uses its minimum supported one-day setting.
+      PHOENIX_DEFAULT_RETENTION_POLICY_DAYS: 1
       PHOENIX_ALLOW_EXTERNAL_RESOURCES: "false"
     ports:
       - "6006:6006"
@@ -104,6 +109,7 @@ services:
     volumes:
       - phoenix_data:/root/.phoenix
     restart: unless-stopped
+    mem_limit: 512m
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.123.0
@@ -117,6 +123,7 @@ services:
       phoenix:
         condition: service_started
     restart: unless-stopped
+    mem_limit: 192m
 
   # A Phoenix-free Collector boundary for teams that already operate an OTLP
   # backend. Enable this profile independently and point the app at
@@ -135,6 +142,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    mem_limit: 192m
 
   ollama:
     image: ollama/ollama:latest
@@ -144,6 +152,7 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
+    # Model memory is workload-dependent; leave this opt-in service uncapped.
 
   temporal:
     image: temporalio/auto-setup:1.22.4
@@ -163,6 +172,7 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    mem_limit: 768m
 
   temporal-search-attributes:
     image: temporalio/auto-setup:1.22.4
@@ -176,6 +186,7 @@ services:
     depends_on:
       temporal:
         condition: service_started
+    mem_limit: 256m
 
   temporal-worker:
     build: .
@@ -219,6 +230,7 @@ services:
       # In production, mount a read-only secret volume at /run/secrets/temporal
       # and point the *_FILE variables above at its files.
     restart: unless-stopped
+    mem_limit: 512m
 
 volumes:
   app_data:

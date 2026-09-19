@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type { AgentSpanKind, EvidenceQuery, OperationEvidence, OperationEvidenceStatus, RunEvent } from '../domain/types.js';
 import type { ArtifactStore } from '../storage/artifact-store.js';
-import type { PlatformStore, StateMutation } from '../storage/store.js';
+import type { EventListOptions, PlatformStore, StateMutation } from '../storage/store.js';
 import type { TelemetryExporter, TelemetryExporterHealth } from './otlp-exporter.js';
 import { telemetryAttributes, telemetryResource } from './semconv.js';
 import { activeOtelSpanContext, validSpanContext, withOtelSpanContext } from './otel-context.js';
@@ -20,20 +20,26 @@ export interface EventOptions {
   attributes?: Record<string, string | number | boolean>;
 }
 
+const terminalRunEvents = new Set(['run.succeeded', 'run.completed', 'run.failed', 'run.timed_out', 'run.cancelled']);
+
+type EventBuild = { event: RunEvent; isRun: boolean };
+
 export class EventService {
   private readonly retentionHours: number;
   private readonly evidenceRetentionHours: number | undefined;
   private readonly artifactStore: ArtifactStore | undefined;
   private readonly inlineDataBytes: number;
+  private readonly compactRuns: boolean;
 
   public constructor(
     private readonly store: PlatformStore,
-    options: { retentionHours?: number; evidenceRetentionHours?: number; exporter?: TelemetryExporter; artifactStore?: ArtifactStore; inlineDataBytes?: number } = {},
+    options: { retentionHours?: number; evidenceRetentionHours?: number; exporter?: TelemetryExporter; artifactStore?: ArtifactStore; inlineDataBytes?: number; compactRuns?: boolean } = {},
   ) {
-    this.retentionHours = options.retentionHours ?? 48;
+    this.retentionHours = options.retentionHours ?? 12;
     this.evidenceRetentionHours = options.evidenceRetentionHours;
     this.artifactStore = options.artifactStore;
     this.inlineDataBytes = Math.max(1_024, options.inlineDataBytes ?? 64 * 1_024);
+    this.compactRuns = options.compactRuns ?? true;
     this.exporter = options.exporter;
   }
 
@@ -45,12 +51,12 @@ export class EventService {
     message: string,
     options: EventOptions = {},
   ): Promise<RunEvent> {
-    const event = await this.createEvent(runId, type, message, options);
-    await withOtelSpanContext(validSpanContext(event.traceId, event.spanId), async () => {
-      await this.store.appendEvent(event);
-      this.exportEvent(event);
+    const built = await this.createEvent(runId, type, message, options);
+    await withOtelSpanContext(validSpanContext(built.event.traceId, built.event.spanId), async () => {
+      if (this.shouldPersist(built)) await this.store.appendEvent(built.event);
+      if (this.shouldExport(built)) this.exportEvent(built.event);
     });
-    return event;
+    return built.event;
   }
 
   /** Apply a state transition and publish its lifecycle event atomically when the store supports it. */
@@ -61,24 +67,24 @@ export class EventService {
     mutation: StateMutation<{ value: T; emit?: boolean }>,
     options: EventOptions = {},
   ): Promise<T> {
-    const event = await this.createEvent(runId, type, message, options);
+    const built = await this.createEvent(runId, type, message, options);
     if (this.store.mutateAndAppendEvent !== undefined) {
       const result = await this.store.mutateAndAppendEvent(async (state) => {
         const outcome = await mutation(state);
-        return { value: outcome.value, ...(outcome.emit === false ? {} : { event }) };
+        return { value: outcome.value, ...(outcome.emit === false || !this.shouldPersist(built) ? {} : { event: built.event }) };
       });
-      if (result.eventAppended) this.exportEvent(event);
+      if (result.eventAppended && this.shouldExport(built)) this.exportEvent(built.event);
       return result.value;
     }
     const outcome = await this.store.mutate(mutation);
-    if (outcome.emit !== false) {
-      await this.store.appendEvent(event);
-      this.exportEvent(event);
+    if (outcome.emit !== false && this.shouldPersist(built)) {
+      await this.store.appendEvent(built.event);
+      if (this.shouldExport(built)) this.exportEvent(built.event);
     }
     return outcome.value;
   }
 
-  private async createEvent(runId: string, type: string, message: string, options: EventOptions): Promise<RunEvent> {
+  private async createEvent(runId: string, type: string, message: string, options: EventOptions): Promise<EventBuild> {
     const active = activeOtelSpanContext();
     const runContext = await this.store.read((state) => {
       const run = state.runs.find((candidate) => candidate.id === runId);
@@ -91,6 +97,7 @@ export class EventService {
       const persistedRunRootSpanId = [...state.events].reverse().find((event) => event.runId === runId && event.type === 'run.started')?.spanId
         ?? [...state.events].find((event) => event.runId === runId && event.parentSpanId === undefined)?.spanId;
       return {
+        isRun: run !== undefined,
         traceId: run?.traceId ?? active?.traceId,
         tenantId: run?.tenantId,
         projectId: run?.projectId,
@@ -119,7 +126,7 @@ export class EventService {
     const event: RunEvent = {
       ...((options.tenantId ?? runContext.tenantId) === undefined ? {} : { tenantId: options.tenantId ?? runContext.tenantId }),
       ...((options.projectId ?? runContext.projectId) === undefined ? {} : { projectId: options.projectId ?? runContext.projectId }),
-      id: randomUUID(),
+      id: runContext.isRun && terminalRunEvents.has(type) ? deterministicRunEventId(runId, type) : randomUUID(),
       runId,
       type,
       timestamp: new Date().toISOString(),
@@ -131,7 +138,7 @@ export class EventService {
       ...(data === undefined ? {} : { data: data as Record<string, unknown> }),
       ...(parentSpanId === undefined ? {} : { parentSpanId }),
       ...(options.spanKind === undefined ? {} : { spanKind: options.spanKind }),
-      ...(options.severityText === undefined ? {} : { severityText: options.severityText }),
+      ...(options.severityText === undefined && (type === 'run.failed' || type === 'run.timed_out') ? { severityText: 'ERROR' as const } : options.severityText === undefined ? {} : { severityText: options.severityText }),
       attributes: {
         ...telemetryResource,
         ...((options.tenantId ?? runContext.tenantId) === undefined ? {} : { 'tenant.id': options.tenantId ?? runContext.tenantId }),
@@ -146,7 +153,7 @@ export class EventService {
         ...(options.attributes ?? {}),
         // Keep the correlation keys present on every signal. These are emitted as
         // OTLP attributes in addition to the native trace/span identifiers so
-        // logs, metrics, traces, and persisted events can be joined uniformly.
+        // logs, metrics, and persisted evidence can be joined uniformly.
         [telemetryAttributes.runId]: runId,
         [telemetryAttributes.traceId]: traceId,
         [telemetryAttributes.spanId]: spanId,
@@ -154,15 +161,36 @@ export class EventService {
       },
     };
 
-    return event;
+    return { event, isRun: runContext.isRun };
+  }
+
+  /**
+   * Keep the durable event stream intentionally small. Detailed unit lifecycle
+   * records remain available as redacted operation evidence; telemetry stores
+   * one terminal summary per run and explicit errors only.
+   */
+  private shouldPersist({ event, isRun }: EventBuild): boolean {
+    if (!this.compactRuns) return true;
+    if (event.signal === 'trace') return false;
+    if (!isRun) return true;
+    if (event.signal === 'metric') return false;
+    return terminalRunEvents.has(event.type);
+  }
+
+  private shouldExport({ event, isRun }: EventBuild): boolean {
+    if (!this.compactRuns) return true;
+    if (event.signal === 'trace') return false;
+    if (!isRun) return true;
+    if (event.signal === 'metric') return true;
+    return terminalRunEvents.has(event.type);
   }
 
   private exportEvent(event: RunEvent): void {
     if (this.exporter !== undefined) void this.exporter.export(event).catch(() => undefined);
   }
 
-  public list(runId?: string): Promise<RunEvent[]> {
-    return this.store.listEvents(runId);
+  public list(runId?: string, options?: EventListOptions): Promise<RunEvent[]> {
+    return this.store.listEvents(runId, options);
   }
 
   public exporterHealth(): TelemetryExporterHealth | undefined {
@@ -282,16 +310,11 @@ export class EventService {
     const evidenceBefore = this.evidenceRetentionHours === undefined
       ? undefined
       : new Date(Date.now() - this.evidenceRetentionHours * 60 * 60 * 1000).toISOString();
-    return this.store.listEvents().then(async (events) => {
-      const traceIds = [...new Set(events
-        .filter((event) => event.timestamp < before)
-        .map((event) => event.traceId))];
-      const deleted = this.store.pruneEvents === undefined ? 0 : await this.store.pruneEvents(before);
-      const deletedEvidence = evidenceBefore === undefined || this.store.pruneEvidence === undefined ? 0 : await this.store.pruneEvidence(evidenceBefore);
-      const deletedArtifacts = this.artifactStore === undefined ? 0 : await this.artifactStore.prune(before);
-      await this.exporter?.prune?.(traceIds);
-      return deleted + deletedEvidence + deletedArtifacts;
-    });
+    return Promise.all([
+      this.store.pruneEvents === undefined ? Promise.resolve(0) : this.store.pruneEvents(before),
+      evidenceBefore === undefined || this.store.pruneEvidence === undefined ? Promise.resolve(0) : this.store.pruneEvidence(evidenceBefore),
+      this.artifactStore === undefined ? Promise.resolve(0) : this.artifactStore.prune(before),
+    ]).then(([deleted, deletedEvidence, deletedArtifacts]) => deleted + deletedEvidence + deletedArtifacts);
   }
 
   public close(): Promise<void> {
@@ -304,6 +327,11 @@ export class EventService {
 
 function deterministicEvidenceId(runId: string, unitId: string, operation: string, status: OperationEvidenceStatus, idempotencyKey: string): string {
   const digest = createHash('sha256').update(JSON.stringify({ runId, unitId, operation, status, idempotencyKey })).digest('hex');
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+function deterministicRunEventId(runId: string, type: string): string {
+  const digest = createHash('sha256').update(`run-summary:${runId}:${type}`).digest('hex');
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
 }
 

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { AgentSpanKind, OperationEvidence, RunEvent } from '../domain/types.js';
+import type { OperationEvidence, RunEvent } from '../domain/types.js';
 import type { PlatformStore } from '../storage/store.js';
 import { telemetryAttributes, telemetryResource } from '../observability/semconv.js';
 
@@ -82,21 +82,23 @@ export class PlatformTemporalObservabilitySink implements TemporalObservabilityS
     };
     await this.store.appendEvidence(evidence);
 
+    // Durable telemetry is intentionally a single terminal run summary. The
+    // detailed activity lifecycle remains in operation_evidence; only an
+    // activity failure is surfaced as an error line for the run.
+    if (lifecycle.status !== 'failed') return;
     const event: RunEvent = {
       ...(lifecycle.tenantId === undefined ? {} : { tenantId: lifecycle.tenantId }),
       ...(lifecycle.projectId === undefined ? {} : { projectId: lifecycle.projectId }),
-      id: deterministicUuid(`temporal:event:${identity}`),
+      id: deterministicUuid(`temporal:run-failure:${lifecycle.runId}`),
       runId: lifecycle.runId,
-      nodeId: lifecycle.nodeId,
-      type: `unit.${lifecycle.status}`,
+      type: 'run.failed',
       timestamp: lifecycle.occurredAt,
-      message: `Temporal ${lifecycle.nodeType} unit ${lifecycle.status}.`,
-      signal: 'trace',
+      message: lifecycle.error?.slice(0, 2_000) ?? `Temporal ${lifecycle.nodeType} unit failed.`,
+      signal: 'log',
       traceId: lifecycle.traceId,
       spanId: lifecycle.spanId,
       ...(lifecycle.parentSpanId === undefined ? {} : { parentSpanId: lifecycle.parentSpanId }),
-      spanKind: temporalSpanKind(lifecycle.unitKind),
-      severityText: lifecycle.status === 'failed' ? 'ERROR' : 'INFO',
+      severityText: 'ERROR',
       attributes: {
         ...telemetryResource,
         [telemetryAttributes.runId]: lifecycle.runId,
@@ -120,10 +122,6 @@ export class PlatformTemporalObservabilitySink implements TemporalObservabilityS
     };
     await this.store.appendEvent(event);
   }
-}
-
-function temporalSpanKind(unitKind: string): AgentSpanKind {
-  return unitKind === 'agent' ? 'agent' : unitKind === 'connector' || unitKind === 'consumer' ? 'tool' : 'chain';
 }
 
 function deterministicUuid(value: string): string {

@@ -30,33 +30,20 @@ afterEach(() => {
 });
 
 describe('OtlpHttpExporter', () => {
-  it('exports a trace as an OTLP resource span', async () => {
+  it('does not export traces', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
-    const exporter = new OtlpHttpExporter('http://phoenix:6006', {}, { signals: ['trace'] });
+    const exporter = new OtlpHttpExporter('http://phoenix:6006', {});
 
     await exporter.export(baseEvent);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://phoenix:6006/v1/traces');
-    const payload = JSON.parse(String(request.body)) as {
-      resourceSpans: Array<{
-        resource: { attributes: Array<{ key: string }> };
-        scopeSpans?: Array<{ spans?: Array<{ attributes?: Array<{ key: string }> }> }>;
-      }>;
-    };
-    expect(payload.resourceSpans).toHaveLength(1);
-    expect(payload.resourceSpans[0]?.resource.attributes.map((item) => item.key)).toContain('project.id');
-    expect(payload.resourceSpans[0]?.resource.attributes.map((item) => item.key)).not.toContain('run.id');
-    const span = (payload.resourceSpans[0]?.scopeSpans?.[0] as { spans?: Array<{ attributes?: Array<{ key: string }> }> } | undefined)?.spans?.[0];
-    expect(span?.attributes?.map((item) => item.key)).toEqual(expect.arrayContaining(['run.id', 'trace.id', 'span.id', 'unit.id']));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('does not send non-trace signals to a Phoenix trace-only exporter', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
-    const exporter = new OtlpHttpExporter('http://phoenix:6006', {}, { signals: ['trace'] });
+    const exporter = new OtlpHttpExporter('http://phoenix:6006', {}, { signals: ['log'] });
 
     await exporter.export({ ...baseEvent, signal: 'metric' });
 
@@ -66,12 +53,12 @@ describe('OtlpHttpExporter', () => {
   it('redacts credential-like attributes from every OTLP signal', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
-    const exporter = new OtlpHttpExporter('http://collector:4318', {}, { signals: ['trace'] });
+    const exporter = new OtlpHttpExporter('http://collector:4318', {}, { signals: ['log'] });
 
-    await exporter.export({ ...baseEvent, attributes: { ...baseEvent.attributes, authorization: 'bearer secret', token: 'secret', 'api.key': 'secret' } });
+    await exporter.export({ ...baseEvent, signal: 'log', attributes: { ...baseEvent.attributes, authorization: 'bearer secret', token: 'secret', 'api.key': 'secret' } });
 
-    const payload = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as { resourceSpans: Array<{ scopeSpans: Array<{ spans: Array<{ attributes: Array<{ key: string }> }> }> }> };
-    const keys = payload.resourceSpans[0]!.scopeSpans[0]!.spans[0]!.attributes.map((item) => item.key);
+    const payload = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as { resourceLogs: Array<{ scopeLogs: Array<{ logRecords: Array<{ attributes: Array<{ key: string }> }> }> }> };
+    const keys = payload.resourceLogs[0]!.scopeLogs[0]!.logRecords[0]!.attributes.map((item) => item.key);
     expect(keys).not.toEqual(expect.arrayContaining(['authorization', 'token', 'api.key']));
   });
 
@@ -79,9 +66,9 @@ describe('OtlpHttpExporter', () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error('collector unavailable'));
     vi.stubGlobal('fetch', fetchMock);
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const exporter = new OtlpHttpExporter('http://collector:4318', {}, { signals: ['trace'] });
+    const exporter = new OtlpHttpExporter('http://collector:4318', {}, { signals: ['log'] });
 
-    await expect(exporter.export(baseEvent)).resolves.toBeUndefined();
+    await expect(exporter.export({ ...baseEvent, signal: 'log' })).resolves.toBeUndefined();
     expect(exporter.health()).toMatchObject({ status: 'degraded', failureCount: 1, lastErrorAt: expect.any(String) });
     expect(warning).toHaveBeenCalled();
     warning.mockRestore();
@@ -93,31 +80,31 @@ describe('OtlpHttpExporter', () => {
       .mockResolvedValueOnce({ ok: true, status: 200 });
     vi.stubGlobal('fetch', fetchMock);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const exporter = new OtlpHttpExporter('http://collector:4318', {}, { signals: ['trace'] });
+    const exporter = new OtlpHttpExporter('http://collector:4318', {}, { signals: ['log'] });
 
-    await exporter.export(baseEvent);
-    await exporter.export(baseEvent);
+    await exporter.export({ ...baseEvent, signal: 'log' });
+    await exporter.export({ ...baseEvent, signal: 'log' });
     expect(exporter.health()).toMatchObject({ status: 'degraded', failureCount: 1, lastSuccessAt: expect.any(String) });
     vi.restoreAllMocks();
   });
 
-  it('surfaces non-404 trace-pruning failures without rejecting retention', async () => {
+  it('does not issue external trace-pruning calls', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 503 });
     vi.stubGlobal('fetch', fetchMock);
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const exporter = new OtlpHttpExporter('http://phoenix:6006', {}, { deleteTraces: true, signals: ['trace'] });
+    const exporter = new OtlpHttpExporter('http://phoenix:6006', {}, { signals: ['log'] });
 
     await expect(exporter.prune(['a'.repeat(32)])).resolves.toBeUndefined();
-    expect(exporter.health()).toMatchObject({ status: 'degraded', failureCount: 1, lastErrorAt: expect.any(String) });
-    expect(warning).toHaveBeenCalled();
+    expect(exporter.health()).toMatchObject({ status: 'healthy', failureCount: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('treats a missing Phoenix trace as an idempotent prune success', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 404 });
     vi.stubGlobal('fetch', fetchMock);
-    const exporter = new OtlpHttpExporter('http://phoenix:6006', {}, { deleteTraces: true, signals: ['trace'] });
+    const exporter = new OtlpHttpExporter('http://phoenix:6006', {}, { signals: ['log'] });
 
     await expect(exporter.prune(['b'.repeat(32)])).resolves.toBeUndefined();
     expect(exporter.health()).toMatchObject({ status: 'healthy', failureCount: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

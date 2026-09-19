@@ -50,36 +50,17 @@ async function waitFor(url, predicate, timeoutMs = 90_000) {
   throw new Error(`Timed out waiting for ${url}.`);
 }
 
-const smokeTraceId = 'a'.repeat(32);
-const smokeSpanId = 'b'.repeat(16);
 const smokeTimestamp = BigInt(Date.now()) * 1_000_000n;
 const smokeAttributes = [
   { key: 'run.id', value: { stringValue: 'observability-smoke' } },
   { key: 'workflow.id', value: { stringValue: 'observability-smoke' } },
 ];
-const tracePayload = {
-  resourceSpans: [{
-    resource: { attributes: [{ key: 'service.name', value: { stringValue: 'agentic-workflow-factory-smoke' } }] },
-    scopeSpans: [{
-      scope: { name: 'agentic-workflow-factory-smoke' },
-      spans: [{
-        traceId: smokeTraceId,
-        spanId: smokeSpanId,
-        name: 'observability.smoke',
-        kind: 1,
-        startTimeUnixNano: `${smokeTimestamp}`,
-        endTimeUnixNano: `${smokeTimestamp + 1_000_000n}`,
-        attributes: smokeAttributes,
-      }],
-    }],
-  }],
-};
 const logPayload = {
   resourceLogs: [{
     resource: { attributes: [{ key: 'service.name', value: { stringValue: 'agentic-workflow-factory-smoke' } }] },
     scopeLogs: [{
       scope: { name: 'agentic-workflow-factory-smoke' },
-      logRecords: [{ timeUnixNano: `${smokeTimestamp}`, severityText: 'INFO', body: { stringValue: 'observability smoke log' }, attributes: smokeAttributes, traceId: smokeTraceId, spanId: smokeSpanId }],
+      logRecords: [{ timeUnixNano: `${smokeTimestamp}`, severityText: 'INFO', body: { stringValue: 'observability smoke log' }, attributes: smokeAttributes }],
     }],
   }],
 };
@@ -108,15 +89,14 @@ try {
   await waitFor('http://localhost:3100/api/health', async (response) => {
     if (!response.ok) return false;
     const health = await response.json();
-    return health.observability?.retentionHours === 48
+    return health.observability?.retentionHours === 12
       && health.observability?.otlpExportEnabled === true
       && health.observability?.exporterHealth?.status === 'healthy';
   });
   await waitFor('http://localhost:6006', (response) => response.ok);
-  await waitFor('http://localhost:4318/v1/traces', () => postSignal('/v1/traces', tracePayload));
   await waitFor('http://localhost:4318/v1/logs', () => postSignal('/v1/logs', logPayload));
   await waitFor('http://localhost:4318/v1/metrics', () => postSignal('/v1/metrics', metricPayload));
-  console.log('Observability Docker smoke passed (app health, 48-hour retention, correlated traces/logs/metrics, Collector, Phoenix).');
+  console.log('Observability Docker smoke passed (app health, 12-hour retention, logs/metrics, Collector, Phoenix).');
 } catch (error) {
   console.error(`Observability Docker smoke failed: ${error instanceof Error ? error.message : String(error)}`);
   dumpDiagnostics();

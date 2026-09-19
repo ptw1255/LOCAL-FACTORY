@@ -816,7 +816,7 @@ describe('platform API', () => {
     });
   });
 
-  it('exposes telemetry through log, trace, and metric signals', async () => {
+  it('exposes one compact terminal log through the telemetry endpoint', async () => {
     const start = await app.inject({
       method: 'POST',
       url: '/api/workflows/workflow-agent-intake/runs',
@@ -829,12 +829,12 @@ describe('platform API', () => {
       method: 'GET',
       url: `/api/telemetry?runId=${runId}`,
     });
-    const payload = telemetry.json<{ items: Array<{ signal: string }>; resource: Record<string, string> }>();
+    const payload = telemetry.json<{ items: Array<{ signal: string; type?: string }>; resource: Record<string, string> }>();
     expect(telemetry.statusCode).toBe(200);
     expect(payload.resource['telemetry.sdk.name']).toBe('opentelemetry');
-    expect(new Set(payload.items.map((item) => item.signal))).toEqual(
-      new Set(['log', 'trace', 'metric']),
-    );
+    expect(new Set(payload.items.map((item) => item.signal))).toEqual(new Set(['log']));
+    expect(payload.items).toHaveLength(1);
+    expect(payload.items[0]?.type).toBe('run.succeeded');
   });
 
   it('persists replay reports and materializes payload-free evaluation datasets', async () => {

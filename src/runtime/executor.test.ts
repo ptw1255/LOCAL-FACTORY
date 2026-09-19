@@ -39,7 +39,7 @@ describe('LocalWorkflowExecutor', () => {
   beforeEach(async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-runtime-'));
     store = new JsonStore(path.join(directory, 'state.json'));
-    events = new EventService(store);
+    events = new EventService(store, { compactRuns: false });
     executor = new LocalWorkflowExecutor(store, events);
   });
 

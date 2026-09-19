@@ -42,7 +42,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('pins a run to a versioned Temporal queue and recovers its result', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-executor-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-run');
     const start = vi.fn(async (_type: string, options: { workflowId: string; taskQueue: string; args: unknown[]; searchAttributes: Record<string, string[]>; memo: Record<string, unknown> }) => {
       handle.workflowId = options.workflowId;
@@ -74,7 +74,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('retries a transient namespace-not-found response without creating another run', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-namespace-retry-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-namespace-retry');
     let attempts = 0;
     const start = vi.fn(async (_type: string, options: { workflowId: string }) => {
@@ -96,7 +96,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('recognizes namespace readiness details wrapped by the Temporal client', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-namespace-cause-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-namespace-cause');
     let attempts = 0;
     const start = vi.fn(async () => {
@@ -118,7 +118,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('retries a search-attribute mapping race without creating another run', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-attribute-retry-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-attribute-retry');
     let attempts = 0;
     const start = vi.fn(async () => {
@@ -139,7 +139,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('retries a transient Temporal transport-unavailable response', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-transport-retry-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-transport-retry');
     let attempts = 0;
     const start = vi.fn(async () => {
@@ -157,7 +157,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('does not retry non-transient Temporal start failures', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-start-failure-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const start = vi.fn(async () => { throw new Error('permission denied'); });
     const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn() } };
     const executor = new TemporalWorkflowExecutor({ store, events, client });
@@ -169,7 +169,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('reattaches persisted Temporal runs after a process restart', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-recover-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-recover');
     const getHandle = vi.fn(() => handle);
     const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(), getHandle } };
@@ -191,7 +191,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('cancels a Temporal handle and records the terminal operator action', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-cancel-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-cancel');
     const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
     const executor = new TemporalWorkflowExecutor({ store, events, client });
@@ -207,7 +207,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('pauses and resumes a Temporal workflow through durable signals', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-pause-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-pause');
     const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
     const executor = new TemporalWorkflowExecutor({ store, events, client });
@@ -227,7 +227,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('does not overwrite a terminal state when a pause signal races completion', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-pause-race-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-pause-race');
     const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
     const executor = new TemporalWorkflowExecutor({ store, events, client });
@@ -250,7 +250,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('retries a terminal Temporal run with pinned provenance', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-retry-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-retry');
     const start = vi.fn(async () => handle);
     const client: TemporalWorkflowClientLike = { workflow: { start, getHandle: vi.fn(() => handle) } };
@@ -275,7 +275,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('records approval denial as one failed decision after cancelling the handle', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-deny-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-deny');
     const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
     const executor = new TemporalWorkflowExecutor({ store, events, client });
@@ -293,7 +293,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('does not cancel a Temporal run that is already terminal', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-cancel-terminal-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-cancel-terminal');
     const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
     const executor = new TemporalWorkflowExecutor({ store, events, client });
@@ -315,7 +315,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('records a correlated approval event and ignores repeated approval delivery', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-approve-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-approve');
     const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
     const executor = new TemporalWorkflowExecutor({ store, events, client });
@@ -339,7 +339,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('routes approval signals to side-effect nodes that declare requiresApproval', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-side-effect-approval-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-side-effect-approval');
     const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
     const executor = new TemporalWorkflowExecutor({ store, events, client });
@@ -359,7 +359,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('routes approval signals to an agent envelope boundary', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-agent-approval-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-agent-approval');
     const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
     const executor = new TemporalWorkflowExecutor({ store, events, client });
@@ -388,7 +388,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('routes approval signals to a pending compensation boundary', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-compensation-approval-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const handle = new FakeHandle('factory-compensation-approval');
     const client: TemporalWorkflowClientLike = { workflow: { start: vi.fn(async () => handle), getHandle: vi.fn(() => handle) } };
     const executor = new TemporalWorkflowExecutor({ store, events, client });
@@ -408,7 +408,7 @@ describe('TemporalWorkflowExecutor', () => {
   it('records a worker failure and supports an idempotent retry after Temporal execution loss', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-temporal-chaos-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const failedHandle = new FakeHandle('factory-chaos-failed');
     const retryHandle = new FakeHandle('factory-chaos-retry');
     retryHandle.resultDeferred.resolve({ completedNodeIds: ['trigger'], unitOutputs: {}, lifecycle: [] });

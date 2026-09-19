@@ -181,14 +181,14 @@ test.describe('Observe and Deployments', () => {
   test('exposes telemetry tabs and retention policy', async ({ page }) => {
     await page.goto('/#/observe');
     await expect(page.getByRole('heading', { name: 'Observe' })).toBeVisible();
-    await expect(page.getByText(/Telemetry retention:.*48 hours/)).toBeVisible();
+    await expect(page.getByText(/Telemetry retention:.*12 hours/)).toBeVisible();
     const tabs = page.getByRole('tab');
-    await expect(tabs).toHaveCount(4);
+    await expect(tabs).toHaveCount(3);
     await page.getByRole('tab', { name: 'Metrics' }).click();
     await expect(page.getByRole('tab', { name: 'Metrics' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  test('opens a completed run with correlated timeline and signal tabs', async ({ page, request }) => {
+  test('opens a completed run with correlated timeline and log/metric tabs', async ({ page, request }) => {
     const workflowResponse = await request.get('/api/workflows/workflow-agent-intake');
     expect(workflowResponse.ok()).toBeTruthy();
     const workflow = await workflowResponse.json() as Record<string, any>;

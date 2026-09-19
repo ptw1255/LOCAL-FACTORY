@@ -74,7 +74,7 @@ describe('IDE editor tab state', () => {
   it('wraps Observe tab keyboard navigation and supports Home/End', () => {
     expect(nextObserveTab('runs', 'ArrowLeft')).toBe('metrics');
     expect(nextObserveTab('metrics', 'ArrowRight')).toBe('runs');
-    expect(nextObserveTab('traces', 'Home')).toBe('runs');
+    expect(nextObserveTab('logs', 'Home')).toBe('runs');
     expect(nextObserveTab('runs', 'End')).toBe('metrics');
     expect(nextObserveTab('runs', 'Enter')).toBeNull();
   });
