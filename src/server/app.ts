@@ -180,19 +180,14 @@ function telemetryExporter(): CompositeTelemetryExporter | undefined {
   const exporters = [];
   const useOfficialSdk = process.env.OTEL_USE_SDK_EXPORTER !== 'false';
   const otlpHeaders = parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS);
-  const configuredPhoenixEndpoint = process.env.PHOENIX_ENDPOINT ?? process.env.PHOENIX_COLLECTOR_ENDPOINT;
-  const phoenixEndpoint = configuredPhoenixEndpoint?.trim() || undefined;
-  const phoenixApiKey = process.env.PHOENIX_API_KEY;
-  if (phoenixEndpoint !== undefined) {
-    const headers: Record<string, string> = { ...otlpHeaders, ...(phoenixApiKey === undefined ? {} : { api_key: phoenixApiKey }) };
-    exporters.push(useOfficialSdk
-      ? new OtelSdkExporter(phoenixEndpoint, { headers, signals: ['trace'], deleteTraces: true })
-      : new OtlpHttpExporter(phoenixEndpoint, headers, { deleteTraces: true, signals: ['trace'] }));
-  }
   const configuredOtlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   const otlpEndpoint = configuredOtlpEndpoint?.trim() || undefined;
-  if (otlpEndpoint !== undefined && otlpEndpoint !== phoenixEndpoint) {
-    exporters.push(useOfficialSdk ? new OtelSdkExporter(otlpEndpoint, { headers: otlpHeaders }) : new OtlpHttpExporter(otlpEndpoint, otlpHeaders));
+  // Traces are intentionally disabled until the run-summary contract has a
+  // dedicated trace design. Logs and metrics remain available through OTLP.
+  if (otlpEndpoint !== undefined) {
+    exporters.push(useOfficialSdk
+      ? new OtelSdkExporter(otlpEndpoint, { headers: otlpHeaders, signals: ['log', 'metric'] })
+      : new OtlpHttpExporter(otlpEndpoint, otlpHeaders, { signals: ['log', 'metric'] }));
   }
   return exporters.length === 0 ? undefined : new CompositeTelemetryExporter(exporters);
 }
@@ -218,7 +213,7 @@ export async function createApp(
   );
   const secretBroker = vaultSecretBroker === undefined ? undefined : new ConnectionSecretBroker(store, vaultSecretBroker);
   const retentionHours = options.observabilityRetentionHours
-    ?? positiveNumber(process.env.OBSERVABILITY_RETENTION_HOURS, 48);
+    ?? positiveNumber(process.env.OBSERVABILITY_RETENTION_HOURS, 12);
   const evidenceRetentionHours = process.env.EVIDENCE_RETENTION_HOURS === undefined
     ? undefined
     : positiveNumber(process.env.EVIDENCE_RETENTION_HOURS, 1);
@@ -418,19 +413,24 @@ export async function createApp(
     const principal = authenticator.authenticate(headerValue(request.headers.authorization));
     const decision = authenticator.authorize(principal, { method: request.method, url: request.url, ...scope });
     const auditRunId = `auth:${request.id}`;
-    void events.emit(auditRunId, decision.allowed ? 'authz.allowed' : 'authz.denied', decision.reason, {
-      tenantId: scope.tenantId,
-      projectId: scope.projectId,
-      severityText: decision.allowed ? 'INFO' : 'WARN',
-      attributes: {
-        'auth.principal': principal?.id ?? 'anonymous',
-        'auth.role': principal?.role ?? 'anonymous',
-        'auth.required_role': decision.requiredRole,
-        'auth.method': request.method,
-        'auth.path': request.url.split('?')[0] ?? request.url,
-        'auth.allowed': decision.allowed,
-      },
-    }).catch(() => undefined);
+    // GET polling is intentionally not a durable audit event. Denials and
+    // state-changing calls remain auditable without filling the event table
+    // with routine dashboard refreshes.
+    if (!decision.allowed || request.method !== 'GET') {
+      void events.emit(auditRunId, decision.allowed ? 'authz.allowed' : 'authz.denied', decision.reason, {
+        tenantId: scope.tenantId,
+        projectId: scope.projectId,
+        severityText: decision.allowed ? 'INFO' : 'WARN',
+        attributes: {
+          'auth.principal': principal?.id ?? 'anonymous',
+          'auth.role': principal?.role ?? 'anonymous',
+          'auth.required_role': decision.requiredRole,
+          'auth.method': request.method,
+          'auth.path': request.url.split('?')[0] ?? request.url,
+          'auth.allowed': decision.allowed,
+        },
+      }).catch(() => undefined);
+    }
     if (decision.allowed) return;
     return reply.status(principal === undefined ? 401 : 403).send({ error: principal === undefined ? 'Unauthorized' : 'Forbidden', message: decision.reason });
   });
@@ -655,7 +655,7 @@ export async function createApp(
       const projectExists = await store.read((state) => state.projects.some((project) => project.id === request.params.projectId && project.tenantId === scope.tenantId));
       if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
       const since = request.query.since;
-      const items = (await events.list())
+      const items = (await events.list(undefined, { limit: 1_000 }))
         .filter((event) => event.type === 'workspace.file.changed' && event.tenantId === scope.tenantId && event.projectId === request.params.projectId)
         .filter((event) => since === undefined || event.timestamp > since);
       return { items };
@@ -1607,9 +1607,12 @@ export async function createApp(
     }
   });
 
-  app.get<{ Querystring: { runId?: string } }>('/api/events', async (request) => {
+  app.get<{ Querystring: { runId?: string; before?: string; limit?: string } }>('/api/events', async (request) => {
     const scope = scopeFromRequest(request);
-    return { items: (await events.list(request.query.runId)).filter((event) => inScope(event, scope)) };
+    const requestedLimit = Number(request.query.limit ?? 500);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(1_000, Math.max(1, Math.floor(requestedLimit))) : 500;
+    const items = (await events.list(request.query.runId, { limit, ...(request.query.before === undefined ? {} : { before: request.query.before }) })).filter((event) => inScope(event, scope));
+    return { items, nextBefore: items.length === limit ? items[0]?.timestamp ?? null : null };
   });
 
   app.get<{ Querystring: { runId?: string; deploymentId?: string; tenantId?: string; projectId?: string; unitId?: string; operation?: string; status?: import('../domain/types.js').OperationEvidenceStatus; from?: string; to?: string; repository?: string; revision?: string; commit?: string; pullRequest?: string } }>('/api/evidence', async (request) => {
@@ -1642,10 +1645,12 @@ export async function createApp(
   });
 
   app.get<{
-    Querystring: { runId?: string; signal?: 'log' | 'trace' | 'metric' };
+    Querystring: { runId?: string; signal?: 'log' | 'trace' | 'metric'; before?: string; limit?: string };
   }>('/api/telemetry', async (request) => {
     const scope = scopeFromRequest(request);
-    const items = (await events.list(request.query.runId)).filter((event) => inScope(event, scope));
+    const requestedLimit = Number(request.query.limit ?? 500);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(1_000, Math.max(1, Math.floor(requestedLimit))) : 500;
+    const items = (await events.list(request.query.runId, { limit, ...(request.query.before === undefined ? {} : { before: request.query.before }) })).filter((event) => inScope(event, scope));
     return {
       resource: {
         'service.name': 'agentic-workflow-factory',
@@ -1655,6 +1660,7 @@ export async function createApp(
       items: request.query.signal === undefined
         ? items
         : items.filter((event) => event.signal === request.query.signal),
+      nextBefore: items.length === limit ? items[0]?.timestamp ?? null : null,
     };
   });
 

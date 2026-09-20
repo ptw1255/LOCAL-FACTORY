@@ -38,6 +38,25 @@ async function waitForNextMillisecond(timestamp: string): Promise<void> {
 }
 
 describe('EventService retention', () => {
+  it('persists one terminal log for a run and drops trace signals', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
+    const store = new JsonStore(path.join(directory, 'state.json'));
+    await store.mutate((state) => { state.runs.push({
+      id: 'compact-run', workflowId: seedWorkflow.id, workflowName: seedWorkflow.name, workflowVersion: seedWorkflow.version,
+      traceId: 'e'.repeat(32), status: 'running', startedAt: new Date().toISOString(), costUsd: 0, humanTouchpoints: 0,
+      workflowDefinition: structuredClone(seedWorkflow), completedNodeIds: [], activatedNodeIds: [], approvedNodeIds: [],
+      approvedNodeHashes: {}, pendingApprovalHashes: {}, unitOutputs: {}, ciCheckpoints: {},
+    } as unknown as RunRecord); });
+    const service = new EventService(store);
+
+    await service.emit('compact-run', 'run.started', 'started', { signal: 'trace' });
+    await service.emit('compact-run', 'unit.completed', 'completed');
+    await service.emit('compact-run', 'run.succeeded', 'succeeded');
+    await service.emit('compact-run', 'run.succeeded', 'succeeded again');
+
+    await expect(service.list('compact-run')).resolves.toEqual([expect.objectContaining({ type: 'run.succeeded', signal: 'log' })]);
+  });
+
   it('inherits immutable run release context on every emitted signal', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
@@ -149,7 +168,7 @@ describe('EventService retention', () => {
 
   it('adds standard correlation attributes to every emitted signal', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
-    const service = new EventService(new JsonStore(path.join(directory, 'state.json')));
+    const service = new EventService(new JsonStore(path.join(directory, 'state.json')), { compactRuns: false });
 
     const emitted = await service.emit('run-1', 'unit.completed', 'completed', {
       nodeId: 'unit-1',
@@ -168,7 +187,7 @@ describe('EventService retention', () => {
 
   it('links node events into parent-child spans when no explicit parent is supplied', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
-    const service = new EventService(new JsonStore(path.join(directory, 'state.json')));
+    const service = new EventService(new JsonStore(path.join(directory, 'state.json')), { compactRuns: false });
     const started = await service.emit('run-1', 'unit.started', 'started', { nodeId: 'unit-1', signal: 'trace' });
     const completed = await service.emit('run-1', 'unit.completed', 'completed', { nodeId: 'unit-1', signal: 'trace' });
     expect(completed.parentSpanId).toBe(started.spanId);
@@ -177,7 +196,7 @@ describe('EventService retention', () => {
 
   it('anchors events from different nodes under the run root span', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
-    const service = new EventService(new JsonStore(path.join(directory, 'state.json')));
+    const service = new EventService(new JsonStore(path.join(directory, 'state.json')), { compactRuns: false });
     const root = await service.emit('run-tree', 'run.started', 'started', { signal: 'trace' });
     const first = await service.emit('run-tree', 'unit.started', 'first started', { nodeId: 'first', signal: 'trace' });
     const second = await service.emit('run-tree', 'unit.started', 'second started', { nodeId: 'second', signal: 'trace' });
@@ -205,7 +224,7 @@ describe('EventService retention', () => {
   it('removes events older than the configured window', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const service = new EventService(store, { retentionHours: 48 });
+    const service = new EventService(store, { retentionHours: 12 });
     const now = Date.now();
 
     await store.appendEvent(event(
@@ -229,7 +248,7 @@ describe('EventService retention', () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
     const prune = vi.fn(async (_traceIds: string[]) => undefined);
-    const service = new EventService(store, { retentionHours: 48, exporter: { export: async () => undefined, prune } });
+    const service = new EventService(store, { retentionHours: 12, exporter: { export: async () => undefined, prune } });
     const now = Date.now();
 
     await store.appendEvent(event(
@@ -245,7 +264,7 @@ describe('EventService retention', () => {
 
     await service.prune();
 
-    expect(prune).toHaveBeenCalledWith(['cccccccccccccccccccccccccccccccc']);
+    expect(prune).not.toHaveBeenCalled();
   });
 
   it('does not let an exporter failure interrupt event persistence', async () => {
@@ -337,7 +356,7 @@ describe('EventService retention', () => {
   it('prunes durable evidence only when its separate policy is configured', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-events-'));
     const store = new JsonStore(path.join(directory, 'state.json'));
-    const service = new EventService(store, { retentionHours: 48, evidenceRetentionHours: 1 });
+    const service = new EventService(store, { retentionHours: 12, evidenceRetentionHours: 1 });
     const old = await service.recordEvidence({ runId: 'run-1', unitId: 'old', operation: 'repositoryCheck', status: 'succeeded' });
     await store.mutate((state) => { const entry = state.evidence.find((candidate) => candidate.id === old.id); if (entry !== undefined) entry.occurredAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(); });
     await service.recordEvidence({ runId: 'run-1', unitId: 'new', operation: 'repositoryCheck', status: 'succeeded' });

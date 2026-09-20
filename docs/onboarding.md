@@ -12,7 +12,7 @@ FACTORY Local
 ├── Project                  one file-backed work boundary
 ├── Workflow                 one graph of WorkUnit envelopes
 ├── Artifact                 one compiled, immutable version
-└── Run evidence             logs, metrics, traces, approvals, and outputs
+└── Run evidence             compact logs, metrics, approvals, and outputs
 ```
 
 ## Before you begin
@@ -161,8 +161,9 @@ From the Workflow view:
 - **Approvals** presents any waiting decisions.
 - **Portals → Observe** opens the correlated operational view.
 
-Observe is where a run’s logs, metrics, traces, status transitions, and durable
-operation evidence meet. Telemetry defaults to a 48-hour retention window; durable
+Observe is where a run’s compact terminal log, metrics, status transitions, and durable
+operation evidence meet. Trace export is disabled for now. Telemetry defaults to a
+12-hour retention window; durable
 run evidence has its own configured retention policy.
 
 At this point the first loop is complete: it has a bounded authoring path, a

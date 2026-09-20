@@ -99,7 +99,7 @@ export function readBottomPanelHeight(projectId: string): number {
   return Number.isFinite(parsed) ? clampBottomPanelHeight(parsed) : 240;
 }
 
-export type ObserveTab = 'runs' | 'logs' | 'traces' | 'metrics';
+export type ObserveTab = 'runs' | 'logs' | 'metrics';
 export type BottomPanelTab = 'problems' | 'output';
 
 export function observeRunHash(runId: string | null): string {
@@ -175,7 +175,7 @@ export function selectWorkflowArtifact(artifacts: ArtifactRecord[], workflowId: 
 }
 
 export function nextObserveTab(tab: ObserveTab, key: string): ObserveTab | null {
-  const tabs: ObserveTab[] = ['runs', 'logs', 'traces', 'metrics'];
+  const tabs: ObserveTab[] = ['runs', 'logs', 'metrics'];
   const index = tabs.indexOf(tab);
   const nextIndex = key === 'ArrowRight' || key === 'ArrowDown'
     ? (index + 1) % tabs.length

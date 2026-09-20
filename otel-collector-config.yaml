@@ -41,20 +41,13 @@ exporters:
     endpoint: phoenix:4317
     tls:
       insecure: true
-  debug:
-    verbosity: basic
-
 service:
   pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [memory_limiter, attributes/redact, batch]
-      exporters: [otlp/phoenix, debug]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, attributes/redact, batch]
-      exporters: [debug]
+      exporters: [otlp/phoenix]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, attributes/redact, batch]
-      exporters: [debug]
+      exporters: [otlp/phoenix]

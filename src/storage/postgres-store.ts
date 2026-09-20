@@ -2,7 +2,7 @@ import { Pool, type PoolConfig } from 'pg';
 
 import { createSeedState } from '../domain/seed.js';
 import type { ArtifactRecord, EvidenceQuery, OperationEvidence, PlatformState, RunEvent } from '../domain/types.js';
-import { normalizePlatformState, type PlatformStore, type StateMutation } from './store.js';
+import { normalizePlatformState, type EventListOptions, type PlatformStore, type StateMutation } from './store.js';
 
 interface StateRow {
   state: PlatformState;
@@ -79,8 +79,8 @@ export class PostgresStore implements PlatformStore {
           await client.query(
             `INSERT INTO observability_events
               (id, tenant_id, project_id, run_id, timestamp, signal, event_type, trace_id, span_id,
-               parent_span_id, span_kind, severity_text, node_id, attributes, event)
-             VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb)
+               parent_span_id, span_kind, severity_text, node_id, event)
+             VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
              ON CONFLICT (id) DO NOTHING`,
             [
               outcome.event.id,
@@ -96,7 +96,6 @@ export class PostgresStore implements PlatformStore {
               outcome.event.spanKind ?? null,
               outcome.event.severityText ?? null,
               outcome.event.nodeId ?? null,
-              JSON.stringify(outcome.event.attributes ?? {}),
               JSON.stringify(outcome.event),
             ],
           );
@@ -119,8 +118,8 @@ export class PostgresStore implements PlatformStore {
     await this.pool.query(
       `INSERT INTO observability_events
         (id, tenant_id, project_id, run_id, timestamp, signal, event_type, trace_id, span_id,
-         parent_span_id, span_kind, severity_text, node_id, attributes, event)
-       VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb)
+         parent_span_id, span_kind, severity_text, node_id, event)
+       VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
        ON CONFLICT (id) DO NOTHING`,
       [
         event.id,
@@ -136,23 +135,25 @@ export class PostgresStore implements PlatformStore {
         event.spanKind ?? null,
         event.severityText ?? null,
         event.nodeId ?? null,
-        JSON.stringify(event.attributes ?? {}),
         JSON.stringify(event),
       ],
     );
   }
 
-  public async listEvents(runId?: string): Promise<RunEvent[]> {
+  public async listEvents(runId?: string, options: EventListOptions = {}): Promise<RunEvent[]> {
     await this.ensureInitialized();
-    const result = runId === undefined
-      ? await this.pool.query<{ event: RunEvent }>(
-          'SELECT event FROM observability_events ORDER BY timestamp ASC',
-        )
-      : await this.pool.query<{ event: RunEvent }>(
-          'SELECT event FROM observability_events WHERE run_id = $1 ORDER BY timestamp ASC',
-          [runId],
-        );
-    return result.rows.map((row) => row.event);
+    const clauses: string[] = [];
+    const values: Array<string | number> = [];
+    if (runId !== undefined) { values.push(runId); clauses.push(`run_id = $${values.length}`); }
+    if (options.before !== undefined) { values.push(options.before); clauses.push(`timestamp < $${values.length}::timestamptz`); }
+    const where = clauses.length === 0 ? '' : ` WHERE ${clauses.join(' AND ')}`;
+    const limit = options.limit === undefined ? undefined : Math.max(1, Math.min(5_000, Math.floor(options.limit)));
+    if (limit !== undefined) values.push(limit);
+    const result = await this.pool.query<{ event: RunEvent }>(
+      `SELECT event FROM observability_events${where} ORDER BY timestamp DESC${limit === undefined ? '' : ` LIMIT $${values.length}`}`,
+      values,
+    );
+    return result.rows.map((row) => row.event).reverse();
   }
 
   public async appendEvidence(evidence: OperationEvidence): Promise<void> {
@@ -240,11 +241,25 @@ export class PostgresStore implements PlatformStore {
 
   public async pruneEvents(before: string): Promise<number> {
     await this.ensureInitialized();
-    const result = await this.pool.query(
-      'DELETE FROM observability_events WHERE timestamp < $1::timestamptz',
-      [before],
-    );
-    return result.rowCount ?? 0;
+    let deleted = 0;
+    while (true) {
+      const result = await this.pool.query(
+        `WITH expired AS (
+           SELECT id FROM observability_events
+           WHERE timestamp < $1::timestamptz
+           ORDER BY timestamp ASC
+           LIMIT 5_000
+         )
+         DELETE FROM observability_events events
+         USING expired
+         WHERE events.id = expired.id`,
+        [before],
+      );
+      const batch = result.rowCount ?? 0;
+      deleted += batch;
+      if (batch < 5_000) break;
+    }
+    return deleted;
   }
 
   public async pruneEvidence(before: string): Promise<number> {
@@ -306,7 +321,7 @@ export class PostgresStore implements PlatformStore {
         project_id TEXT,
         run_id TEXT NOT NULL,
         timestamp TIMESTAMPTZ NOT NULL,
-        signal TEXT NOT NULL CHECK (signal IN ('log', 'trace', 'metric')),
+        signal TEXT NOT NULL CHECK (signal IN ('log', 'metric')),
         event_type TEXT NOT NULL,
         trace_id TEXT NOT NULL,
         span_id TEXT NOT NULL,
@@ -314,7 +329,6 @@ export class PostgresStore implements PlatformStore {
         span_kind TEXT,
         severity_text TEXT,
         node_id TEXT,
-        attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
         event JSONB NOT NULL
       )
     `);
@@ -352,6 +366,14 @@ export class PostgresStore implements PlatformStore {
     await this.pool.query('CREATE INDEX IF NOT EXISTS operation_evidence_deployment_time_idx ON operation_evidence (deployment_id, occurred_at)');
     await this.pool.query('ALTER TABLE observability_events ADD COLUMN IF NOT EXISTS tenant_id TEXT');
     await this.pool.query('ALTER TABLE observability_events ADD COLUMN IF NOT EXISTS project_id TEXT');
+    // Attributes are already embedded in event JSON. Keeping a second JSONB
+    // copy doubled storage for the highest-volume table.
+    await this.pool.query('ALTER TABLE observability_events DROP COLUMN IF EXISTS attributes');
+    // The compact telemetry profile has no trace retention path. Remove any
+    // trace rows left by a pre-compact deployment during startup migration.
+    await this.pool.query("DELETE FROM observability_events WHERE signal = 'trace'");
+    await this.pool.query('ALTER TABLE observability_events DROP CONSTRAINT IF EXISTS observability_events_signal_check');
+    await this.pool.query("ALTER TABLE observability_events ADD CONSTRAINT observability_events_signal_check CHECK (signal IN ('log', 'metric'))");
     await this.pool.query(
       'CREATE INDEX IF NOT EXISTS observability_events_project_time_idx ON observability_events (project_id, timestamp)',
     );
@@ -360,6 +382,9 @@ export class PostgresStore implements PlatformStore {
     );
     await this.pool.query(
       'CREATE INDEX IF NOT EXISTS observability_events_signal_time_idx ON observability_events (signal, timestamp)',
+    );
+    await this.pool.query(
+      'CREATE INDEX IF NOT EXISTS observability_events_timestamp_idx ON observability_events (timestamp)',
     );
     await this.migrateLegacyEvents();
   }
@@ -372,6 +397,7 @@ export class PostgresStore implements PlatformStore {
     if (state === undefined || state.events.length === 0) return;
     normalizePlatformState(state);
     for (const event of state.events) {
+      if (event.signal === 'trace') continue;
       const migratedEvent: RunEvent = {
         ...event,
         signal: event.signal ?? 'log',
@@ -380,8 +406,8 @@ export class PostgresStore implements PlatformStore {
       };
       await this.pool.query(
         `INSERT INTO observability_events
-          (id, tenant_id, project_id, run_id, timestamp, signal, event_type, trace_id, span_id, node_id, attributes, event)
-         VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)
+          (id, tenant_id, project_id, run_id, timestamp, signal, event_type, trace_id, span_id, node_id, event)
+         VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9, $10, $11::jsonb)
          ON CONFLICT (id) DO NOTHING`,
         [
           event.id,
@@ -394,7 +420,6 @@ export class PostgresStore implements PlatformStore {
           migratedEvent.traceId,
           migratedEvent.spanId,
           migratedEvent.nodeId ?? null,
-          JSON.stringify(migratedEvent.attributes ?? {}),
           JSON.stringify(migratedEvent),
         ],
       );

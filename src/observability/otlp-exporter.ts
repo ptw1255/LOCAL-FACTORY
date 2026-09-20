@@ -63,34 +63,6 @@ function resource(event: RunEvent) {
   };
 }
 
-function tracePayload(event: RunEvent) {
-  const durationMs = typeof event.data?.durationMs === 'number' ? event.data.durationMs : 1;
-  const end = new Date(new Date(event.timestamp).getTime() + Math.max(1, durationMs)).toISOString();
-  return {
-    resourceSpans: [{
-      resource: resource(event),
-      scopeSpans: [{
-        scope: { name: 'agentic-workflow-factory' },
-        spans: [{
-          traceId: event.traceId,
-          spanId: event.spanId,
-          ...(event.parentSpanId === undefined ? {} : { parentSpanId: event.parentSpanId }),
-          name: event.type,
-          kind: 1,
-          startTimeUnixNano: unixNanos(event.timestamp),
-          endTimeUnixNano: unixNanos(end),
-          attributes: attributes(event),
-          status: { code: event.severityText === 'ERROR' ? 2 : 1 },
-          events: [{
-            name: event.message,
-            timeUnixNano: unixNanos(event.timestamp),
-          }],
-        }],
-      }],
-    }],
-  };
-}
-
 function logPayload(event: RunEvent) {
   return {
     resourceLogs: [{
@@ -134,8 +106,7 @@ function metricPayload(event: RunEvent) {
 export class OtlpHttpExporter implements TelemetryExporter {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
-  private readonly deleteTraces: boolean;
-  private readonly signals: Set<RunEvent['signal']>;
+  private readonly signals: Set<'log' | 'metric'>;
   private failureCount = 0;
   private lastErrorAt?: string;
   private lastSuccessAt?: string;
@@ -143,22 +114,19 @@ export class OtlpHttpExporter implements TelemetryExporter {
   public constructor(
     endpoint: string,
     headers: Record<string, string> = {},
-    options: { deleteTraces?: boolean; signals?: RunEvent['signal'][] } = {},
+    options: { signals?: Array<'log' | 'metric'> } = {},
   ) {
     this.baseUrl = endpoint.replace(/\/$/, '');
     this.headers = { 'content-type': 'application/json', ...headers };
-    this.deleteTraces = options.deleteTraces ?? false;
-    this.signals = new Set(options.signals ?? ['log', 'trace', 'metric']);
+    this.signals = new Set(options.signals ?? ['log', 'metric']);
   }
 
   public async export(event: RunEvent): Promise<void> {
-    if (!this.signals.has(event.signal)) return;
-    const path = event.signal === 'trace' ? '/v1/traces' : event.signal === 'log' ? '/v1/logs' : '/v1/metrics';
-    const payload = event.signal === 'trace'
-      ? tracePayload(event)
-      : event.signal === 'log'
-        ? logPayload(event)
-        : metricPayload(event);
+    // Trace export is deliberately disabled while the compact run-summary
+    // contract is active. Internal correlation IDs remain on run records.
+    if (event.signal === 'trace' || !this.signals.has(event.signal)) return;
+    const path = event.signal === 'log' ? '/v1/logs' : '/v1/metrics';
+    const payload = event.signal === 'log' ? logPayload(event) : metricPayload(event);
     try {
       const response = await fetch(`${this.baseUrl}${path}`, {
         method: 'POST',
@@ -187,26 +155,9 @@ export class OtlpHttpExporter implements TelemetryExporter {
     };
   }
 
-  public async prune(traceIds: string[]): Promise<void> {
-    if (!this.deleteTraces) return;
-    await Promise.all(traceIds.map(async (traceId) => {
-      try {
-        const response = await fetch(`${this.baseUrl}/v1/traces/${encodeURIComponent(traceId)}`, {
-          method: 'DELETE',
-          headers: this.headers,
-          signal: AbortSignal.timeout(2_000),
-        });
-        // Deletion is idempotent for an already-expired trace, but backend
-        // failures must remain visible through the same health contract as
-        // export failures so retention drift is not silently hidden.
-        if (!response.ok && response.status !== 404) throw new Error(`Phoenix trace deletion failed with HTTP ${response.status}.`);
-        if (response.ok) this.lastSuccessAt = new Date().toISOString();
-      } catch (error) {
-        this.failureCount += 1;
-        this.lastErrorAt = new Date().toISOString();
-        console.warn('[telemetry] Phoenix trace deletion failed', error);
-      }
-    }));
+  public async prune(_traceIds: string[]): Promise<void> {
+    // Trace export and remote trace deletion are disabled for the compact
+    // telemetry profile. The argument remains for interface compatibility.
   }
 }
 

@@ -39,20 +39,13 @@ processors:
 exporters:
   otlphttp/generic:
     endpoint: ${env:GENERIC_OTLP_ENDPOINT}
-  debug:
-    verbosity: basic
-
 service:
   pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [memory_limiter, attributes/redact, batch]
-      exporters: [otlphttp/generic, debug]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, attributes/redact, batch]
-      exporters: [otlphttp/generic, debug]
+      exporters: [otlphttp/generic]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, attributes/redact, batch]
-      exporters: [otlphttp/generic, debug]
+      exporters: [otlphttp/generic]

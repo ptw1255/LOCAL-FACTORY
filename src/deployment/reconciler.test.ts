@@ -94,7 +94,7 @@ describe('DeploymentReconciler', () => {
       state.artifacts.push(value);
       return value;
     });
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const reconciler = new DeploymentReconciler(store, 30_000, undefined, 3, events);
     const deployment = await reconciler.create({ scope: { tenantId: 'tenant-local', projectId: 'project-local' }, workflowId: seedWorkflow.id, environment: 'drift', artifactId: artifact.id, trigger: 'schedule' });
     await store.mutate((state) => {
@@ -196,7 +196,7 @@ describe('DeploymentReconciler', () => {
       state.artifacts.push(value);
       return value;
     });
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const failing = new DeploymentReconciler(store, 30_000, { observe: () => { throw new Error('Runtime adapter unavailable.'); } }, 3, events);
     const second = await failing.create({ scope, workflowId: seedWorkflow.id, environment: 'adapter-error', artifactId: healthyArtifact.id, trigger: 'manual' });
     await expect(failing.reconcile(second.id, scope)).rejects.toThrow('Runtime adapter unavailable.');
@@ -383,7 +383,7 @@ describe('DeploymentReconciler', () => {
       state.artifacts.push(value);
       return value;
     });
-    const events = new EventService(store);
+    const events = new EventService(store, { compactRuns: false });
     const reconciler = new DeploymentReconciler(store, 30_000, undefined, 3, events);
     const deployment = await reconciler.create({ scope, workflowId: seedWorkflow.id, environment: 'evidence', artifactId: artifact.id, trigger: 'manual' });
     const run = createQueuedRun(seedWorkflow);

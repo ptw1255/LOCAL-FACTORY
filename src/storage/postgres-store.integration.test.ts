@@ -22,7 +22,8 @@ describe.skipIf(databaseUrl === undefined)('PostgresStore integration', () => {
       type: 'integration.test',
       timestamp: new Date().toISOString(),
       message: 'PostgreSQL integration probe.',
-      signal: 'trace',
+      signal: 'log',
+      severityText: 'INFO',
       traceId: runId.replaceAll('-', '').padEnd(32, '0').slice(0, 32),
       spanId: eventId.replaceAll('-', '').slice(0, 16),
     });
@@ -51,4 +52,3 @@ describe.skipIf(databaseUrl === undefined)('PostgresStore integration', () => {
     }
   });
 });
-

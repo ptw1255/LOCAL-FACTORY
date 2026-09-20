@@ -103,8 +103,10 @@ try {
   });
   const finalRun = await json(`http://localhost:3100/api/runs/${encodeURIComponent(run.id)}`, { headers: scopeHeaders });
   if (finalRun.status !== 'succeeded') throw new Error(`Temporal smoke run ended in ${finalRun.status}: ${finalRun.error ?? 'unknown error'}`);
-  const events = await json(`http://localhost:3100/api/events?runId=${encodeURIComponent(run.id)}`, { headers: scopeHeaders });
-  const completed = events.items.filter((event) => event.type === 'unit.succeeded').map((event) => event.nodeId);
+  // Compact observability keeps one terminal run log. Per-unit lifecycle remains
+  // durable operation evidence, which is the authoritative restart/audit record.
+  const evidence = await json(`http://localhost:3100/api/evidence?runId=${encodeURIComponent(run.id)}`, { headers: scopeHeaders });
+  const completed = evidence.items.filter((entry) => entry.status === 'succeeded').map((entry) => entry.unitId);
   for (const nodeId of ['smoke-trigger', 'smoke-wait', 'smoke-output']) if (!completed.includes(nodeId)) throw new Error(`Temporal smoke did not record completion for ${nodeId}.`);
   if (new Set(completed).size !== completed.length) throw new Error(`Temporal smoke detected duplicate completed WorkUnits: ${completed.join(', ')}`);
   console.log('Temporal Docker smoke passed (worker restart, terminal run, lifecycle evidence, no duplicate completions).');

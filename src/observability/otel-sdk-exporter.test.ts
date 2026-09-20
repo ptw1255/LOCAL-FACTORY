@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ExportResultCode } from '@opentelemetry/core';
 import type { LogRecordExporter, ReadableLogRecord } from '@opentelemetry/sdk-logs';
 import type { PushMetricExporter, ResourceMetrics } from '@opentelemetry/sdk-metrics';
-import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base';
 
 import type { RunEvent } from '../domain/types.js';
 import { OtelSdkExporter } from './otel-sdk-exporter.js';
@@ -37,19 +36,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function traceExporter(): SpanExporter & { spans: ReadableSpan[] } {
-  const value = {
-    spans: [] as ReadableSpan[],
-    export(spans: ReadableSpan[], callback: (result: { code: ExportResultCode }) => void): void {
-      value.spans.push(...spans);
-      callback({ code: ExportResultCode.SUCCESS });
-    },
-    forceFlush: async (): Promise<void> => undefined,
-    shutdown: async (): Promise<void> => undefined,
-  };
-  return value;
-}
-
 function logExporter(): LogRecordExporter & { logs: ReadableLogRecord[] } {
   const value = {
     logs: [] as ReadableLogRecord[],
@@ -77,28 +63,12 @@ function metricExporter(): PushMetricExporter & { metrics: ResourceMetrics[] } {
 }
 
 describe('OtelSdkExporter', () => {
-  it('uses official SDK spans with stable IDs and parent-child relationships', async () => {
-    const parent = traceExporter();
-    const child = traceExporter();
-    const exporter = new OtelSdkExporter('http://unused', {
-      exporterFactories: { trace: () => parent },
-    });
+  it('does not emit OpenTelemetry traces', async () => {
+    const exporter = new OtelSdkExporter('http://unused');
 
     await exporter.export(baseEvent);
-    await exporter.export({
-      ...baseEvent,
-      id: '22222222-2222-4222-8222-222222222222',
-      spanId: 'c'.repeat(16),
-      parentSpanId: baseEvent.spanId,
-      type: 'unit.completed',
-    });
-
-    expect(parent.spans).toHaveLength(2);
-    expect(parent.spans[0]?.spanContext().traceId).toBe(baseEvent.traceId);
-    expect(parent.spans[0]?.spanContext().spanId).toBe(baseEvent.spanId);
-    expect(parent.spans[1]?.spanContext().spanId).toBe('c'.repeat(16));
-    expect(parent.spans[1]?.parentSpanContext?.spanId).toBe(baseEvent.spanId);
-    expect(child.spans).toHaveLength(0);
+    await exporter.export({ ...baseEvent, signal: 'trace' });
+    expect(exporter.health()).toMatchObject({ status: 'healthy', failureCount: 0 });
   });
 
   it('exports logs and metrics through the official SDK without prompt/output attributes', async () => {
@@ -120,46 +90,40 @@ describe('OtelSdkExporter', () => {
   });
 
   it('never forwards credential-like attributes even when payload capture is enabled', async () => {
-    const traces = traceExporter();
+    const logs = logExporter();
     const exporter = new OtelSdkExporter('http://unused', {
       capturePayload: true,
-      exporterFactories: { trace: () => traces },
+      exporterFactories: { logs: () => logs },
     });
 
-    await exporter.export({ ...baseEvent, attributes: { ...baseEvent.attributes, prompt: 'allowed only by explicit capture', authorization: 'bearer secret', 'api.key': 'secret' } });
+    await exporter.export({ ...baseEvent, signal: 'log', attributes: { ...baseEvent.attributes, prompt: 'allowed only by explicit capture', authorization: 'bearer secret', 'api.key': 'secret' } });
 
-    const attributes = traces.spans[0]?.attributes ?? {};
+    const attributes = logs.logs[0]?.attributes ?? {};
     expect(attributes).toHaveProperty('prompt');
     expect(attributes).not.toHaveProperty('authorization');
     expect(attributes).not.toHaveProperty('api.key');
   });
 
   it('records official SDK export failures without rejecting workflow execution', async () => {
-    const failed: SpanExporter = {
-      export: (_spans, callback) => callback({ code: ExportResultCode.FAILED }),
+    const failed: LogRecordExporter = {
+      export: (_logs, callback) => callback({ code: ExportResultCode.FAILED }),
+      forceFlush: async (): Promise<void> => undefined,
       shutdown: async (): Promise<void> => undefined,
     };
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const exporter = new OtelSdkExporter('http://unused', { exporterFactories: { trace: () => failed } });
+    const exporter = new OtelSdkExporter('http://unused', { exporterFactories: { logs: () => failed } });
 
-    await expect(exporter.export(baseEvent)).resolves.toBeUndefined();
+    await expect(exporter.export({ ...baseEvent, signal: 'log' })).resolves.toBeUndefined();
     expect(exporter.health()).toMatchObject({ status: 'degraded', failureCount: 1, lastErrorAt: expect.any(String) });
-    expect(warning).toHaveBeenCalled();
   });
 
-  it('keeps Phoenix trace deletion aligned with the 48-hour factory retention pass', async () => {
+  it('does not call an external trace deletion endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
     vi.stubGlobal('fetch', fetchMock);
-    const exporter = new OtelSdkExporter('http://phoenix:6006', {
-      deleteTraces: true,
-      headers: { api_key: 'dev-key' },
-    });
+    const exporter = new OtelSdkExporter('http://phoenix:6006', { headers: { api_key: 'dev-key' } });
 
     await exporter.prune(['a'.repeat(32)]);
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      `http://phoenix:6006/v1/traces/${'a'.repeat(32)}`,
-      expect.objectContaining({ method: 'DELETE', headers: { api_key: 'dev-key' } }),
-    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

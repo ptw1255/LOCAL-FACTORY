@@ -282,14 +282,28 @@ the agent's Vault-backed `secretRef`. In Compose, the endpoint defaults to
 With `pull-on-start`, the app checks `/api/tags` during startup and pulls the model
 when it is missing. It retries provisioning on the first run if Ollama was not yet
 ready. `never` (the default) requires the model to already exist; `baked` is reserved
-for preloaded model volumes. The runtime records an `llm.completed` trace for each
-Ollama call and preserves the agent's declared input/output capture and network
-policies.
+for preloaded model volumes. The runtime preserves the agent's declared input/output
+capture and network policies; detailed unit evidence is separate from the compact
+run log.
 
 ### Bounded model routing
 
 An agent can declare a bounded list of provider routes. `fallback` tries each route in
-order and records route failures/selections in the same run trace; `single` uses only
+the first route. `ensemble` invokes each bounded route and returns a deterministic,
+provider-labelled text aggregation; ensemble routes are text-only and reject tool
+calls because repeating side effects across providers would be unsafe. Each route may
+override the provider, model, endpoint, or Vault secret reference while inheriting the rest of the agent policy. Routes may also
+declare required adapter capabilities (`text`, `structured_output`, `streaming`,
+`tools`, `usage`, `request_ids`) and an `adapterVersion`; a route fails closed when
+the selected adapter cannot satisfy those requirements:
+order and records route failures/selections as run evidence; `single` uses only
+the first route. `ensemble` invokes each bounded route and returns a deterministic,
+provider-labelled text aggregation; ensemble routes are text-only and reject tool
+calls because repeating side effects across providers would be unsafe. Each route may
+override the provider, model, endpoint, or Vault secret reference while inheriting the rest of the agent policy. Routes may also
+declare required adapter capabilities (`text`, `structured_output`, `streaming`,
+`tools`, `usage`, `request_ids`) and an `adapterVersion`; a route fails closed when
+the selected adapter cannot satisfy those requirements:
 the first route. `ensemble` invokes each bounded route and returns a deterministic,
 provider-labelled text aggregation; ensemble routes are text-only and reject tool
 calls because repeating side effects across providers would be unsafe. Each route may
@@ -466,7 +480,7 @@ is available when a real local Vault probe is needed.
 
 Project YAML is the source of truth for loop topology, agent boxes, work-unit
 contracts, and runtime policy. The database stores the compiled runtime index,
-immutable versions, run state, and 48-hour telemetry; it is not the authoring
+immutable versions, run state, and 12-hour telemetry; it is not the authoring
 surface. Keep YAML in Git, review it like code, and use the Studio primarily to
 inspect the operational workflow graph or open the legacy canvas when visual editing helps.
 
@@ -549,7 +563,7 @@ the SHA-256 identity, content type, size, and tenant/project scope; the executor
 resolves references before passing inputs to downstream units. This keeps PostgreSQL
 rows and JSON state bounded without changing workflow semantics. Local development
 uses a filesystem store at `.data/artifacts` (or `ARTIFACT_STORE_DIR`); Docker mounts
-that directory as the `artifact_data` volume. Artifacts follow the same 48-hour
+that directory as the `artifact_data` volume. Artifacts follow the same 12-hour
 retention window as runtime events and are pruned by the observability cleanup loop.
 
 Prompt and model output capture remains governed by each agent's observability policy;
@@ -562,6 +576,10 @@ Docker Desktop can run the app and PostgreSQL together:
 ```bash
 docker compose up --build
 ```
+
+The default Compose profile keeps service memory bounded (app 512 MiB, PostgreSQL
+1 GiB, Vault 256 MiB). The optional Collector is capped at 192 MiB; model runtimes
+such as Ollama remain opt-in because their model weights dominate the footprint.
 
 Open <http://localhost:3100>. The app persists its control-plane state in PostgreSQL;
 the `postgres_data` volume keeps it across restarts. The `DATABASE_URL` environment
@@ -635,19 +653,19 @@ unit:
 ```
 
 PostgreSQL stores workflow and run control-plane state in `platform_state` and keeps
-runtime logs, traces, and metrics in the indexed `observability_events` table. Legacy
+compact runtime logs and metrics in the indexed `observability_events` table. Legacy
 JSON state events are moved into that table automatically on first startup. Runtime
-observability retention is 48 hours by default; a cleanup pass runs at startup and
-every 15 minutes and removes older records.
+observability retention is 12 hours by default; a cleanup pass runs at startup and
+every 15 minutes and removes older records in bounded batches.
 
 `GET /api/health` includes exporter health when OTLP is enabled (`healthy` or
 `degraded`, failure count, and last success/error timestamps). Export errors remain
 non-blocking for workflow execution but are therefore visible to operators.
 
-The runtime uses the official OpenTelemetry API, SDKs, and async context manager
-for parent-span propagation across asynchronous event/export boundaries. When an
-OTLP or Phoenix endpoint is configured, the official SDK exporter is used by
-default for traces, logs, and metrics. Set `OTEL_USE_SDK_EXPORTER=false` only for
+The runtime uses the official OpenTelemetry API and SDKs for logs and metrics. Trace
+signals are intentionally disabled for this compact profile; run correlation IDs
+remain internal identifiers. When an OTLP endpoint is configured, the official SDK
+exporter is used by default for logs and metrics and reuses batched providers. Set `OTEL_USE_SDK_EXPORTER=false` only for
 compatibility with the legacy dependency-free OTLP bridge. SDK export failures are
 non-blocking and remain visible through `/api/health`.
 
@@ -659,8 +677,8 @@ OTEL_DOCKER_SMOKE=1 npm run test:observability-smoke
 ```
 
 The smoke test starts the observability Compose profile, checks app health and the
-48-hour retention setting, posts a trace through the Collector, verifies Phoenix,
-and removes the temporary containers when it finishes.
+12-hour retention setting, posts logs and metrics through the Collector, verifies
+the backend boundary, and removes the temporary containers when it finishes.
 
 Temporal's restart boundary is also available as an opt-in Docker smoke test:
 
@@ -704,14 +722,12 @@ with `X-Tenant-ID` and `X-Project-ID` headers. Create a new project with
 `POST /api/projects`, then clone a workflow into it with
 `POST /api/projects/:projectId/workflows`.
 
-### Phoenix traces (optional)
+### OTLP logs and metrics (optional)
 
-Phoenix is an optional local trace UI and OTLP receiver. The factory exports trace
-events to Phoenix and can also fan out logs and metrics to any OTLP/HTTP endpoint.
-Phoenix traces are deleted by the same 48-hour cleanup pass through Phoenix's trace
-API; Phoenix is configured with a two-day default retention policy as a second safety
-net. Phoenix's own scheduled policy cleanup can be less frequent, so keep the
-factory cleanup process running when a strict 48-hour boundary matters.
+Phoenix and a generic OpenTelemetry Collector are optional local backends for logs
+and metrics. The factory does not emit or delete OTEL traces in this profile.
+Durable run evidence remains in PostgreSQL; short-lived observability records use a
+12-hour TTL.
 
 Start the optional Phoenix container with Docker Desktop:
 
@@ -721,20 +737,19 @@ PHOENIX_UI_URL=http://localhost:6006 \
   docker compose --profile observability up --build
 ```
 
-Then open <http://localhost:6006>. To export all three signals to another OTLP/HTTP
+Then open <http://localhost:6006>. To export logs and metrics to another OTLP/HTTP
 backend, set `OTEL_EXPORTER_OTLP_ENDPOINT` as well. The app accepts the standard
 comma-separated `OTEL_EXPORTER_OTLP_HEADERS` (`key=value`) for collector
 authentication; header values are used only when constructing the exporter and
 are never returned by the health API. The app accepts `OBSERVABILITY_RETENTION_HOURS`
-(default `48`), but deployments should keep it at
-48 hours when the product's short-retention policy is required. An external OTLP
-backend must also be configured with its own 48-hour TTL; the factory cannot delete
+(default `12`). An external OTLP backend must also be configured with its own
+12-hour TTL; the factory cannot delete
 records from arbitrary third-party storage.
 
 If the generic backend should sit behind an OpenTelemetry Collector without
 starting Phoenix, use the independent `observability-generic` profile. It accepts
-traces, logs, and metrics, applies the same redaction boundary, and forwards all
-three signals to `GENERIC_OTLP_ENDPOINT`:
+logs and metrics, applies the same redaction boundary, and forwards both signals to
+`GENERIC_OTLP_ENDPOINT`:
 
 ```bash
 GENERIC_OTLP_ENDPOINT=https://otel.example.com \
@@ -742,7 +757,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector-generic:4318 \
   docker compose --profile observability-generic up --build
 ```
 
-The generic backend owns its own retention policy; keep it at 48 hours when the
+The generic backend owns its own retention policy; keep it at 12 hours when the
 factory's short-retention contract is required.
 
 For a local OpenTelemetry Collector boundary, point the app at the Collector's
@@ -753,11 +768,10 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318 \
   docker compose --profile observability up --build
 ```
 
-The `otel-collector` service accepts traces, logs, and metrics, applies a
-defense-in-depth redaction processor, batches signals, and forwards traces to
-Phoenix. Logs and metrics stay in the local Collector unless another exporter is
-added to `otel-collector-config.yaml`. Keep the factory cleanup and Phoenix's
-two-day policy enabled to preserve the 48-hour retention boundary.
+The `otel-collector` service accepts logs and metrics, applies a defense-in-depth
+redaction processor, batches signals, and forwards them to the configured backend.
+Trace pipelines and debug exporters are intentionally absent. Keep the factory
+cleanup and backend TTL aligned at 12 hours.
 
 `npm run check` runs type checking, tests, and the production web build.
 `npm run check:bundle` enforces the browser asset budgets (650 KB JavaScript and
@@ -827,9 +841,9 @@ boundaries, and Run preflight contract are documented in
 Agent-loop nodes must reference an agent box declared in the workflow definition.
 Each box versions its purpose, instructions, skills, tools, model route, input/output
 schemas, connection and repository boundaries, budgets, termination rules, approval
-gates, and telemetry redaction policy. Runtime events use a shared OpenTelemetry-style
-envelope (logs, traces, and metrics) with OpenInference attributes for agent spans;
-prompt and output capture is opt-in per agent.
+gates, and telemetry redaction policy. Runtime events use a compact
+OpenTelemetry-style log/metric envelope; trace emission is disabled for now. Prompt
+and output capture is opt-in per agent.
 
 Every node is also a versioned work unit with declared input/output schema names,
 timeouts, retry count, and idempotency metadata. Deterministic code units use a
@@ -899,7 +913,7 @@ The generic Temporal workflow pins a full definition, executes nondeterministic 
 in activities, uses a signal for approvals, and applies activity retry policy. Docker
 Compose provides PostgreSQL and a local Vault development server for an end-to-end
 control-plane setup. When the worker has `DATABASE_URL` (or `DATA_FILE`) configured,
-each activity writes retry-safe lifecycle evidence and correlated trace events to the
+each activity writes retry-safe lifecycle evidence and only terminal run/error logs to the
 same platform store used by local execution. The workflow result also returns the
 compact lifecycle summary; raw inputs and outputs remain outside telemetry and are
 represented by hashes.

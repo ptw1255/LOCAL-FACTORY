@@ -114,9 +114,9 @@ factory resume <run-id>
 factory cancel <run-id>
 ```
 
-Evidence follows the run. FACTORY records standard logs, metrics, traces, approval
-decisions, outputs, and operational events with shared run context. Short-lived
-telemetry is retained for 48 hours by default; it should not contain secret values
+Evidence follows the run. FACTORY records compact terminal logs, metrics, approval
+decisions, outputs, and operational evidence with shared run context. Trace export is
+disabled for now. Short-lived telemetry is retained for 12 hours by default; it should not contain secret values
 or prompt/output content unless you explicitly build a different policy.
 
 ## Deploy a local workflow
