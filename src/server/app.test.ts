@@ -78,6 +78,16 @@ describe('platform API', () => {
     );
   });
 
+  it('exposes the versioned built-in agent onboarding contract', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/factory/agent-onboarding' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ version: string; sha256: string; content: string }>() ).toEqual(expect.objectContaining({
+      version: '1.0.0',
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      content: expect.stringContaining('## Safe change lifecycle'),
+    }));
+  });
+
   it('surfaces configured telemetry exporter health without exposing exporter internals', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'factory-health-'));
     const healthApp = await createApp({
@@ -303,6 +313,12 @@ describe('platform API', () => {
     expect(contentSearch.statusCode).toBe(200);
     expect(contentSearch.json<{ items: Array<{ path: string; content?: string }> }>().items).toEqual([expect.objectContaining({ path: 'agents/reviewer.agent.yaml' })]);
     expect(contentSearch.json<{ items: Array<{ content?: string }> }>().items.every((file) => file.content === undefined)).toBe(true);
+    expect((await app.inject({ method: 'PUT', url: '/api/projects/project-local/files', headers, payload: { path: 'AGENTS.md', content: '# Local rules\n' } })).statusCode).toBe(200);
+    const manifest = await app.inject({ method: 'GET', url: '/api/projects/project-local/manifest', headers });
+    expect(manifest.statusCode).toBe(200);
+    expect(manifest.json<{ manifest: { kind: string; spec: { context?: unknown } }; guides: Array<{ path: string; sha256: string; content?: string }> }>().manifest).toEqual(expect.objectContaining({ kind: 'Project' }));
+    expect(manifest.json<{ guides: Array<{ path: string; sha256: string; content?: string }> }>().guides).toEqual([expect.objectContaining({ path: 'AGENTS.md', sha256: expect.any(String) })]);
+    expect(manifest.json<{ guides: Array<{ content?: string }> }>().guides.every((guide) => guide.content === undefined)).toBe(true);
     const compiled = await app.inject({ method: 'POST', url: '/api/projects/project-local/compile', headers, payload: { environment: 'local' } });
     expect(compiled.statusCode).toBe(200);
     expect(compiled.json<{ id: string; workflows: unknown[] }>().id).toMatch(/^sha256:/);

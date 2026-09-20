@@ -531,6 +531,46 @@ change identity. Environment values merge from the project defaults, then the
 selected environment resource, then workflow-local overrides; later layers
 win and secret values are rejected at every layer (use Vault `secretRef`).
 
+`factory.yaml` is the Factory-native project manifest. It is intentionally
+small: it names the project, declares resource conventions, and can opt into
+project context policy without embedding runtime state or secrets. `AGENTS.md`
+is an optional, file-backed guidance convention. A root or nested
+`AGENTS.md` is discovered deterministically by the compiler (or can be listed
+explicitly under `spec.context.guides`) and is available as project guidance;
+it is not an authorization boundary or a replacement for policy resources.
+The future deterministic context-pack issue will add bounded selection and
+run evidence around these inputs; this foundation does not silently rank or
+retrieve arbitrary repository files.
+
+Example manifest:
+
+```yaml
+apiVersion: factory.agentic/v1
+kind: Project
+metadata:
+  id: minor-rez
+  version: 1
+  name: Minor Rez
+spec:
+  description: Local development loop
+  context:
+    guides: [AGENTS.md]
+```
+
+Inspect the validated manifest and discovered guide digests with
+`GET /api/projects/:projectId/manifest`; read guide text through the normal
+file endpoint.
+
+Factory also ships a provider-neutral agent onboarding contract for agents that
+create, edit, or manage Projects and Workflows. It is available locally at
+`GET /api/factory/agent-onboarding` and through `factory guide`. The guide gives
+agents the required order of operations—read the manifest and applicable
+`AGENTS.md` files, propose the smallest change, validate/compile, obtain
+approval, apply, run the pinned artifact, and inspect evidence—while keeping
+secrets and authorization boundaries explicit. It is not automatically sent to
+external model providers; an integration must explicitly opt in to include the
+versioned guide in a model request.
+
 Environment overlays may be grouped by resource kind (for example,
 `spec.overrides.agents.reviewer.limits.maxIterations`) or addressed directly
 with a stable key such as `Agent/reviewer`. Agent and workflow contracts can

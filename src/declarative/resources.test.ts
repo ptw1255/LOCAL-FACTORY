@@ -13,6 +13,30 @@ describe('typed resource files', () => {
     expect(result.workflows[0]?.nodes[1]).toEqual(expect.objectContaining({ sourcePath: 'workflows/review.workflow.yaml', sourceLine: 10 }));
   });
 
+  it('treats AGENTS.md as optional project guidance and exposes its stable digest', () => {
+    const result = compileResourceFiles([
+      { path: 'factory.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: demo\n  version: 1\n  name: Demo\nspec:\n  context:\n    guides: []' },
+      { path: 'AGENTS.md', source: '# Project rules\nRun the checks before changing files.\n' },
+      { path: 'subsystem/AGENTS.md', source: '# Subsystem rules\n' },
+    ], { tenantId: 'tenant-local' });
+    expect(result.manifest.spec.context?.guides).toEqual([]);
+    expect(result.guides).toEqual([]);
+
+    const discovered = compileResourceFiles([
+      { path: 'factory.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: demo\n  version: 1\n  name: Demo\nspec: {}' },
+      { path: 'subsystem/AGENTS.md', source: '# Subsystem rules\n' },
+      { path: 'AGENTS.md', source: '# Project rules\n' },
+    ], { tenantId: 'tenant-local' });
+    expect(discovered.guides.map((guide) => guide.path)).toEqual(['AGENTS.md', 'subsystem/AGENTS.md']);
+    expect(discovered.guides[0]).toEqual(expect.objectContaining({ sha256: expect.stringMatching(/^[a-f0-9]{64}$/), bytes: expect.any(Number) }));
+  });
+
+  it('requires explicitly declared project guides to exist', () => {
+    expect(() => compileResourceFiles([
+      { path: 'factory.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Project\nmetadata:\n  id: demo\n  version: 1\n  name: Demo\nspec:\n  context:\n    guides: [AGENTS.md]' },
+    ], { tenantId: 'tenant-local' })).toThrow(/missing guide AGENTS\.md/);
+  });
+
   it('rejects runtime state and secret values', () => {
     expect(() => parseResourceFile({ path: 'agent.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: a\n  version: 1\n  status: live\nspec: {}' })).toThrow(/runtime state/);
     expect(() => parseResourceFile({ path: 'agent.yaml', source: 'apiVersion: factory.agentic/v1\nkind: Agent\nmetadata:\n  id: a\n  version: 1\nspec:\n  apiKey: secret-value' })).toThrow(/secret reference/);

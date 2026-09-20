@@ -9,6 +9,7 @@ import Fastify, {
 } from 'fastify';
 
 import { ProposalService } from '../agents/proposal-service.js';
+import { FACTORY_AGENT_ONBOARDING_GUIDE, FACTORY_AGENT_ONBOARDING_SHA256, FACTORY_AGENT_ONBOARDING_VERSION } from '../agents/factory-agent-onboarding.js';
 import { ConnectionService } from '../connections/connection-service.js';
 import { ConnectionSecretBroker } from '../connections/connection-secret-broker.js';
 import { VaultSecretBroker } from '../connections/vault-secret-broker.js';
@@ -644,6 +645,30 @@ export async function createApp(
       const file = files.find((candidate) => candidate.path === request.query.path);
       if (file === undefined) return reply.status(404).send({ message: 'Project file not found.' });
       return file;
+    },
+  );
+
+  /** Return the validated Factory-native manifest and safe guide metadata.
+   * Guide content remains available through the file endpoint so this summary
+   * cannot accidentally turn an operational inspection call into a bulk dump. */
+  app.get<{ Params: { projectId: string } }>(
+    '/api/projects/:projectId/manifest',
+    async (request, reply) => {
+      const scope = scopeFromRequest(request);
+      const fileScope = { tenantId: scope.tenantId, projectId: request.params.projectId };
+      const projectExists = await store.read((state) => state.projects.some((project) => project.id === fileScope.projectId && project.tenantId === fileScope.tenantId));
+      if (!projectExists) return reply.status(404).send({ message: 'Project not found.' });
+      try {
+        const files = (await workspaceListing(fileScope)).files;
+        const compiled = compileResourceFiles(files.map((file) => ({ path: file.path, source: file.content })), { ...fileScope, environment: 'local' });
+        return {
+          path: files.find((file) => file.path === 'factory.yaml' || file.path === 'factory.yml')?.path ?? 'factory.yaml',
+          manifest: compiled.manifest,
+          guides: compiled.guides.map(({ content: _content, ...guide }) => guide),
+        };
+      } catch (error) {
+        return reply.status(422).send({ message: errorMessage(error), diagnostics: errorDiagnostics(error) });
+      }
     },
   );
 
@@ -1944,6 +1969,13 @@ export async function createApp(
   });
 
   app.get('/api/factory/manifest', async () => defaultFactoryManifest);
+
+  /** Built-in, provider-neutral onboarding contract for authoring/control agents. */
+  app.get('/api/factory/agent-onboarding', async () => ({
+    version: FACTORY_AGENT_ONBOARDING_VERSION,
+    sha256: FACTORY_AGENT_ONBOARDING_SHA256,
+    content: FACTORY_AGENT_ONBOARDING_GUIDE,
+  }));
 
   const staticRoot = path.join(process.cwd(), 'dist');
   if ((options.serveStatic ?? true) && existsSync(staticRoot)) {
