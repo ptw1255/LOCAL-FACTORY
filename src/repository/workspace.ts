@@ -194,9 +194,19 @@ export class RepositoryWorkspace {
   public async cloneForRun(runId: string, options: { rootDirectory?: string } = {}): Promise<RepositoryWorkspace> {
     const safeRunId = runId.replace(/[^a-zA-Z0-9_-]/g, '-');
     const persistentRoot = options.rootDirectory?.trim();
-    const target = persistentRoot === undefined || persistentRoot === ''
+    if (persistentRoot !== undefined && persistentRoot !== '' && !path.isAbsolute(persistentRoot)) {
+      throw new Error('Repository run root must be an absolute directory path.');
+    }
+    const persistentRootResolved = persistentRoot === undefined || persistentRoot === ''
+      ? undefined
+      : (await mkdir(persistentRoot, { recursive: true }), await realpath(persistentRoot));
+    if (persistentRootResolved !== undefined && (persistentRootResolved === this.root || persistentRootResolved.startsWith(`${this.root}${path.sep}`))) {
+      throw new Error('Repository run root cannot be the source repository or one of its descendants.');
+    }
+    const target = persistentRootResolved === undefined
       ? await import('node:fs/promises').then(({ mkdtemp }) => mkdtemp(path.join(os.tmpdir(), `factory-run-${safeRunId}-`)))
-      : (await mkdir(persistentRoot, { recursive: true }), path.join(await realpath(persistentRoot), `run-${safeRunId}`));
+      : path.join(persistentRootResolved, `run-${safeRunId}`);
+    if (path.resolve(target) === this.root) throw new Error('Repository run root cannot be the source repository.');
     if (persistentRoot !== undefined && persistentRoot !== '' && await stat(target).then((value) => value.isDirectory()).catch(() => false)) {
       return new RepositoryWorkspace(await realpath(target), true, false, this.repository);
     }

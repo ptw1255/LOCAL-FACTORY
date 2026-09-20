@@ -20,6 +20,7 @@ import { parseRepositoryCheckSandbox, RepositoryCheckError, RepositoryCheckTimeo
 import { RepositoryCiError, RepositoryMergeError, RepositoryReviewError, type GitHubRepositoryClient } from '../repository/github.js';
 import type { OpenAIClient, OpenAIModelResult } from './openai.js';
 import { evaluatePolicy, PolicyDeniedError } from '../domain/policy.js';
+import { bindWorkflowNode, deliveryActionPlanHash, validateDeliveryActionPlan } from './delivery-action-plan.js';
 
 const MAX_WAIT_MS = 5_000;
 const HTTP_TIMEOUT_MS = 10_000;
@@ -67,6 +68,10 @@ export function createQueuedRun(workflow: WorkflowDefinition, options: RunCreati
   if (!inputValidation.valid) {
     throw new Error(`Workflow input is invalid. ${inputValidation.issues.map((issue) => issue.message).join(' ')}`);
   }
+  const actionPlanValue = options.input !== null && typeof options.input === 'object'
+    ? (options.input as Record<string, unknown>).deliveryActionPlan ?? (options.input as Record<string, unknown>).actionPlan
+    : undefined;
+  const actionPlan = actionPlanValue === undefined ? undefined : validateDeliveryActionPlan(actionPlanValue);
   const trigger = workflow.nodes.find((node) => node.type === workflow.trigger.type);
   if (trigger === undefined) throw new Error('The declared workflow trigger node is missing.');
   const now = new Date().toISOString();
@@ -86,6 +91,7 @@ export function createQueuedRun(workflow: WorkflowDefinition, options: RunCreati
       input: structuredClone(options.input),
       inputHash: createHash('sha256').update(JSON.stringify(options.input) ?? 'undefined').digest('hex'),
     }),
+    ...(actionPlan === undefined ? {} : { deliveryActionPlanHash: deliveryActionPlanHash(actionPlan) }),
     ...(options.replayOfRunId === undefined ? {} : { replayOfRunId: options.replayOfRunId }),
     ...(options.retryIdempotencyKey === undefined ? {} : { retryIdempotencyKey: options.retryIdempotencyKey }),
     executionEngine: options.executionEngine ?? 'local',
@@ -207,6 +213,42 @@ export class LocalWorkflowExecutor {
       state.runs.unshift(run);
     });
     await this.events.emit(run.id, 'run.queued', 'Workflow run queued.');
+    const inputObject = run.input !== null && typeof run.input === 'object' ? run.input as Record<string, unknown> : undefined;
+    const actionPlanValue = inputObject?.deliveryActionPlan ?? inputObject?.actionPlan;
+    if (actionPlanValue !== undefined) {
+      const actionPlan = validateDeliveryActionPlan(actionPlanValue);
+      await this.events.recordEvidence({
+        runId: run.id,
+        unitId: 'delivery-plan',
+        operation: 'delivery.action-plan',
+        idempotencyKey: `run:${run.id}:delivery-plan:validated`,
+        source: 'runtime-validation',
+        status: 'succeeded',
+        metadata: {
+          'delivery.plan.hash': deliveryActionPlanHash(actionPlan),
+          'delivery.plan.version': actionPlan.version,
+          'delivery.issue.number': actionPlan.issue.number,
+          'delivery.repository': `${actionPlan.repository.owner}/${actionPlan.repository.name}`,
+          'delivery.base_revision': actionPlan.repository.baseRevision,
+          'delivery.source.agent_id': actionPlan.source.agentId,
+          'delivery.source.model': actionPlan.source.model,
+          'delivery.policy.version': actionPlan.policyVersion,
+          'delivery.task_count': actionPlan.tasks.length,
+          'delivery.mutation_count': actionPlan.mutations.length,
+          'delivery.check_count': actionPlan.checks.length,
+        },
+      });
+      await this.events.emit(run.id, 'delivery.plan.validated', 'Delivery action plan validated and bound to the run.', {
+        signal: 'log',
+        attributes: {
+          'delivery.plan.hash': deliveryActionPlanHash(actionPlan),
+          'delivery.issue.number': actionPlan.issue.number,
+          'delivery.repository': `${actionPlan.repository.owner}/${actionPlan.repository.name}`,
+          'delivery.source.agent_id': actionPlan.source.agentId,
+          'delivery.source.model': actionPlan.source.model,
+        },
+      });
+    }
     void this.execute(run.id);
     return run;
   }
@@ -771,6 +813,7 @@ export class LocalWorkflowExecutor {
     sequence = 1,
   ): Promise<unknown> {
     signal.throwIfAborted();
+    const boundNode = await this.bindNodeForRun(runId, node);
     await this.events.emit(runId, 'node.started', `${node.label} started.`, {
       nodeId: node.id,
       signal: 'trace',
@@ -783,10 +826,10 @@ export class LocalWorkflowExecutor {
       data: { nodeType: node.type },
     });
 
-    const policy = evaluatePolicy(node.config.policyRules, {
-      action: node.type,
-      nodeType: node.type,
-      ...(typeof node.config.operation === 'string' ? { operation: node.config.operation } : {}),
+    const policy = evaluatePolicy(boundNode.config.policyRules, {
+      action: boundNode.type,
+      nodeType: boundNode.type,
+      ...(typeof boundNode.config.operation === 'string' ? { operation: boundNode.config.operation } : {}),
     });
     if (!policy.allowed) {
       await this.events.emit(runId, 'policy.denied', policy.reason ?? `Policy denied ${node.type}.`, {
@@ -795,22 +838,44 @@ export class LocalWorkflowExecutor {
         severityText: 'WARN',
         attributes: {
           'policy.decision': 'deny',
-          ...(typeof node.config.policyId === 'string' ? { 'policy.id': node.config.policyId } : {}),
+          ...(typeof boundNode.config.policyId === 'string' ? { 'policy.id': boundNode.config.policyId } : {}),
           ...this.sourceMetadata(node),
         },
       });
       throw new PolicyDeniedError(policy.reason ?? `Policy denied ${node.type}.`);
     }
 
-    return this.dispatcher.dispatch(node.unit, {
+    return this.dispatcher.dispatch(boundNode.unit, {
       runId,
       traceId,
       sequence,
-      node,
+      node: boundNode,
       inputs,
       signal,
-      execute: (executionSignal = signal) => this.executeNodeImplementation(runId, traceId, node, executionSignal, inputs),
+      execute: (executionSignal = signal) => this.executeNodeImplementation(runId, traceId, boundNode, executionSignal, inputs),
     });
+  }
+
+  private async bindNodeForRun(runId: string, node: WorkflowNode): Promise<WorkflowNode> {
+    const context = await this.store.read((state) => {
+      const run = state.runs.find((candidate) => candidate.id === runId);
+      const input = run?.input;
+      const inputObject = input !== null && typeof input === 'object' ? input as Record<string, unknown> : undefined;
+      const actionPlanValue = inputObject?.deliveryActionPlan ?? inputObject?.actionPlan;
+      const plan = actionPlanValue === undefined ? undefined : validateDeliveryActionPlan(actionPlanValue);
+      return {
+        input,
+        outputs: run?.unitOutputs,
+        ...(plan === undefined ? {} : { plan, issue: plan.issue, repository: plan.repository }),
+      };
+    });
+    const bound = bindWorkflowNode(node, context);
+    const inlinePlan = bound.config.deliveryActionPlan;
+    if (inlinePlan !== undefined) {
+      const plan = validateDeliveryActionPlan(inlinePlan);
+      bound.config.deliveryActionPlan = plan;
+    }
+    return bound;
   }
 
   private async executeNodeImplementation(
@@ -895,7 +960,12 @@ export class LocalWorkflowExecutor {
           throw new Error('Repository mutation requires the declared "repository.write" capability.');
         }
         const workspace = await this.workspaceForRun(runId);
-        const operations = Array.isArray(node.config.operations) ? node.config.operations : [];
+        const plan = node.config.deliveryActionPlan;
+        const operations = Array.isArray(node.config.operations)
+          ? node.config.operations
+          : plan !== null && typeof plan === 'object' && Array.isArray((plan as { mutations?: unknown }).mutations)
+            ? (plan as { mutations: unknown[] }).mutations
+            : [];
         const protectedPaths = Array.isArray(node.config.protectedPaths)
           ? node.config.protectedPaths.filter((value): value is string => typeof value === 'string')
           : [];
@@ -957,6 +1027,31 @@ export class LocalWorkflowExecutor {
         const head = typeof node.config.head === 'string' ? node.config.head : '';
         const base = typeof node.config.base === 'string' ? node.config.base : 'main';
         result = await this.githubRepository.createOrGetPullRequest({ title, body, head, base });
+        break;
+      }
+      case 'repositoryIssue': {
+        if (this.githubRepository === undefined) throw new Error('GitHub repository integration is not configured.');
+        const operation = node.config.operation === 'create' || node.config.operation === 'comment' || node.config.operation === 'close' || node.config.operation === 'get'
+          ? node.config.operation
+          : 'get';
+        const configuredNumber = typeof node.config.number === 'number' && node.config.number > 0 ? node.config.number : undefined;
+        const inputNumber = inputs.map((input) => input !== null && typeof input === 'object' && typeof (input as { number?: unknown }).number === 'number' ? (input as { number: number }).number : undefined).find((value): value is number => value !== undefined);
+        const number = configuredNumber ?? inputNumber;
+        if (operation === 'create') {
+          const title = typeof node.config.title === 'string' ? node.config.title : '';
+          const configuredBody = typeof node.config.body === 'string' ? node.config.body : '';
+          const parentIssueNumber = typeof node.config.parentIssueNumber === 'number' && node.config.parentIssueNumber > 0 ? node.config.parentIssueNumber : number;
+          const body = parentIssueNumber === undefined
+            ? configuredBody
+            : `${configuredBody}${configuredBody.trim() === '' ? '' : '\n\n'}Parent issue: #${parentIssueNumber}`;
+          const labels = Array.isArray(node.config.labels) ? node.config.labels.filter((value): value is string => typeof value === 'string') : undefined;
+          result = await this.githubRepository.createIssue({ title, body, ...(labels === undefined ? {} : { labels }) });
+          break;
+        }
+        if (number === undefined) throw new Error(`Repository issue ${operation} requires an issue number or upstream issue result.`);
+        if (operation === 'get') result = await this.githubRepository.getIssue(number);
+        else if (operation === 'comment') result = await this.githubRepository.commentIssue(number, typeof node.config.body === 'string' ? node.config.body : '');
+        else result = await this.githubRepository.updateIssueState(number, 'closed');
         break;
       }
       case 'repositoryReview': {
@@ -1459,7 +1554,7 @@ export class LocalWorkflowExecutor {
       } else if (provider === 'openai') {
         if (this.openai === undefined) throw new Error('OpenAI credentials are not configured for this runtime.');
         result = await this.openai.chat({ agent: routeAgent, goal, signal, traceId, ...scope });
-      } else if (provider === 'openai-compatible' || provider === 'lmstudio' || provider === 'lm-studio' || provider === 'vllm' || provider === 'localai') {
+      } else if (provider === 'openai-compatible') {
         if (this.openaiCompatible === undefined) throw new Error(`The ${provider} model adapter is not configured for this runtime.`);
         result = await this.openaiCompatible.chat({ agent: routeAgent, goal, signal, traceId, ...scope });
       } else {
@@ -1598,7 +1693,22 @@ export class LocalWorkflowExecutor {
     }
     const existing = this.runWorkspaces.get(runId);
     if (existing !== undefined) return existing;
-    const isolated = await this.repositoryWorkspace.cloneForRun(runId);
+    const planBaseRevision = await this.store.read((state) => {
+      const run = state.runs.find((candidate) => candidate.id === runId);
+      const input = run?.input;
+      const inputObject = input !== null && typeof input === 'object' ? input as Record<string, unknown> : undefined;
+      const actionPlanValue = inputObject?.deliveryActionPlan ?? inputObject?.actionPlan;
+      if (actionPlanValue === undefined) return undefined;
+      return validateDeliveryActionPlan(actionPlanValue).repository.baseRevision;
+    });
+    if (planBaseRevision !== undefined) {
+      const currentRevision = await this.repositoryWorkspace.revision();
+      if (currentRevision !== planBaseRevision) {
+        throw new RepositoryConflictError(`Repository base revision changed from ${planBaseRevision} to ${currentRevision}.`, planBaseRevision, currentRevision);
+      }
+    }
+    const runRoot = process.env.REPOSITORY_RUN_ROOT?.trim() || undefined;
+    const isolated = await this.repositoryWorkspace.cloneForRun(runId, runRoot === undefined ? {} : { rootDirectory: runRoot });
     this.runWorkspaces.set(runId, isolated);
     return isolated;
   }
@@ -1612,6 +1722,8 @@ export class LocalWorkflowExecutor {
       if (typeof value[key] === 'string') metadata[outputKey] = value[key];
     }
     if (typeof value.number === 'number') metadata['pull_request.number'] = value.number;
+    if (typeof value.number === 'number' && typeof value.title === 'string') metadata['issue.number'] = value.number;
+    if (typeof value.state === 'string' && (value.state === 'open' || value.state === 'closed') && typeof value.title === 'string') metadata['issue.state'] = value.state;
     if (typeof value.url === 'string') metadata['provider.url'] = value.url;
     if (typeof value.requestId === 'string') metadata['provider.request_id'] = value.requestId;
     if (typeof value.state === 'string') metadata['pull_request.state'] = value.state;

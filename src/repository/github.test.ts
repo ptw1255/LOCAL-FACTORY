@@ -9,6 +9,22 @@ describe('GitHubRepositoryClient', () => {
     expect(String(fetcher.mock.calls[0]?.[1]?.body)).not.toContain('secret-token');
   });
 
+  it('supports issue intake, linked-task creation, comments, and closure', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ number: 42, title: 'Parent', state: 'open', html_url: 'https://github.com/example/repo/issues/42', body: 'body' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ number: 43, title: 'Child', state: 'open', html_url: 'https://github.com/example/repo/issues/43', body: 'Parent issue: #42' }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ html_url: 'https://github.com/example/repo/issues/42#issuecomment-1' }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ number: 42, title: 'Parent', state: 'closed', html_url: 'https://github.com/example/repo/issues/42' }), { status: 200 }));
+    const client = new GitHubRepositoryClient({ token: 'secret-token', owner: 'example', repo: 'repo', fetcher });
+    await expect(client.getIssue(42)).resolves.toMatchObject({ number: 42, state: 'open' });
+    await expect(client.createIssue({ title: 'Child', body: 'Parent issue: #42', labels: ['enhancement'] })).resolves.toMatchObject({ number: 43 });
+    await expect(client.commentIssue(42, 'Progress update')).resolves.toMatchObject({ issueNumber: 42 });
+    await expect(client.updateIssueState(42, 'closed')).resolves.toMatchObject({ number: 42, state: 'closed' });
+    const bodies = fetcher.mock.calls.map(([, request]) => String(request?.body ?? ''));
+    expect(bodies.join('\n')).not.toContain('secret-token');
+    expect(bodies[1]).toContain('Parent issue: #42');
+  });
+
   it('resolves GitHub credentials from the configured secret broker per request', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('[]', { status: 200 }));
     const secretBroker = { put: vi.fn(), get: vi.fn().mockResolvedValue('vault-token') };

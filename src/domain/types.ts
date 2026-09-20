@@ -126,6 +126,7 @@ export interface AgentModelRoute {
   /** Optional adapter contract requirements declared by the workflow author. */
   capabilities?: Array<'text' | 'structured_output' | 'streaming' | 'tools' | 'usage' | 'request_ids'>;
   adapterVersion?: string;
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 }
 
 export interface AgentModelRouting {
@@ -142,7 +143,7 @@ export interface AgentDefinition {
   instructions: string;
   skills: string[];
   tools: string[];
-  model: { provider?: string; model?: string; routingAlias?: string; endpoint?: string; secretRef?: string; streaming?: boolean; capabilities?: AgentModelRoute['capabilities']; adapterVersion?: string; pricing?: { promptPer1kUsd: number; completionPer1kUsd: number }; provisioning?: { mode: 'never' | 'pull-on-start' | 'baked'; digest?: string; timeoutMs?: number }; routes?: AgentModelRoute[]; routing?: AgentModelRouting };
+  model: { provider?: string; model?: string; routingAlias?: string; endpoint?: string; secretRef?: string; streaming?: boolean; capabilities?: AgentModelRoute['capabilities']; adapterVersion?: string; reasoningEffort?: AgentModelRoute['reasoningEffort']; pricing?: { promptPer1kUsd: number; completionPer1kUsd: number }; provisioning?: { mode: 'never' | 'pull-on-start' | 'baked'; digest?: string; timeoutMs?: number }; routes?: AgentModelRoute[]; routing?: AgentModelRouting };
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
   boundaries: {
@@ -228,6 +229,8 @@ export interface RunRecord {
   /** Initial trigger payload retained so a recovered run can resume deterministically. */
   input?: unknown;
   inputHash?: string;
+  /** Hash of the validated issue-to-delivery action plan, when one is bound. */
+  deliveryActionPlanHash?: string;
   /** Source run when this execution was created by deterministic replay. */
   replayOfRunId?: string;
   /** Client-supplied key making a retry request idempotent for one source run. */
