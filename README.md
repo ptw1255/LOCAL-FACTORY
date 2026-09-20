@@ -33,6 +33,35 @@ or implement a change, execute tests, route to human review, and publish evidenc
 The implementation lives under [`src/`](src/). The product and factory roadmaps
 remain at the repository root and under [`FACTORY/`](FACTORY/).
 
+## FACTORY is harness engineering made declarative
+
+FACTORY is the reusable operating environment around an AI model. It turns the
+principles of harness engineering—bounded tools, durable state, verification,
+permissions, recovery, and human gates—into file-backed Workflows that can be
+run locally or deployed as a portable control plane.
+
+```text
+       BRAIN                         HANDS                         HISTORY
+  OpenAI, Jev, Ollama,       WorkUnits, repository            PostgreSQL runs,
+  Anthropic, Gemini,          workspaces, GitHub,              approvals, artifacts,
+  or another model            Vault, tests, CI                and operation evidence
+```
+
+The model proposes. FACTORY selects context, dispatches tools, enforces the
+workflow's boundaries, decides whether evidence is sufficient to continue, and
+preserves the state needed to resume or review the run. The model is replaceable;
+the contract, tools, policies, and history remain inspectable.
+
+FACTORY is not a hosted coding agent, a prompt library, or a replacement for
+Codex/Claude-style workers. Those systems can be workers inside a FACTORY
+Workflow. FACTORY is the harness and control plane for building repeatable loops
+around them—and around deterministic code, local models, APIs, evaluators, and
+human approvals.
+
+Use FACTORY when the valuable product is the process around the model: what may
+be touched, what must be verified, what survives a restart, what requires approval,
+and what evidence explains the final artifact.
+
 ## Start here
 
 FACTORY has two intentional journeys:
@@ -50,8 +79,8 @@ is optional; FACTORY Local is terminal-first.
 
 The repository is an actively developed MVP. The current release includes a
 terminal control plane, file-backed Projects, versioned workflows and agent boxes, a local durable executor, an optional
-Temporal execution adapter, PostgreSQL persistence, Vault-backed local secrets, standardized
-OpenTelemetry/OpenInference-style telemetry, bounded proposals, and factory metrics.
+Temporal execution adapter, PostgreSQL persistence, Vault-backed local secrets, compact
+OpenTelemetry-style logs and metrics, durable operation evidence, bounded proposals, and factory metrics.
 The model-provider and repository-execution adapters are explicit, testable seams:
 OpenAI Responses, Anthropic Messages, Gemini generate-content, Ollama, and generic
 OpenAI-compatible local servers are available without changing workflow semantics.
