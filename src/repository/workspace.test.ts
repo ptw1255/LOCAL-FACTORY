@@ -120,7 +120,7 @@ describe('RepositoryWorkspace', () => {
     const workspace = await RepositoryWorkspace.open(process.cwd());
     const artifact = await workspace.patchArtifact();
     expect(artifact.id).toMatch(/^sha256:/);
-    expect(artifact.repository).toBe('github.com/ptw1255/agentic-workflow-factory');
+    expect(artifact.repository).toBe('github.com/ptw1255/LOCAL-FACTORY');
     expect(artifact.baseRevision).toMatch(/^[0-9a-f]{40}$/);
     expect(typeof artifact.patch).toBe('string');
     expect(Array.isArray(artifact.changedPaths)).toBe(true);

@@ -1,4 +1,4 @@
-# Agentic Workflow Factory
+# LOCAL FACTORY
 
 > **FACTORY is a local control plane for durable AI workflows—not another coding-agent UI.**
 
