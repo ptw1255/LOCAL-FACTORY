@@ -1,4 +1,5 @@
 import { parseDocument, stringify } from 'yaml';
+import { renderProjectManifest } from '../src/declarative/project-manifest.js';
 
 const apiVersion = 'factory.agentic/v1';
 
@@ -21,12 +22,7 @@ export function canvasResourcePath(workflowId: string): string {
 }
 
 export function renderWorkspaceProjectFile(projectId: string, name: string, description = ''): string {
-  return stringify({
-    apiVersion,
-    kind: 'Project',
-    metadata: { id: projectId, version: 1, name },
-    spec: { description, resources: [] },
-  });
+  return renderProjectManifest(projectId, name, description);
 }
 
 export function renderStarterWorkflowFile(workflowId: string, name: string): string {

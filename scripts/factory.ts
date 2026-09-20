@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline/promises';
 
 import { parseProjectYaml } from '../src/declarative/yaml.js';
 import { compileResourceFiles, parseResourceFile } from '../src/declarative/resources.js';
+import { FACTORY_AGENT_ONBOARDING_GUIDE, FACTORY_AGENT_ONBOARDING_SHA256, FACTORY_AGENT_ONBOARDING_VERSION } from '../src/agents/factory-agent-onboarding.js';
 import { EventService } from '../src/observability/event-service.js';
 import { LocalWorkflowExecutor } from '../src/runtime/executor.js';
 import { JsonStore } from '../src/storage/json-store.js';
@@ -931,6 +932,10 @@ async function runLifecycle(args: FactoryArgs): Promise<void> {
     case 'dashboard':
       await waitForDashboard();
       await runTui(args, 'portals');
+      return;
+    case 'guide':
+      console.log(`FACTORY agent onboarding v${FACTORY_AGENT_ONBOARDING_VERSION} · sha256:${FACTORY_AGENT_ONBOARDING_SHA256}`);
+      console.log(FACTORY_AGENT_ONBOARDING_GUIDE);
       return;
     case 'project':
       await waitForDashboard();

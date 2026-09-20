@@ -1,4 +1,4 @@
-export type FactoryLifecycleCommand = 'launch' | 'open' | 'dashboard' | 'project' | 'author' | 'up' | 'down' | 'restart' | 'status' | 'logs' | 'build' | 'deploy' | 'observe' | 'tui' | 'approve' | 'deny' | 'cancel' | 'pause' | 'resume';
+export type FactoryLifecycleCommand = 'launch' | 'open' | 'dashboard' | 'project' | 'author' | 'guide' | 'up' | 'down' | 'restart' | 'status' | 'logs' | 'build' | 'deploy' | 'observe' | 'tui' | 'approve' | 'deny' | 'cancel' | 'pause' | 'resume';
 export type FactoryResourceCommand = 'validate' | 'plan' | 'workflow' | 'tree' | 'edit' | 'run';
 export type FactorySecretCommand = 'secrets';
 export type FactoryCommand = FactoryLifecycleCommand | FactoryResourceCommand | FactorySecretCommand | 'help';
@@ -50,7 +50,7 @@ export interface FactoryArgs {
   help: boolean;
 }
 
-const lifecycleCommands = new Set<FactoryCommand>(['launch', 'open', 'dashboard', 'project', 'author', 'up', 'down', 'restart', 'status', 'logs', 'build', 'deploy', 'observe', 'tui', 'approve', 'deny', 'cancel', 'pause', 'resume']);
+const lifecycleCommands = new Set<FactoryCommand>(['launch', 'open', 'dashboard', 'project', 'author', 'guide', 'up', 'down', 'restart', 'status', 'logs', 'build', 'deploy', 'observe', 'tui', 'approve', 'deny', 'cancel', 'pause', 'resume']);
 const resourceCommands = new Set<FactoryCommand>(['validate', 'plan', 'workflow', 'tree', 'edit', 'run']);
 const aliases: Readonly<Record<string, FactoryCommand>> = {
   start: 'up',
@@ -249,6 +249,7 @@ Authoring:
   author approve <proposal-id>      Approve a validated proposal
   author apply <proposal-id>        Atomically apply and compile an approved proposal
   author reject <proposal-id>       Reject a proposal without changing files
+  guide                            Print the built-in agent onboarding contract
   tree <path>                      Compatibility alias for workflow
   edit <path>                      Open a local resource in $EDITOR, then validate
   run <path> [workflow-id]         Execute a workflow locally

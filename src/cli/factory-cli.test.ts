@@ -17,6 +17,7 @@ describe('FACTORY CLI argument handling', () => {
       profiles: ['temporal', 'observability', 'ollama'],
     });
     expect(parseFactoryArgs(['dashboard'])).toMatchObject({ command: 'dashboard' });
+    expect(parseFactoryArgs(['guide'])).toMatchObject({ command: 'guide' });
     expect(parseFactoryArgs(['dashboards'])).toMatchObject({ command: 'dashboard' });
     expect(parseFactoryArgs(['project'])).toMatchObject({ command: 'project' });
     expect(parseFactoryArgs(['workspace'])).toMatchObject({ command: 'project' });
@@ -49,6 +50,7 @@ describe('FACTORY CLI argument handling', () => {
       [[], 'launch'], [['up'], 'up'], [['start'], 'up'], [['down'], 'down'], [['stop'], 'down'],
       [['restart'], 'restart'], [['status'], 'status'], [['logs'], 'logs'], [['build'], 'build'],
       [['deploy'], 'deploy'], [['open'], 'open'], [['dashboard'], 'dashboard'], [['project'], 'project'], [['workspace'], 'project'], [['workspace', 'new', 'Demo'], 'project'],
+      [['guide'], 'guide'],
       [['author'], 'author'], [['author', 'propose', 'review', 'Add a safe approval step'], 'author'], [['author', 'import', 'proposal.json'], 'author'], [['author', 'show', 'proposal-1'], 'author'],
       [['observe'], 'observe'], [['tui'], 'tui'], [['approve', 'run-1'], 'approve'], [['deny', 'run-1'], 'deny'],
       [['cancel', 'run-1'], 'cancel'], [['pause', 'run-1'], 'pause'], [['resume', 'run-1'], 'resume'],

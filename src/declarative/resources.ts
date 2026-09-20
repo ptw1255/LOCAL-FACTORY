@@ -2,6 +2,7 @@ import { parseDocument } from 'yaml';
 import { z } from 'zod';
 
 import { parseProjectYaml } from './yaml.js';
+import { createProjectGuide, isAgentGuidePath, projectManifestSpecSchema, type ProjectGuide, type ProjectManifestSpec } from './project-manifest.js';
 import { workUnitSchema } from '../domain/schema.js';
 import type { ProjectRecord, SourceDiagnostic, WorkflowDefinition } from '../domain/types.js';
 
@@ -19,7 +20,7 @@ export const resourceEnvelopeSchema = z.object({
 /** Kind-specific desired configuration. These intentionally validate the
  * authored shape without duplicating the richer runtime defaults. */
 const kindSpecSchemas: Record<z.infer<typeof resourceEnvelopeSchema>['kind'], z.ZodTypeAny> = {
-  Project: z.object({ description: z.string().optional() }).passthrough(),
+  Project: projectManifestSpecSchema,
   Agent: z.object({
     purpose: z.string().min(1).optional(),
     instructions: z.string().min(1).optional(),
@@ -97,6 +98,10 @@ export function mergeProjectResourcePaths(source: string, resourcePaths: readonl
 
 export interface CompiledResourceFiles {
   project: ProjectRecord;
+  /** The validated Factory-native `factory.yaml` Project manifest. */
+  manifest: z.infer<typeof resourceEnvelopeSchema> & { kind: 'Project'; spec: ProjectManifestSpec };
+  /** Optional AGENTS.md guidance, ordered by normalized project path. */
+  guides: ProjectGuide[];
   workflows: WorkflowDefinition[];
   resources: Array<z.infer<typeof resourceEnvelopeSchema>>;
 }
@@ -221,9 +226,14 @@ export function compileResourceFiles(resources: ResourceFile[], scope: { tenantI
 }
 
 function compileResourceFilesInternal(resources: ResourceFile[], scope: { tenantId: string; projectId?: string; environment?: string }): CompiledResourceFiles {
+  const guideFiles = resources.filter((resource) => isAgentGuidePath(resource.path));
+  const resourceFiles = resources.filter((resource) => !isAgentGuidePath(resource.path));
+  const guides = guideFiles
+    .map((resource) => createProjectGuide(resource.path.replaceAll('\\', '/').replace(/^\.\//, ''), resource.source))
+    .sort((left, right) => left.path.localeCompare(right.path));
   const parseFailures: Array<{ resource: ResourceFile; error: unknown }> = [];
   const envelopes: Array<z.infer<typeof resourceEnvelopeSchema>> = [];
-  for (const resource of resources) {
+  for (const resource of resourceFiles) {
     try {
       envelopes.push(parseResourceFile(resource));
     } catch (error) {
@@ -238,20 +248,29 @@ function compileResourceFilesInternal(resources: ResourceFile[], scope: { tenant
     );
   }
   envelopes.forEach((resource, index) => {
-    const source = resources[index];
+    const source = resourceFiles[index];
     if (source !== undefined) assertResourcePath(source, resource.kind);
   });
   const seen = new Set<string>();
   envelopes.forEach((resource, index) => {
     const identity = `${resource.kind}/${resource.metadata.id}`;
-    if (seen.has(identity)) throw new Error(`${resources[index]?.path ?? 'resource'}:1: duplicate resource identity ${identity}`);
+    if (seen.has(identity)) throw new Error(`${resourceFiles[index]?.path ?? 'resource'}:1: duplicate resource identity ${identity}`);
     seen.add(identity);
   });
   const projectResources = envelopes.filter((resource) => resource.kind === 'Project');
   if (projectResources.length !== 1) throw new Error(`Resource workspace must contain exactly one Project resource; found ${projectResources.length}.`);
   const projectResource = projectResources[0];
   if (projectResource === undefined) throw new Error('Resource workspace must contain one Project resource.');
-  const projectSpec = projectResource.spec;
+  const projectSpec = projectManifestSpecSchema.parse(projectResource.spec);
+  const configuredGuidePaths = projectSpec.context?.guides;
+  const selectedGuidePaths = configuredGuidePaths === undefined
+    ? guides.map((guide) => guide.path)
+    : [...new Set(configuredGuidePaths)].sort();
+  const guidesByPath = new Map(guides.map((guide) => [guide.path, guide]));
+  for (const guidePath of selectedGuidePaths) {
+    if (!guidesByPath.has(guidePath)) throw new Error(`Project manifest references missing guide ${guidePath}.`);
+  }
+  const selectedGuides = selectedGuidePaths.map((guidePath) => guidesByPath.get(guidePath)!).filter((guide): guide is ProjectGuide => guide !== undefined);
   const selectedEnvironmentName = scope.environment?.trim() || 'local';
   const selectedEnvironment = envelopes.find((resource) => resource.kind === 'Environment' && (
     resource.metadata.id === selectedEnvironmentName || resource.spec.name === selectedEnvironmentName
@@ -393,7 +412,7 @@ function compileResourceFilesInternal(resources: ResourceFile[], scope: { tenant
     const compiled = parseProjectYaml(JSON.stringify(source), scope);
     const workflowResources = new Map<string, { path: string; source: string }>();
     envelopes.forEach((resource, index) => {
-      const sourceResource = resources[index];
+      const sourceResource = resourceFiles[index];
       if (resource.kind === 'Workflow' && sourceResource !== undefined) workflowResources.set(resource.metadata.id, sourceResource);
     });
     for (const workflow of compiled.workflows) {
@@ -417,14 +436,14 @@ function compileResourceFilesInternal(resources: ResourceFile[], scope: { tenant
         if (position !== undefined) node.position = { ...position };
       }
     }
-    return { ...compiled, resources: envelopes };
+    return { ...compiled, manifest: projectResource as CompiledResourceFiles['manifest'], guides: selectedGuides, resources: envelopes };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'resource compilation failed';
     // Preserve the authored file as the diagnostic anchor while the aggregate
     // compiler is still the compatibility path for legacy project documents.
-    const sourcePath = resources.find((resource) => resource.path.includes('.workflow.') || resource.path.endsWith('workflow.yaml'))?.path
-      ?? resources.find((resource) => resource.path.includes('.agent.') || resource.path.endsWith('agent.yaml'))?.path
-      ?? resources.find((resource) => resource.path === 'factory.yaml' || resource.path === 'factory.yml')?.path
+    const sourcePath = resourceFiles.find((resource) => resource.path.includes('.workflow.') || resource.path.endsWith('workflow.yaml'))?.path
+      ?? resourceFiles.find((resource) => resource.path.includes('.agent.') || resource.path.endsWith('agent.yaml'))?.path
+      ?? resourceFiles.find((resource) => resource.path === 'factory.yaml' || resource.path === 'factory.yml')?.path
       ?? 'project.yaml';
     throw new Error(`${sourcePath}: ${message}`);
   }
